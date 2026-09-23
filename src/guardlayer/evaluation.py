@@ -107,7 +107,7 @@ def load_samples(path: str | Path | None = None) -> list[Sample]:
     else:
         raw = Path(path).read_text(encoding="utf-8")
     samples = []
-    for line in raw.splitlines():
+    for line in raw.split("\n"):  # not splitlines(): JSON strings may hold U+2028 etc.
         if line.strip():
             item = json.loads(line)
             samples.append(Sample(item["text"], bool(item["label"]), item.get("direction", "input"), item.get("category")))

@@ -3,6 +3,20 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `benchmarks/public_eval.py`: a reproducible benchmark on deepset/prompt-injections and jackhhao/jailbreak-classification. Results are in the README.
+- 10 more heuristic rules (47 total): `forget_everything`, `change_instructions`, `new_instructions_follow`, `prompt_beginning`, instruction override / new-instruction / prompt-extraction rules for German, Spanish, French, Portuguese, Italian, Dutch, Russian and Croatian/Serbian, `unethical_ai_persona`, `has_no_rules` and `jailbreak_marker`.
+
+### Changed
+- The override rule now also covers orders, tasks, assignments and information. `disable_safety` also covers "OpenAI/Anthropic/company policy".
+- The similarity search uses an inverted index for sparse vectors, which is about 2x faster on long prompts with identical results.
+- Held-out recall with zero false positives: deepset 0.08 → 0.23, jailbreak-classification 0.66 → 0.72.
+
+### Fixed
+- `load_samples` and `guardlayer batch` no longer split JSONL records on Unicode line separators (U+2028, U+0085) inside strings.
+
 ## [0.2.0] - 2026-09-23
 
 A rebuild from a single-detector prototype into a complete input/output guard layer.

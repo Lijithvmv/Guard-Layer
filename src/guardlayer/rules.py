@@ -93,13 +93,28 @@ DEFAULT_RULES: list[Rule] = [
     # --- Instruction override / prompt injection -------------------------------------------
     Rule(
         "ignore_previous_instructions",
-        r"\b(ignore|disregard|forget|skip|override|overrule|bypass)\b[^.\n]{0,40}?\b(previous|preceding|above|prior|earlier|all|any|your|the|these|those|initial|original)\b[^.\n]{0,30}?\b(instructions?|prompts?|rules|directives?|guidelines|commands?|programming|context)\b",
+        r"\b(ignore|disregard|forget|skip|override|overrule|bypass)\b[^.\n]{0,40}?\b(previous|preceding|above|prior|earlier|all|any|your|the|these|those|initial|original)\b[^.\n]{0,30}?\b(instructions?|prompts?|rules|directives?|guidelines|commands?|programming|context|orders|tasks|assignments|information)\b",
         PI, 0.9, "Attempt to override prior instructions.",
+    ),
+    Rule(
+        "forget_everything",
+        r"\b(ignore|disregard|forget|drop|leave)\b\s+(about\s+)?(everything|all of (that|this|the above)|anything)\b[^.\n]{0,12}?\b(above|before|prior|previous(ly)?|earlier|said|so far|behind|you (were|have been) told)\b",
+        PI, 0.85, "Tells the model to discard everything that came before.",
+    ),
+    Rule(
+        "change_instructions",
+        r"\b(change|replace|update|rewrite|modify|swap)\s+(your|the|all)\s+(system\s+)?(instructions|rules|directives|prompt|programming)\s+(to|with|for)\b",
+        PI, 0.8, "Attempts to rewrite the model's instructions.",
     ),
     Rule(
         "new_instructions",
         r"\b(new|updated|real|actual|revised|override|secret)\s+(system\s+)?(instructions?|directives?)\s*[:\-]",
         PI, 0.6, "Injects a replacement instruction block.",
+    ),
+    Rule(
+        "new_instructions_follow",
+        r"\b(now|here)\s+(come|follow)s?\s+(some\s+)?(new|further|different)\s+(instructions?|tasks?|directives?|orders)\b|\b(new|further|different)\s+(instructions?|tasks?|directives?|orders)\s+(now\s+)?(follow|are as follows)\b|\bstart\s+(over|again|anew)\s+with\s+a\s+new\s+task\b",
+        PI, 0.6, "Announces a replacement set of instructions.",
     ),
     Rule(
         "from_now_on",
@@ -156,7 +171,46 @@ DEFAULT_RULES: list[Rule] = [
         r"\b(run|execute|call|invoke|use)\b[^.\n]{0,20}\b(the\s+)?(shell|terminal|bash|powershell|cmd|exec|eval|code interpreter|browser|email|http|file)\s*(tool|function|command|plugin)?\b[^.\n]{0,50}\b(rm -rf|curl|wget|delete all|drop table|transfer|send (it|them|this|the|their|all|my|your|his|her)|exfiltrate|upload)\b",
         PI, 0.6, "Directs an agent to misuse a tool.",
     ),
+    # --- Non-English instruction override (de, es, fr, pt, it, nl, ru, hr/sr/bs) ---------------
+    Rule(
+        "ignore_instructions_multilingual",
+        r"\b(vergiss|vergesst|vergessen sie|ignorier(e|en sie)?|missachte)\b[^.\n]{0,30}\b(alles|alle[ns]?|vorherigen?|bisherigen?|obigen?)\b[^.\n]{0,30}\b(anweisungen|aufträge|aufgaben|instruktionen|befehle|regeln|informationen|gesagte|davor|vorher|zuvor|bisher)\b"
+        r"|\b(olvida|olvide|olviden|ignora|ignore|ignoren)\b[^.\n]{0,25}\b(todo|todas|todos|anteriores?)\b[^.\n]{0,25}\b(instrucciones|órdenes|reglas|lo (que|anterior)|antes|anteriores?)\b"
+        r"|\b(oublie[zs]?|ignore[zs]?)\b[^.\n]{0,25}\b(tout|toutes?|précédentes?)\b[^.\n]{0,25}\b(instructions|consignes|règles|ce qui précède|avant)\b"
+        r"|\b(esqueça|esquece|ignore|ignora)\b[^.\n]{0,25}\b(tudo|todas|anteriores?)\b[^.\n]{0,25}\b(instruções|regras|ordens|antes)\b"
+        r"|\b(dimentica|dimenticate|ignora|ignorate)\b[^.\n]{0,25}\b(tutto|tutte|precedenti)\b[^.\n]{0,25}\b(istruzioni|regole|ordini|prima)\b"
+        r"|\b(vergeet|negeer)\b[^.\n]{0,25}\b(alles|alle|vorige)\b[^.\n]{0,25}\b(instructies|regels|opdrachten|hiervoor|daarvoor)\b"
+        r"|(забудь(те)?|игнорируй(те)?|проигнорируй(те)?)[^.\n]{0,25}(все|всё|предыдущие)[^.\n]{0,25}(инструкции|указания|правила|что было)"
+        r"|\b(zaboravi|zaboravite|ignoriši|ignoriraj)\b[^.\n]{0,25}\b(sve|prethodne)\b[^.\n]{0,25}\b(instrukcije|upute|uputstva|naredbe|pravila)\b",
+        PI, 0.9, "Instruction override in a non-English language.",
+    ),
+    Rule(
+        "new_instructions_multilingual",
+        r"\b(nun|jetzt)\s+folgen\s+neue\s+(anweisungen|aufgaben)\b|\bneue\s+(anweisungen|aufgabe)\s*:|\bnuevas\s+instrucciones\s*:|\bnouvelles\s+instructions\s*:",
+        PI, 0.6, "Announces replacement instructions (non-English).",
+    ),
+    Rule(
+        "reveal_prompt_multilingual",
+        r"\b(zeige?|gib|nenne|verrate)\b[^.\n]{0,30}\b(deine[nm]?|ihre[nm]?)\s+(prompt(-texte?)?|system-?prompt|anweisungen|instruktionen)\b|\b(muestra|dime|revela)\b[^.\n]{0,30}\btus\s+(instrucciones|prompt)\b|\b(montre|révèle|donne)[- ]moi\b[^.\n]{0,30}\btes\s+(instructions|prompt)\b",
+        LEAK, 0.75, "Asks the model for its own instructions (non-English).",
+    ),
     # --- Jailbreaks --------------------------------------------------------------------------
+    Rule(
+        "unethical_ai_persona",
+        r"\b(amoral|immoral|unethical|unfiltered|unfiltred|uncensored|unrestricted|lawless|rogue|evil|criminal|jailbroken)\s+(and\s+\w+\s+)?(ai|a\.i\.|chatbot|bot|language model|llm|assistant|model|version of (yourself|chatgpt|you))\b"
+        r"|\b(ai|chatbot|bot|language model|assistant|persona|character)\b[^.\n]{0,60}\b(without|with no|doesn'?t (follow|have|care about)|does not (follow|have|care about)|free (of|from)|devoid of|lacks?)\s+(any\s+)?(ethics|ethical|moral(s|ity| values)?|restrictions|limitations|filters?|guidelines|censorship|boundaries)\b",
+        JB, 0.75, "Defines an AI persona without ethics or restrictions.",
+    ),
+    Rule(
+        "has_no_rules",
+        r"\b(with|has|have|having)\s+(absolutely\s+)?no\s+(rules|restrictions|limitations|limits|filters|ethics|morals|guidelines|boundaries|censorship)\b",
+        JB, 0.5, "Describes the model as having no rules or limits.",
+    ),
+    Rule(
+        "jailbreak_marker",
+        r"\[(🔓\s*)?JAILBREAK\]|\[🔓[^\]]{0,20}\]|(^|\s)/jailbreak\b|\bjailbreak(ed)? mode\b",
+        JB, 0.8, "Known jailbreak control marker.", _IN, True, True,
+    ),
     Rule(
         "jailbreak_persona",
         r"\b(you are|you're|act as|acting as|pretend (to be|you are)|roleplay as|become|simulate)\s+(now\s+)?(in\s+|a |an |the )?(dan|stan|dude|aim|do anything now|unrestricted|uncensored|jailbroken|unfiltered|evil|amoral|unaligned|unbound|developer mode|god mode)\b",
@@ -179,7 +233,7 @@ DEFAULT_RULES: list[Rule] = [
     ),
     Rule(
         "disable_safety",
-        r"\b(bypass|disable|turn off|ignore|deactivate|circumvent|override|switch off|get around)\b[^.\n]{0,25}\b(safety|guardrails?|content filters?|moderation|safety filters?|content polic(y|ies)|usage polic(y|ies)|censorship|alignment|ethical guidelines|safeguards?)\b",
+        r"\b(bypass|disable|turn off|ignore|deactivate|circumvent|override|switch off|get around)\b[^.\n]{0,25}\b(safety|guardrails?|content filters?|moderation|safety filters?|(content|usage|openai|anthropic|safety|company|ethical) polic(y|ies)|censorship|alignment|ethical guidelines|safeguards?)\b",
         JB, 0.8, "Attempt to disable safety controls.",
     ),
     Rule(
@@ -217,6 +271,11 @@ DEFAULT_RULES: list[Rule] = [
         "repeat_text_above",
         r"\b(repeat|print|output|copy|echo|recite|spell out)\b[^.\n]{0,30}\b(the )?(words|text|everything|content|lines?|all)\b[^.\n]{0,30}\b(above|before this|preceding|prior to this|so far|verbatim)\b",
         LEAK, 0.6, "Asks the model to regurgitate its context.",
+    ),
+    Rule(
+        "prompt_beginning",
+        r"\b(written|said|stated|typed|text)\b[^.\n]{0,25}\b(beginning|start|top)\s+of\s+(this|the|your)\s+(prompt|conversation|chat|instructions|context|message)\b",
+        LEAK, 0.7, "Asks what came at the start of the prompt.",
     ),
     Rule(
         "system_prompt_disclosure",

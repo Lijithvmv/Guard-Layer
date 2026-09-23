@@ -136,3 +136,9 @@ def test_api_canary_corpus_settings(client):
     assert added["added"] == 1
     settings = client.get("/v1/settings", headers=H).json()
     assert settings["block_threshold"] == 0.8 and any(s["name"] == "heuristics" for s in settings["scanners"])
+
+
+def test_load_samples_keeps_unicode_line_separators(tmp_path):
+    path = tmp_path / "d.jsonl"
+    path.write_text(json.dumps({"text": "a\u2028b\u0085c", "label": 1}, ensure_ascii=False) + "\n", encoding="utf-8")
+    assert load_samples(path)[0].text == "a\u2028b\u0085c"

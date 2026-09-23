@@ -26,3 +26,6 @@ env/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Downloaded benchmark datasets
+benchmarks/data/

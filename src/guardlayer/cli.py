@@ -100,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "batch":
         worst = Verdict.ALLOW
-        for line in Path(args.path).read_text(encoding="utf-8").splitlines():
+        for line in Path(args.path).read_text(encoding="utf-8").split("\n"):  # not splitlines(): JSON strings may hold U+2028 etc.
             if not line.strip():
                 continue
             item = json.loads(line)

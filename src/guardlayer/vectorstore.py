@@ -134,6 +134,9 @@ class VectorStore:
         self.embedder: Embedder = embedder or NgramEmbedder()
         self._entries: list[_Entry] = []
         self._hashes: set[str] = set()
+        # Inverted index for sparse vectors: feature -> [(entry index, weight)]. Queries then
+        # touch only entries sharing a feature, instead of every entry.
+        self._postings: dict[int, list[tuple[int, float]]] = {}
         self._lock = threading.RLock()
 
     def __len__(self) -> int:
@@ -152,7 +155,12 @@ class VectorStore:
             if not fresh:
                 return 0
             vectors = self.embedder.embed(fresh)
-            self._entries.extend(_Entry(t, v, dict(metadata or {})) for t, v in zip(fresh, vectors, strict=True))
+            for text, vector in zip(fresh, vectors, strict=True):
+                if isinstance(vector, dict):
+                    idx = len(self._entries)
+                    for feature, weight in vector.items():
+                        self._postings.setdefault(feature, []).append((idx, weight))
+                self._entries.append(_Entry(text, vector, dict(metadata or {})))
         return len(fresh)
 
     def query(self, text: str, k: int = 3) -> list[Match]:
@@ -160,7 +168,14 @@ class VectorStore:
 
     def query_vector(self, vector: Vector, k: int = 3) -> list[Match]:
         with self._lock:
-            scored = [(cosine(vector, e.vector), e) for e in self._entries]
+            if isinstance(vector, dict) and self._entries and isinstance(self._entries[0].vector, dict):
+                sums: dict[int, float] = {}
+                for feature, weight in vector.items():
+                    for idx, other in self._postings.get(feature, ()):
+                        sums[idx] = sums.get(idx, 0.0) + weight * other
+                scored = [(score, self._entries[idx]) for idx, score in sums.items()]
+            else:
+                scored = [(cosine(vector, e.vector), e) for e in self._entries]
         scored.sort(key=lambda pair: pair[0], reverse=True)
         return [Match(e.text, round(s, 4), e.metadata) for s, e in scored[:k]]
 

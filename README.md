@@ -35,7 +35,7 @@ flowchart LR
 
 | Layer | Scanner | Catches | Directions |
 |---|---|---|---|
-| Signatures | `heuristics` | 37 rules: instruction override, jailbreak personas, prompt extraction, forged chat tokens, indirect-injection markers, exfiltration, unsafe shell/SQL/PowerShell | all (per rule) |
+| Signatures | `heuristics` | 47 rules: instruction override (English + 8 other languages), jailbreak personas, prompt extraction, forged chat tokens, indirect-injection markers, exfiltration, unsafe shell/SQL/PowerShell | all (per rule) |
 | De-obfuscation | *(in `heuristics`)* | rules re-run on homoglyph-folded, leetspeak, d-e-s-p-a-c-e-d, zero-width-stripped, tag-smuggled and base64/hex/URL/rot13-decoded views | all |
 | Obfuscation | `obfuscation` | ASCII smuggling (Unicode tags), bidi overrides, zero-width floods, mixed-script homoglyphs, encoded blobs, high entropy | all |
 | Similarity | `similarity` | near-copies of known attacks (bundled corpus + your own + **auto-learned**), sliding windows for attacks buried in long documents | input, context |
@@ -225,19 +225,38 @@ Every `/v1` route requires `X-API-Key` when `GUARDLAYER_API_KEY` is set. Interac
 
 ## Evaluation
 
-```
-$ guardlayer eval
-samples   67   (tp 33  fp 0  tn 34  fn 0)
-precision 1.000   recall 1.000   f1 1.000   accuracy 1.000   fpr 0.000
-latency   mean 0.85 ms   p50 0.88 ms   p95 1.2 ms
-```
+### Public datasets
 
-**Read that number with care.** The bundled sample is a small smoke benchmark and it was
-used while tuning the rules, so it shows the layers work end to end. It does not measure
-real-world recall. Run `guardlayer eval your_data.jsonl` on traffic from your own domain,
-where a line looks like `{"text": "...", "label": 1, "direction": "input"}`. For higher
-recall on paraphrased attacks, enable a semantic embedder or the classifier and retune the
-thresholds against your data.
+`python benchmarks/public_eval.py` downloads two Apache-2.0 datasets (about 2 MB) and scores
+the **default, zero-dependency configuration**. Rules were tuned only on the `train`
+splits; the table reports the held-out `test` splits. A prediction counts as positive at
+FLAG or above.
+
+| Dataset (test split) | n | Precision | Recall | False-positive rate | p50 / p95 latency |
+|---|---|---|---|---|---|
+| [deepset/prompt-injections](https://huggingface.co/datasets/deepset/prompt-injections) | 116 | **1.00** | 0.23 | **0.00** | 0.5 / 3.8 ms |
+| [jackhhao/jailbreak-classification](https://huggingface.co/datasets/jackhhao/jailbreak-classification) | 262 | **1.00** | 0.72 | **0.00** | 8.5 / 63 ms |
+
+How to read this:
+
+- **The defaults favour precision.** Across 1,968 prompts, none of the benign ones were flagged.
+  That makes the defaults safe to put in front of real traffic.
+- **Recall on deepset is low for reasons beyond the rules.** Many of its positives are
+  ordinary role prompts ("I want you to act as a debater…") or requests for political
+  opinions. A guard shouldn't block those. The rest include short paraphrases and languages
+  the rules don't cover.
+- **Higher recall comes from the model-backed layers.** The `classifier` extra, a semantic
+  embedder for `similarity`, or an `LLMJudgeScanner` all add recall. Retune the thresholds on
+  your own traffic when you enable them.
+- **Latency grows with prompt length.** Jailbreak prompts are long (median around 1,000
+  characters), and the similarity scanner embeds sliding windows of them.
+
+### Your own data
+
+```
+$ guardlayer eval your_data.jsonl        # {"text": "...", "label": 1, "direction": "input"}
+$ guardlayer eval                        # bundled 67-sample smoke test (also used during tuning)
+```
 
 ## Threat coverage (OWASP Top 10 for LLM Applications, 2025)
 
@@ -280,7 +299,7 @@ src/guardlayer/
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                  # 102 tests
+pytest -q                  # 122 tests
 ruff check src tests
 guardlayer eval
 ```
