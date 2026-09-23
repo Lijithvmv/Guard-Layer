@@ -30,6 +30,18 @@ jobs:
       - name: Benchmark (bundled sample)
         run: guardlayer eval
 
+  integrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install with agent frameworks
+        run: pip install -e ".[dev,langgraph,openai-agents]"
+      - name: Test sessions and integrations (LangGraph, OpenAI Agents SDK, Claude Code hook)
+        run: pytest -q tests/test_sessions.py
+
   core-has-no-dependencies:
     runs-on: ubuntu-latest
     steps:
@@ -44,6 +56,8 @@ jobs:
           guardlayer scan "hello world"
           guardlayer tool-call bash '{"cmd": "pytest -q"}'
           ! guardlayer tool-call bash '{"cmd": "rm -rf /"}'
+          echo '{"session_id":"ci","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf ~"}}' \
+            | GUARDLAYER_STATE_DIR="$RUNNER_TEMP/gl" guardlayer hook claude-code | grep -q '"deny"'
 
   build:
     runs-on: ubuntu-latest

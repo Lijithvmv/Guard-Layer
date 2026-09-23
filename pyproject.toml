@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "guardlayer"
-version = "0.3.0"
+version = "0.4.0"
 description = "A lightweight security layer that filters the inputs and outputs of LLM and agent applications — prompt injection, jailbreaks, leakage, secrets, PII and unsafe actions."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,6 +35,8 @@ api = ["fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2.6"]
 embeddings = ["sentence-transformers>=2.7"]
 ml = ["transformers>=4.40", "torch>=2.2"]
 signing = ["cryptography>=42"]
+langgraph = ["langgraph>=1.0"]
+openai-agents = ["openai-agents>=0.22"]
 toml = ["tomli>=2.0; python_version < '3.11'"]
 dev = ["pytest>=8.0", "cryptography>=42", "ruff>=0.6", "httpx>=0.27", "fastapi>=0.110", "pydantic>=2.6", "tomli>=2.0; python_version < '3.11'"]
 

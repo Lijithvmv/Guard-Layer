@@ -28,10 +28,14 @@ from guardlayer.scanners.similarity import SimilarityScanner
 MAX_TEXT = 200_000
 
 
+SessionId = Field(default=None, max_length=256, description="Session for taint tracking (see guardlayer.session).")
+
+
 class InputRequest(BaseModel):
     text: str = Field(max_length=MAX_TEXT)
     system_prompt: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    session_id: str | None = SessionId
 
 
 class OutputRequest(BaseModel):
@@ -41,12 +45,21 @@ class OutputRequest(BaseModel):
     canary_tokens: list[str] = Field(default_factory=list)
     expected_canary: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    session_id: str | None = SessionId
 
 
 class ContextRequest(BaseModel):
     text: str = Field(max_length=MAX_TEXT)
     source: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    session_id: str | None = SessionId
+
+
+class ToolResultRequest(BaseModel):
+    tool: str = Field(max_length=256)
+    result: Any = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    session_id: str | None = SessionId
 
 
 class BatchItem(BaseModel):
@@ -62,6 +75,7 @@ class ToolCallRequest(BaseModel):
     tool: str = Field(max_length=256)
     arguments: dict[str, Any] | str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    session_id: str | None = SessionId
 
 
 class CanaryAddRequest(BaseModel):
@@ -120,18 +134,34 @@ def create_app(guard: GuardLayer | None = None, *, api_key: str | None = None) -
 
     @app.post("/v1/scan/input", dependencies=v1)
     def scan_input(req: InputRequest) -> dict[str, Any]:
-        return engine.scan_input(req.text, system_prompt=req.system_prompt, metadata=req.metadata).to_dict()
+        return engine.scan_input(req.text, system_prompt=req.system_prompt, metadata=req.metadata, session=req.session_id).to_dict()
 
     @app.post("/v1/scan/output", dependencies=v1)
     def scan_output(req: OutputRequest) -> dict[str, Any]:
         return engine.scan_output(
-            req.text, prompt=req.prompt, system_prompt=req.system_prompt,
-            canary_tokens=req.canary_tokens, expected_canary=req.expected_canary, metadata=req.metadata,
+            req.text, prompt=req.prompt, system_prompt=req.system_prompt, canary_tokens=req.canary_tokens,
+            expected_canary=req.expected_canary, metadata=req.metadata, session=req.session_id,
         ).to_dict()  # fmt: skip
 
     @app.post("/v1/scan/context", dependencies=v1)
     def scan_context(req: ContextRequest) -> dict[str, Any]:
-        return engine.scan_context(req.text, source=req.source, metadata=req.metadata).to_dict()
+        return engine.scan_context(req.text, source=req.source, metadata=req.metadata, session=req.session_id).to_dict()
+
+    @app.post("/v1/scan/tool-result", dependencies=v1)
+    def scan_tool_result(req: ToolResultRequest) -> dict[str, Any]:
+        return engine.scan_tool_result(req.tool, req.result, metadata=req.metadata, session=req.session_id).to_dict()
+
+    @app.get("/v1/sessions/{session_id}", dependencies=v1)
+    def session_get(session_id: str) -> dict[str, Any]:
+        state = engine.sessions.get(session_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="unknown session")
+        return state.summary()
+
+    @app.delete("/v1/sessions/{session_id}", dependencies=v1)
+    def session_reset(session_id: str) -> dict[str, Any]:
+        engine.sessions.delete(session_id)
+        return {"reset": session_id}
 
     @app.post("/v1/scan/batch", dependencies=v1)
     def scan_batch(req: BatchRequest) -> dict[str, Any]:
@@ -139,7 +169,7 @@ def create_app(guard: GuardLayer | None = None, *, api_key: str | None = None) -
 
     @app.post("/v1/scan/tool-call", dependencies=v1)
     def scan_tool_call(req: ToolCallRequest) -> dict[str, Any]:
-        return engine.scan_tool_call(req.tool, req.arguments, metadata=req.metadata).to_dict()
+        return engine.scan_tool_call(req.tool, req.arguments, metadata=req.metadata, session=req.session_id).to_dict()
 
     @app.post("/v1/canary/add", dependencies=v1)
     def canary_add(req: CanaryAddRequest) -> dict[str, Any]:

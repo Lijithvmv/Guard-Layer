@@ -5,6 +5,31 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-24
+
+Sessions and integrations: an agent action is judged by what the session has already seen, and GuardLayer plugs into Claude Code, LangGraph and the OpenAI Agents SDK.
+
+### Added
+- **Session taint tracking** (`guardlayer.session`). `guard.session(id)` / `GuardSession`, or `session=` on every `scan_*` call. A session records untrusted content (output of network-capable or untagged tools, `scan_context`), hostile content (an injection was found in it) and sensitive data (secrets or PII read or pasted, credential and `.env` access). Three rules escalate tool calls:
+  - `sensitive_data_egress` (block): a secret seen earlier appears in a network or exec call.
+  - `trifecta` (review): untrusted content and sensitive data, then a network or exec call.
+  - `after_injection` (review): an injection was read, then a write, network or exec call.
+- Sensitive values are kept only as truncated SHA-256 fingerprints.
+- **`SessionPolicy`**: `trusted_tools`, `untrusted_tools`, per-rule `actions`, `enabled`.
+- **Session stores**: `MemorySessionStore` (LRU plus idle timeout) and `FileSessionStore`. `FileSessionStore` uses a per-session lock file, atomic replace and merge-on-write, so parallel processes never lose taint, including on Windows.
+- **Claude Code hook**: `guardlayer hook claude-code` handles PreToolUse, PostToolUse and UserPromptSubmit. It returns `deny` or `ask` (never `allow`), flags injected tool output to Claude, tags Claude Code's built-in tools, checks only the target path of Write/Edit, and keeps file-backed sessions keyed by `session_id`. It fails open, or closed with `fail_closed`. `--print-config` prints the settings.json snippet.
+- **LangGraph / LangChain**: `guard_tools(guard, tools)`. A REVIEW verdict becomes `interrupt()`, which you resume with `Command(resume=True)`. The graph's `thread_id` becomes the session.
+- **OpenAI Agents SDK**: `guardrails(guard)` returns input, output, tool-input and tool-output guardrails. The session comes from the run context's `session_id`.
+- **`guard_tool`**: wraps any sync or async tool function with a pre-call check and a post-call result scan, a refusal or `ToolBlocked`, an `approve` callback for REVIEW, and output withholding.
+- **Config**: a `[session]` section (`store`, `dir`, `ttl_seconds`, `max_sessions`, `trusted_tools`, `untrusted_tools`, `actions`, `enabled`) and a `GUARDLAYER_STATE_DIR` env var. `strict` blocks `after_injection`; `airgap` also blocks `trifecta`.
+- **REST**: `session_id` on the scan endpoints, `POST /v1/scan/tool-result`, `GET` / `DELETE /v1/sessions/{id}`.
+- **Capabilities**: `ToolPolicy.resolve()` and `can_act()`. An explicit empty capability list marks a tool as harmless.
+- New extras: `langgraph` and `openai-agents`. A new CI job runs the integration tests with both frameworks installed.
+
+### Changed
+- `scan_tool_call` skips the content scanners for tools tagged read-only, whose arguments cannot cause harm (for example, a search for "rm -rf"). Pass `scan_content=True` to force the scan.
+- `asyncio` is imported lazily, cutting import time by about 35%.
+
 ## [0.3.0] - 2026-09-24
 
 "Agent Guard": GuardLayer now governs what an agent is about to *do*, not just what text says.

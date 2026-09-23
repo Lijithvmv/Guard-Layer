@@ -7,7 +7,7 @@ Quick start:
     <Verdict.BLOCK: 'block'>
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from guardlayer.audit import AuditLogger, AuditSigner, AuditVerification, verify_audit_log  # noqa: E402
 from guardlayer.canary import Canary, CanaryManager  # noqa: E402
@@ -31,6 +31,13 @@ from guardlayer.scanners import (  # noqa: E402
     Scanner,
     SecretsScanner,
     SimilarityScanner,
+)
+from guardlayer.session import (  # noqa: E402
+    FileSessionStore,
+    GuardSession,
+    MemorySessionStore,
+    SessionPolicy,
+    SessionState,
 )
 from guardlayer.tools import ToolPolicy, ToolRule, infer_capabilities  # noqa: E402
 from guardlayer.vectorstore import CallableEmbedder, NgramEmbedder, VectorStore  # noqa: E402
@@ -60,6 +67,11 @@ __all__ = [
     "infer_capabilities",
     "Preset",
     "PRESETS",
+    "GuardSession",
+    "SessionPolicy",
+    "SessionState",
+    "MemorySessionStore",
+    "FileSessionStore",
     "Rule",
     "load_rules",
     "VectorStore",

@@ -10,6 +10,7 @@
     guardlayer presets                        # security postures and their residual risk
     guardlayer audit verify audit.jsonl       # check the audit hash chain (and signatures)
     guardlayer audit keygen audit             # write audit.key / audit.pub (Ed25519)
+    guardlayer hook claude-code --print-config   # settings.json snippet for the Claude Code hook
     guardlayer serve --port 8000              # REST API (needs the `api` extra)
 
 `scan` exits 1 when the verdict is BLOCK (or at/above `--fail-on`), so it composes in CI.
@@ -92,6 +93,13 @@ def main(argv: list[str] | None = None) -> int:
     keygen = audit_sub.add_parser("keygen", help="Generate an Ed25519 signing key pair: PREFIX.key and PREFIX.pub.")
     keygen.add_argument("prefix")
 
+    hook = sub.add_parser("hook", help="Run as an agent hook (reads the event JSON on stdin).")
+    hook_sub = hook.add_subparsers(dest="hook_target", required=True)
+    cc = hook_sub.add_parser("claude-code", help="Claude Code PreToolUse / PostToolUse / UserPromptSubmit hook.")
+    cc.add_argument("--state-dir", help="Session state directory (default ~/.guardlayer/sessions or GUARDLAYER_STATE_DIR).")
+    cc.add_argument("--block-prompts", action="store_true", help="Also block user prompts that GuardLayer blocks.")
+    cc.add_argument("--print-config", action="store_true", help="Print the settings.json hooks snippet and exit.")
+
     serve = sub.add_parser("serve", help="Run the REST API.")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
@@ -124,6 +132,20 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "audit":
         return _audit(args)
+
+    if args.command == "hook":
+        from guardlayer.integrations import claude_code
+
+        if args.print_config:
+            command = claude_code.default_command(args.config, args.preset)
+            if args.state_dir:
+                command += f' --state-dir "{Path(args.state_dir).expanduser().resolve().as_posix()}"'
+            if args.block_prompts:
+                command += " --block-prompts"
+            print(json.dumps(claude_code.settings_snippet(command), indent=2))
+            return 0
+        guard = claude_code.configure_guard(build_guard(args.config), args.state_dir)
+        return claude_code.run(guard, block_prompts=args.block_prompts)
 
     if args.command == "serve":
         try:

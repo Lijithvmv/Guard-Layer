@@ -28,6 +28,12 @@ Example `guardlayer.toml`:
     disabled_rules = []
     rules = [{ name = "no_prod", pattern = "prod-db", action = "block" }]
 
+    [session]                      # taint tracking across a conversation (see guardlayer.session)
+    actions = { trifecta = "review", after_injection = "review", sensitive_data_egress = "block" }
+    trusted_tools = ["read_docs"]  # results never count as untrusted or hostile
+    untrusted_tools = ["read_email"]
+    store = "memory"               # or "file" with dir = "..." (one process per check, e.g. hooks)
+
     [audit]                        # tamper-evident JSONL audit log
     path = "guardlayer-audit.jsonl"
     min_verdict = "flag"
@@ -85,6 +91,7 @@ from guardlayer.scanners.policy import DenyListScanner, LimitsScanner
 from guardlayer.scanners.relevance import RelevanceScanner
 from guardlayer.scanners.secrets import SecretsScanner
 from guardlayer.scanners.similarity import SimilarityScanner
+from guardlayer.session import FileSessionStore, MemorySessionStore, SessionPolicy, SessionStore
 from guardlayer.tools import ToolPolicy
 from guardlayer.vectorstore import Embedder, NgramEmbedder, SentenceTransformerEmbedder
 
@@ -200,12 +207,15 @@ def build_guard(source: str | Path | Mapping[str, Any] | None = None) -> GuardLa
             continue
         scanners.append(factory(options, canaries, base_dir))
 
+    session_policy, session_store = _session(config.get("session", {}), base_dir)
     guard = GuardLayer(
         scanners,
         policy=policy,
         canaries=canaries,
         auto_learn=_bool(guard_cfg.get("auto_learn", False)),
         tool_policy=_tool_policy(config.get("tools", {}), guard_cfg, base_dir),
+        session_policy=session_policy,
+        sessions=session_store,
     )
     guard.preset = preset
     audit_cfg = config.get("audit")
@@ -225,6 +235,27 @@ def _tool_policy(tools_cfg: Mapping[str, Any], guard_cfg: Mapping[str, Any], bas
         return ToolPolicy(allowlist=allowlist, rules=rules, **options)
     except TypeError as exc:
         raise ValueError(f"invalid [tools] config: {exc}") from exc
+
+
+def _session(session_cfg: Mapping[str, Any], base_dir: Path | None) -> tuple[SessionPolicy, SessionStore | None]:
+    options = dict(session_cfg)
+    store_kind = options.pop("store", "memory")
+    directory = options.pop("dir", None)
+    ttl = options.pop("ttl_seconds", None)
+    max_sessions = options.pop("max_sessions", 10_000)
+    if "enabled" in options:
+        options["enabled"] = _bool(options["enabled"])
+    try:
+        policy = SessionPolicy(**options)
+    except TypeError as exc:
+        raise ValueError(f"invalid [session] config: {exc}") from exc
+    if store_kind == "memory":
+        return policy, MemorySessionStore(max_sessions=int(max_sessions), **({"ttl_seconds": float(ttl)} if ttl else {}))
+    if store_kind == "file":
+        if not directory:
+            raise ValueError('[session] store = "file" needs a dir')
+        return policy, FileSessionStore(_resolve(base_dir, directory), **({"ttl_seconds": float(ttl)} if ttl else {}))
+    raise ValueError(f"[session] store must be 'memory' or 'file', not {store_kind!r}")
 
 
 def _audit_logger(audit_cfg: Mapping[str, Any], base_dir: Path | None) -> AuditLogger:

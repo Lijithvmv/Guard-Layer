@@ -35,6 +35,13 @@ rules = [
   { name = "no_prod_db", pattern = "prod-db\\.internal", action = "block", message = "Agents may not touch the production database." },
 ]
 
+# Session taint tracking: judge a tool call by what the session has already read
+[session]
+store = "memory"                     # "file" + dir = "..." when each check is a new process (hooks)
+trusted_tools = ["kb_search"]        # outputs never count as untrusted or hostile
+untrusted_tools = ["read_email"]     # read-only tools whose output an outsider can write
+actions = { sensitive_data_egress = "block", trifecta = "review", after_injection = "review" }
+
 # Tamper-evident audit log (hash-chained JSONL; signed if a key is given)
 [audit]
 path = "guardlayer-audit.jsonl"

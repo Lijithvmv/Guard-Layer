@@ -17,7 +17,6 @@ LLM calls and agent tool calls (see `guardlayer.tools` for the tool-call policy)
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import fnmatch
 import functools
@@ -41,7 +40,18 @@ from guardlayer.scanners.pii import PIIScanner
 from guardlayer.scanners.policy import LimitsScanner
 from guardlayer.scanners.secrets import SecretsScanner
 from guardlayer.scanners.similarity import SimilarityScanner
-from guardlayer.tools import ToolPolicy
+from guardlayer.session import (
+    GuardSession,
+    MemorySessionStore,
+    SessionPolicy,
+    SessionState,
+    SessionStore,
+    observe_content,
+    observe_input,
+    observe_tool_call,
+    taint_detections,
+)
+from guardlayer.tools import ToolPolicy, flatten_arguments
 
 logger = logging.getLogger("guardlayer")
 
@@ -137,6 +147,8 @@ class GuardLayer:
         auto_learn: bool = False,
         tool_allowlist: Iterable[str] | None = None,
         tool_policy: ToolPolicy | None = None,
+        session_policy: SessionPolicy | None = None,
+        sessions: SessionStore | None = None,
         hooks: Iterable[Callable[[ScanResult], None]] = (),
     ) -> None:
         self.policy = policy or Policy()
@@ -155,6 +167,8 @@ class GuardLayer:
         self.tool_policy = tool_policy or ToolPolicy()
         if tool_allowlist is not None:
             self.tool_policy.allowlist = set(tool_allowlist)
+        self.session_policy = session_policy or SessionPolicy()
+        self.sessions: SessionStore = sessions if sessions is not None else MemorySessionStore()
         self.preset: str | None = None  # set by `from_preset` / a config with `preset = ...`
         self.hooks: list[Callable[[ScanResult], None]] = list(hooks)
 
@@ -195,6 +209,16 @@ class GuardLayer:
     def add_hook(self, hook: Callable[[ScanResult], None]) -> None:
         self.hooks.append(hook)
 
+    def session(self, session_id: str | None = None) -> GuardSession:
+        """A view of this guard bound to one session, so tool calls are judged by what came before."""
+        return GuardSession(self, session_id)
+
+    def _load_session(self, session: str | GuardSession | None) -> SessionState | None:
+        if session is None:
+            return None
+        sid = session.id if isinstance(session, GuardSession) else str(session)
+        return self.sessions.get(sid) or SessionState(sid)
+
     # ------------------------------------------------------------------ core scan
     def scan(
         self,
@@ -213,9 +237,16 @@ class GuardLayer:
         ctx.direction = direction
         return self._run(text, ctx)
 
-    def scan_input(self, prompt: str, **context_fields: Any) -> ScanResult:
+    def scan_input(self, prompt: str, *, session: str | GuardSession | None = None, **context_fields: Any) -> ScanResult:
         """Scan a user prompt before it reaches the model."""
-        return self.scan(prompt, "input", **context_fields)
+        state = self._load_session(session)
+        if state is None:
+            return self.scan(prompt, "input", **context_fields)
+        context_fields["metadata"] = {**dict(context_fields.get("metadata") or {}), "session_id": state.id}
+        result = self.scan(prompt, "input", **context_fields)
+        observe_input(state, prompt, result)
+        self.sessions.put(state)
+        return result
 
     def scan_output(
         self,
@@ -224,9 +255,13 @@ class GuardLayer:
         prompt: str | None = None,
         system_prompt: str | None = None,
         canary: Canary | str | None = None,
+        session: str | GuardSession | None = None,
         **context_fields: Any,
     ) -> ScanResult:
         """Scan a model response before it reaches the user (or a tool)."""
+        if session is not None:
+            sid = session.id if isinstance(session, GuardSession) else str(session)
+            context_fields["metadata"] = {**dict(context_fields.get("metadata") or {}), "session_id": sid}
         tokens = list(context_fields.pop("canary_tokens", []))
         expected = context_fields.pop("expected_canary", None)
         if isinstance(canary, Canary):
@@ -245,37 +280,90 @@ class GuardLayer:
             **context_fields,
         )  # fmt: skip
 
-    def scan_context(self, content: str, *, source: str | None = None, **context_fields: Any) -> ScanResult:
-        """Scan third-party content (RAG chunk, web page, email, tool result) for indirect injection."""
+    def scan_context(
+        self, content: str, *, source: str | None = None, session: str | GuardSession | None = None, **context_fields: Any
+    ) -> ScanResult:
+        """Scan third-party content (RAG chunk, web page, email, tool result) for indirect injection.
+
+        With a `session`, the content marks the session as having read untrusted content
+        (and hostile / sensitive content, if found).
+        """
+        return self._scan_content(content, source=source, session=session, tool=None, **context_fields)
+
+    def _scan_content(
+        self, content: str, *, source: str | None, session: str | GuardSession | None, tool: str | None, **context_fields: Any
+    ) -> ScanResult:
         metadata = dict(context_fields.pop("metadata", {}) or {})
         if source:
             metadata["source"] = source
-        return self.scan(content, "context", metadata=metadata, **context_fields)
+        state = self._load_session(session)
+        if state is not None:
+            metadata["session_id"] = state.id
+        result = self.scan(content, "context", metadata=metadata, **context_fields)
+        if state is not None:
+            if tool is None:
+                reaches_network = True
+            else:
+                caps, tagged = self.tool_policy.resolve(tool)
+                reaches_network = not tagged or bool(caps & {"network", "exec"})
+            observe_content(
+                self.session_policy, state, content, result,
+                source=source or "context", tool=tool, can_reach_network=reaches_network,
+            )  # fmt: skip
+            self.sessions.put(state)
+        return result
 
     def scan_batch(self, texts: Iterable[str], direction: Direction = "input", **context_fields: Any) -> list[ScanResult]:
         return [self.scan(t, direction, **context_fields) for t in texts]
 
     # ------------------------------------------------------------------ agents
-    def scan_tool_call(self, tool_name: str, arguments: Mapping[str, Any] | str | None = None, **context_fields: Any) -> ScanResult:
+    def scan_tool_call(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, Any] | str | None = None,
+        *,
+        session: str | GuardSession | None = None,
+        scan_content: bool | None = None,
+        **context_fields: Any,
+    ) -> ScanResult:
         """Scan a model-proposed tool call (name + arguments) before executing it.
 
         Runs the tool policy (allow/deny lists, capability actions, argument and egress rules)
-        plus the content scanners over the arguments. A REVIEW verdict means: ask a human first.
+        and, with a `session`, the taint rules (what the session has already read decides what
+        it may do next). The content scanners also run over the arguments, except for tools
+        tagged read-only (`scan_content=None`, the default), whose arguments cannot cause harm.
+        A REVIEW verdict means: ask a human first.
         """
         payload = arguments if isinstance(arguments, str) else json.dumps(arguments or {}, ensure_ascii=False, default=str)
+        caps, tagged = self.tool_policy.resolve(tool_name)
         extra = self.tool_policy.evaluate(tool_name, arguments)
         metadata = {
             **dict(context_fields.pop("metadata", {}) or {}),
             "tool": tool_name,
-            "capabilities": sorted(self.tool_policy.capabilities_of(tool_name)),
+            "capabilities": sorted(caps),
         }
+        state = self._load_session(session)
+        if state is not None:
+            metadata["session_id"] = state.id
+            metadata["session"] = {"untrusted": state.untrusted, "hostile": state.hostile, "sensitive": state.sensitive}
+            extra += taint_detections(self.session_policy, state, tool_name, caps, tagged, flatten_arguments(arguments))
+        if scan_content is None:
+            scan_content = self.tool_policy.can_act(tool_name)
         ctx = ScanContext(direction="output", metadata=metadata, **context_fields)
-        return self._run(payload, ctx, extra=extra)
+        result = self._run(payload, ctx, extra=extra, content=scan_content)
+        if state is not None:
+            observe_tool_call(state, tool_name, result)
+            self.sessions.put(state)
+        return result
 
-    def scan_tool_result(self, tool_name: str, result: Any, **context_fields: Any) -> ScanResult:
-        """Scan what a tool returned before the model reads it (indirect injection channel)."""
+    def scan_tool_result(self, tool_name: str, result: Any, *, session: str | GuardSession | None = None, **context_fields: Any) -> ScanResult:
+        """Scan what a tool returned before the model reads it (indirect injection channel).
+
+        With a `session`, results from network-capable (or untagged) tools mark the session
+        untrusted, injections mark it hostile, and secrets/PII mark it sensitive.
+        """
         text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
-        return self.scan_context(text, source=f"tool:{tool_name}", **context_fields)
+        return self._scan_content(text, source=f"tool:{tool_name}", session=session, tool=tool_name, **context_fields)
 
     # ------------------------------------------------------------------ canaries
     def add_canary(self, prompt: str, *, echo: bool = False) -> Canary:
@@ -284,16 +372,16 @@ class GuardLayer:
 
     # ------------------------------------------------------------------ async
     async def ascan(self, text: str, direction: Direction = "input", **kwargs: Any) -> ScanResult:
-        return await asyncio.to_thread(functools.partial(self.scan, text, direction, **kwargs))
+        return await _to_thread(functools.partial(self.scan, text, direction, **kwargs))
 
     async def ascan_input(self, prompt: str, **kwargs: Any) -> ScanResult:
-        return await asyncio.to_thread(functools.partial(self.scan_input, prompt, **kwargs))
+        return await _to_thread(functools.partial(self.scan_input, prompt, **kwargs))
 
     async def ascan_output(self, response: str, **kwargs: Any) -> ScanResult:
-        return await asyncio.to_thread(functools.partial(self.scan_output, response, **kwargs))
+        return await _to_thread(functools.partial(self.scan_output, response, **kwargs))
 
     async def ascan_context(self, content: str, **kwargs: Any) -> ScanResult:
-        return await asyncio.to_thread(functools.partial(self.scan_context, content, **kwargs))
+        return await _to_thread(functools.partial(self.scan_context, content, **kwargs))
 
     # ------------------------------------------------------------------ wrapping LLM calls
     def protect(
@@ -350,13 +438,13 @@ class GuardLayer:
         return decorator(func) if func is not None else decorator
 
     # ------------------------------------------------------------------ internals
-    def _run(self, text: str, ctx: ScanContext, *, extra: Sequence[Detection] = ()) -> ScanResult:
+    def _run(self, text: str, ctx: ScanContext, *, extra: Sequence[Detection] = (), content: bool = True) -> ScanResult:
         started = time.perf_counter()
         detections: list[Detection] = list(extra)
         errors: list[str] = []
         timings: dict[str, float] = {}
 
-        for scanner in self.scanners:
+        for scanner in self.scanners if content else ():
             if ctx.direction not in getattr(scanner, "directions", DIRECTIONS):
                 continue
             t0 = time.perf_counter()
@@ -479,3 +567,9 @@ class GuardLayer:
 
 # Short alias.
 Guard = GuardLayer
+
+
+async def _to_thread(fn: Callable[[], ScanResult]) -> ScanResult:
+    import asyncio  # imported lazily: asyncio (and the ssl it pulls in) costs ~0.3 s at startup
+
+    return await asyncio.to_thread(fn)

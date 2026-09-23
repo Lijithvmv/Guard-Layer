@@ -100,10 +100,10 @@ class ToolRule:
             data["capabilities"] = frozenset(data["capabilities"])
         return cls(**data)
 
-    def applies_to(self, tool: str, caps: frozenset[str]) -> bool:
+    def applies_to(self, tool: str, caps: frozenset[str], tagged: bool = True) -> bool:
         if self.tools is not None and not any(fnmatch.fnmatchcase(tool, p) for p in self.tools):
             return False
-        return self.capabilities is None or not caps or bool(caps & self.capabilities)
+        return self.capabilities is None or not tagged or bool(caps & self.capabilities)
 
     def match(self, text: str) -> re.Match[str] | None | bool:
         return True if self._regex is None else self._regex.search(text)
@@ -295,20 +295,30 @@ class ToolPolicy:
         self.flag_raw_ips = flag_raw_ips
         self.infer = infer
 
-    def capabilities_of(self, tool: str) -> frozenset[str]:
+    def resolve(self, tool: str) -> tuple[frozenset[str], bool]:
+        """(capabilities, tagged). An explicit empty list tags a tool as harmless; untagged tools match every rule."""
         if tool in self.capabilities:
-            return self.capabilities[tool]
+            return self.capabilities[tool], True
         for pattern, caps in self.capabilities.items():
             if fnmatch.fnmatchcase(tool, pattern):
-                return caps
-        return infer_capabilities(tool) if self.infer else frozenset()
+                return caps, True
+        caps = infer_capabilities(tool) if self.infer else frozenset()
+        return caps, bool(caps)
+
+    def capabilities_of(self, tool: str) -> frozenset[str]:
+        return self.resolve(tool)[0]
+
+    def can_act(self, tool: str) -> bool:
+        """True if the tool may have side effects or reach the network (anything beyond reading)."""
+        caps, tagged = self.resolve(tool)
+        return not tagged or bool(caps - {"read"})
 
     def _detection(self, rule: str, category: str, severity: float, message: str, action: Action, **metadata: Any) -> Detection:
         final = self.rule_actions.get(rule, action)
         return Detection(SCANNER, rule, category, severity, message, metadata=metadata, action=final.value)
 
     def evaluate(self, tool: str, arguments: Mapping[str, Any] | str | None = None) -> list[Detection]:
-        caps = self.capabilities_of(tool)
+        caps, tagged = self.resolve(tool)
         out: list[Detection] = []
 
         if any(fnmatch.fnmatchcase(tool, p) for p in self.denylist):
@@ -332,7 +342,7 @@ class ToolPolicy:
             return out
 
         for rule in self.rules:
-            if not rule.applies_to(tool, caps):
+            if not rule.applies_to(tool, caps, tagged):
                 continue
             m = rule.match(text)
             if not m:
@@ -342,7 +352,7 @@ class ToolPolicy:
                 self._detection(rule.name, rule.category, rule.severity, rule.message or f"Tool rule {rule.name!r} matched.", rule.action, tool=tool, matched=matched)  # type: ignore[arg-type]
             )
 
-        if not caps or caps & {"network", "exec"}:
+        if not tagged or caps & {"network", "exec"}:
             out.extend(self._egress(tool, text))
         return out
 

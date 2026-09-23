@@ -46,10 +46,12 @@ PRESETS: dict[str, Preset] = {
             "balanced",
             "The defaults. Blocks high-confidence attacks, redacts secrets everywhere and PII in outputs, blocks "
             "destructive commands, credential-file access and exfiltration endpoints, and holds risky commands "
-            "(force-push, sudo, DROP TABLE, persistence, .env access) for human review.",
+            "(force-push, sudo, DROP TABLE, persistence, .env access) for human review. In a session, a secret "
+            "seen earlier being sent out is blocked, and actions after untrusted + sensitive reads or an injection need review.",
             (
                 "Paraphrased injections that avoid known phrasing can pass (add the classifier or an LLM judge).",
                 "Shell and network tools run without review unless a rule matches their arguments.",
+                "Taint tracking only works when you pass a session; encoded or split copies of secrets are not matched.",
                 "Fail-open: if a scanner errors, the text is still allowed.",
                 "Egress to ordinary domains is allowed; only tunnels, capture services and metadata endpoints are blocked.",
             ),
@@ -58,8 +60,8 @@ PRESETS: dict[str, Preset] = {
         Preset(
             "strict",
             "For agents that hold real credentials or touch production. Lower thresholds, fail-closed, every shell "
-            "and write-capable tool call held for review, raw-IP egress and .env access blocked, and unknown "
-            "suspicious content flagged sooner.",
+            "and write-capable tool call held for review, raw-IP egress and .env access blocked, unknown "
+            "suspicious content flagged sooner, and any action after reading an injection blocked.",
             (
                 "Review fatigue: approvers see every shell/write call; rubber-stamping defeats the control.",
                 "More false positives than 'balanced' (thresholds 0.3 / 0.6).",
@@ -72,12 +74,13 @@ PRESETS: dict[str, Preset] = {
                     "capability_actions": {"exec": "review", "write": "review"},
                     "rule_actions": {"egress_raw_ip": "block", "dotenv_file": "block", "persistence": "block"},
                 },
+                "session": {"actions": {"after_injection": "block"}},
             },
         ),
         Preset(
             "airgap",
             "For regulated or offline workloads. Network- and shell-capable tools are blocked outright, writes are "
-            "reviewed, any scanner error blocks, and thresholds match 'strict'.",
+            "reviewed, any scanner error blocks, thresholds match 'strict', and tainted sessions cannot act.",
             (
                 "Agents lose all network and shell access; tasks that need them will fail by design.",
                 "Tools mis-tagged as read-only bypass the capability block: tag every tool explicitly in tools.capabilities.",
@@ -89,6 +92,7 @@ PRESETS: dict[str, Preset] = {
                     "capability_actions": {"network": "block", "exec": "block", "write": "review"},
                     "rule_actions": {"egress_raw_ip": "block", "dotenv_file": "block", "persistence": "block"},
                 },
+                "session": {"actions": {"after_injection": "block", "trifecta": "block"}},
             },
         ),
     )
