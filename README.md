@@ -228,28 +228,47 @@ Every `/v1` route requires `X-API-Key` when `GUARDLAYER_API_KEY` is set. Interac
 ### Public datasets
 
 `python benchmarks/public_eval.py` downloads two Apache-2.0 datasets (about 2 MB) and scores
-the **default, zero-dependency configuration**. Rules were tuned only on the `train`
-splits; the table reports the held-out `test` splits. A prediction counts as positive at
-FLAG or above.
+GuardLayer on them. The rules were tuned only on the `train` splits; the table reports the
+held-out `test` splits. A prediction counts as positive at FLAG or above. Add
+`--classifier` to include the transformer classifier, or use `--classifier-only` to run it alone.
 
-| Dataset (test split) | n | Precision | Recall | False-positive rate | p50 / p95 latency |
-|---|---|---|---|---|---|
-| [deepset/prompt-injections](https://huggingface.co/datasets/deepset/prompt-injections) | 116 | **1.00** | 0.23 | **0.00** | 0.5 / 3.8 ms |
-| [jackhhao/jailbreak-classification](https://huggingface.co/datasets/jackhhao/jailbreak-classification) | 262 | **1.00** | 0.72 | **0.00** | 8.5 / 63 ms |
+| Configuration | deepset/prompt-injections (n=116) | jailbreak-classification (n=262) | Latency p50 / p95 |
+|---|---|---|---|
+| **Default** (rules + zero-dependency layers) | P **1.00** · R 0.23 · FPR **0.00** | P **1.00** · R 0.72 · FPR **0.00** | 0.5–9 ms / 4–63 ms |
+| Classifier only (`ml` extra) | P 1.00 · R 0.37 · FPR 0.00 | *P 0.98 · R 0.86 · FPR 0.02 †* | 150–340 ms / 0.25–2.8 s |
+| **Default + classifier** | P **1.00** · R **0.47** · FPR **0.00** | *P 0.98 · R 0.90 · FPR 0.02 †* | 150–360 ms / 0.27–2.9 s |
+
+Dataset links: [deepset/prompt-injections](https://huggingface.co/datasets/deepset/prompt-injections) ·
+[jackhhao/jailbreak-classification](https://huggingface.co/datasets/jackhhao/jailbreak-classification).
+Classifier: [`protectai/deberta-v3-base-prompt-injection-v2`](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2), threshold 0.7, CPU.
+
+† **Not a fair test.** jailbreak-classification is part of that model's training data, so
+its classifier numbers are optimistic. deepset is not in its training data, and 0.47 is
+the number to trust.
 
 How to read this:
 
-- **The defaults favour precision.** Across 1,968 prompts, none of the benign ones were flagged.
-  That makes the defaults safe to put in front of real traffic.
-- **Recall on deepset is low for reasons beyond the rules.** Many of its positives are
-  ordinary role prompts ("I want you to act as a debater…") or requests for political
-  opinions. A guard shouldn't block those. The rest include short paraphrases and languages
-  the rules don't cover.
-- **Higher recall comes from the model-backed layers.** The `classifier` extra, a semantic
-  embedder for `similarity`, or an `LLMJudgeScanner` all add recall. Retune the thresholds on
-  your own traffic when you enable them.
-- **Latency grows with prompt length.** Jailbreak prompts are long (median around 1,000
-  characters), and the similarity scanner embeds sliding windows of them.
+- **The defaults favour precision.** Across all 1,968 prompts, none of the benign ones were
+  flagged. That makes the defaults safe to put in front of real traffic.
+- **The classifier roughly doubles recall on unseen data**, from 0.23 to 0.47 on deepset. It
+  costs about 150 ms per short prompt on CPU and about 750 MB of model weights. It also adds
+  a few false positives: 1.2% on deepset-train, mostly **German** prompts, since the model
+  is English-only. The rules and the classifier complement each other: the rules cover eight
+  non-English languages, and the classifier covers English paraphrases.
+- **Recall on deepset stays limited.** Many of its positives are ordinary role prompts
+  ("I want you to act as a debater…") or requests for political opinions, which a guard
+  shouldn't block.
+- **Latency grows with prompt length.** Long prompts are split into windows for similarity
+  and into chunks for the classifier. Use a GPU (`device = 0`) or keep the classifier for
+  high-risk routes only.
+
+Enable the classifier in config:
+
+```toml
+[scanners.classifier]      # pip install "guardlayer[ml]"; first run downloads the model
+threshold = 0.7
+# device = 0               # GPU index; omit for CPU
+```
 
 ### Your own data
 

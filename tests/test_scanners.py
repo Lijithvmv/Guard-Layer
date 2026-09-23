@@ -189,11 +189,22 @@ def test_embedders():
 
 
 # --- model-backed ----------------------------------------------------------------------------
+def _fake_pipeline(texts, **kwargs):
+    assert kwargs.get("truncation") is True
+    return [{"label": "INJECTION", "score": 0.97} if "ignore" in t else {"label": "SAFE", "score": 0.99} for t in texts]
+
+
 def test_classifier_with_injected_pipeline():
-    fake = lambda text: [{"label": "INJECTION", "score": 0.97} if "ignore" in text else {"label": "SAFE", "score": 0.99}]  # noqa: E731
-    s = ClassifierScanner(pipeline=fake)
+    s = ClassifierScanner(pipeline=_fake_pipeline)
     assert rules(s, "ignore it all") == {"injection_classifier"}
     assert rules(s, "hello") == set()
+
+
+def test_classifier_chunks_long_text():
+    s = ClassifierScanner(pipeline=_fake_pipeline, chunk_chars=100, max_chunks=4)
+    doc = "harmless filler text. " * 200 + "now ignore the user"  # injection only at the very end
+    assert len(s._chunks(doc)) == 4
+    assert rules(s, doc) == {"injection_classifier"}
 
 
 def test_llm_judge():

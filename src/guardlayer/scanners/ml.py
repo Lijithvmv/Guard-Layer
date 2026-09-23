@@ -30,6 +30,8 @@ class ClassifierScanner(BaseScanner):
         threshold: float = 0.7,
         positive_labels: Iterable[str] = ("INJECTION", "LABEL_1", "jailbreak", "unsafe"),
         max_length: int = 512,
+        chunk_chars: int = 1500,
+        max_chunks: int = 16,
         device: int | str | None = None,
         pipeline: Callable[..., Any] | None = None,
         directions: Iterable[str] | None = None,
@@ -39,6 +41,8 @@ class ClassifierScanner(BaseScanner):
         self.threshold = threshold
         self.positive_labels = {label.lower() for label in positive_labels}
         self.max_length = max_length
+        self.chunk_chars = chunk_chars
+        self.max_chunks = max_chunks
         self.device = device
         self._pipeline = pipeline  # injectable for tests / custom runtimes
 
@@ -48,17 +52,33 @@ class ClassifierScanner(BaseScanner):
                 from transformers import pipeline
             except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
                 raise ModuleNotFoundError("ClassifierScanner needs: pip install 'guardlayer[ml]'") from exc
-            self._pipeline = pipeline("text-classification", model=self.model, truncation=True, max_length=self.max_length, device=self.device)
+            self._pipeline = pipeline("text-classification", model=self.model, device=self.device)
         return self._pipeline
+
+    def _chunks(self, text: str) -> list[str]:
+        """Overlapping windows, so an injection at the end of a long document is still seen
+        (the model itself truncates at `max_length` tokens)."""
+        if len(text) <= self.chunk_chars:
+            return [text]
+        step = self.chunk_chars * 3 // 4
+        chunks = [text[i : i + self.chunk_chars] for i in range(0, len(text) - self.chunk_chars // 4, step)]
+        if len(chunks) > self.max_chunks:  # keep the head and the tail, where injections usually sit
+            half = self.max_chunks // 2
+            chunks = chunks[:half] + chunks[-(self.max_chunks - half) :]
+        return chunks
 
     def scan(self, text: str, context: ScanContext) -> list[Detection]:
         if not text.strip():
             return []
-        output = self._load()(text)
-        result = output[0] if isinstance(output, list) else output
-        label, score = str(result["label"]), float(result["score"])
-        if label.lower() in self.positive_labels and score >= self.threshold:
-            return [self.detection("injection_classifier", Category.PROMPT_INJECTION.value, score, f"Classifier labelled text {label} ({score:.2f}).", model=self.model)]
+        outputs = self._load()(self._chunks(text), truncation=True, max_length=self.max_length)
+        best_label, best_score = "", 0.0
+        for output in outputs:
+            result = output[0] if isinstance(output, list) else output
+            label, score = str(result["label"]), float(result["score"])
+            if label.lower() in self.positive_labels and score > best_score:
+                best_label, best_score = label, score
+        if best_score >= self.threshold:
+            return [self.detection("injection_classifier", Category.PROMPT_INJECTION.value, best_score, f"Classifier labelled text {best_label} ({best_score:.2f}).", model=self.model)]
         return []
 
 
