@@ -1,0 +1,18 @@
+# A custom signature pack for the heuristic scanner.
+# Each rule: name, pattern (Python regex), category, severity (0-1), message, directions.
+
+[[rules]]
+name = "internal_hostname"
+pattern = "\\b[a-z0-9-]+\\.corp\\.internal\\b"
+category = "data_exfiltration"
+severity = 0.7
+message = "Response mentions an internal hostname."
+directions = ["output"]
+
+[[rules]]
+name = "refund_override"
+pattern = "\\b(approve|issue|force)\\b.{0,20}\\brefund\\b.{0,30}\\b(without|skip|bypass)\\b.{0,20}\\b(approval|verification|checks?)\\b"
+category = "prompt_injection"
+severity = 0.8
+message = "Attempts to push a refund past business checks."
+directions = ["input", "context"]
