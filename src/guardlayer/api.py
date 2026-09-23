@@ -59,8 +59,9 @@ class BatchRequest(BaseModel):
 
 
 class ToolCallRequest(BaseModel):
-    tool: str
+    tool: str = Field(max_length=256)
     arguments: dict[str, Any] | str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class CanaryAddRequest(BaseModel):
@@ -102,8 +103,19 @@ def create_app(guard: GuardLayer | None = None, *, api_key: str | None = None) -
             "block_threshold": engine.policy.block_threshold,
             "fail_closed": engine.policy.fail_closed,
             "auto_learn": engine.auto_learn,
+            "preset": engine.preset,
+            "mode": engine.policy.mode,
+            "observe": engine.policy.observe,
+            "enforce": engine.policy.enforce,
             "actions": {k: v.value for k, v in engine.policy.actions.items()},
             "scanners": [{"name": s.name, "directions": sorted(s.directions)} for s in engine.scanners],
+            "tools": {
+                "allowlist": sorted(engine.tool_policy.allowlist) if engine.tool_policy.allowlist is not None else None,
+                "denylist": sorted(engine.tool_policy.denylist),
+                "egress_allowlist": sorted(engine.tool_policy.egress_allowlist) if engine.tool_policy.egress_allowlist is not None else None,
+                "capability_actions": {k: v.value for k, v in engine.tool_policy.capability_actions.items()},
+                "rules": [{"name": r.name, "action": r.action.value} for r in engine.tool_policy.rules],  # type: ignore[union-attr]
+            },
         }
 
     @app.post("/v1/scan/input", dependencies=v1)
@@ -127,7 +139,7 @@ def create_app(guard: GuardLayer | None = None, *, api_key: str | None = None) -
 
     @app.post("/v1/scan/tool-call", dependencies=v1)
     def scan_tool_call(req: ToolCallRequest) -> dict[str, Any]:
-        return engine.scan_tool_call(req.tool, req.arguments).to_dict()
+        return engine.scan_tool_call(req.tool, req.arguments, metadata=req.metadata).to_dict()
 
     @app.post("/v1/canary/add", dependencies=v1)
     def canary_add(req: CanaryAddRequest) -> dict[str, Any]:

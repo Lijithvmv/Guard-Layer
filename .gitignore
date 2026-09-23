@@ -21,6 +21,11 @@ env/
 .env.*
 !.env.example
 
+# Audit logs and signing keys
+*audit*.jsonl
+*.key
+*.pem
+
 # IDE / OS
 .idea/
 .vscode/

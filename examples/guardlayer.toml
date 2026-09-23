@@ -3,20 +3,43 @@
 #   GuardLayer.from_config("examples/guardlayer.toml")
 #   GUARDLAYER_CONFIG=examples/guardlayer.toml guardlayer serve
 
+preset = "balanced"          # observe | balanced | strict | airgap  (`guardlayer presets`); settings below win
+
 [guard]
 flag_threshold = 0.4
 block_threshold = 0.8
 fail_closed = false          # true: block when any scanner errors (e.g. a model server is down)
 auto_learn = true            # add newly blocked prompts to the similarity store
-tool_allowlist = ["search", "calculator", "send_email"]
 redaction_format = "[REDACTED:{rule}]"
+mode = "enforce"             # "observe": record what WOULD happen (shadow_verdict), enforce nothing
+observe = ["egress_raw_ip"]  # observe-only rules/categories (globs on rule, scanner:rule, category)
+enforce = []                 # in observe mode, keep enforcing these (e.g. ["secret", "tool_policy:*"])
 
-# category, or "direction:category" (more specific) -> score | block | flag | redact | log
+# category, or "direction:category" (more specific) -> score | block | flag | review | redact | log
 [actions]
 secret = "redact"
 "output:pii" = "redact"
 "input:pii" = "log"
 policy = "block"
+
+# Agent tool-call policy, applied by guard.scan_tool_call(...)
+[tools]
+allowlist = ["search", "calculator", "send_email", "bash", "mcp__github__*"]   # globs; omit to allow any tool
+denylist = ["mcp__github__delete_*"]
+egress_allowlist = ["example.com", "api.github.com"]   # omit to allow any domain except exfil services
+capability_actions = { exec = "review" }               # hold every shell call for a human
+rule_actions = { dotenv_file = "block" }               # change a built-in rule's action
+disabled_rules = []
+capabilities = { calculator = ["read"] }               # explicit tags beat name inference
+rules = [
+  { name = "no_prod_db", pattern = "prod-db\\.internal", action = "block", message = "Agents may not touch the production database." },
+]
+
+# Tamper-evident audit log (hash-chained JSONL; signed if a key is given)
+[audit]
+path = "guardlayer-audit.jsonl"
+min_verdict = "flag"
+# signing_key = "audit.key"  # guardlayer audit keygen audit; needs the `signing` extra
 
 [scanners.heuristics]
 rules_file = "custom_rules.toml"      # resolved relative to this file

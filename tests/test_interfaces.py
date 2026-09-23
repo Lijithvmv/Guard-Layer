@@ -125,7 +125,10 @@ def test_api_scans(client):
     r = client.post("/v1/scan/batch", json={"items": [{"text": "hi"}, {"text": "rm -rf / ", "direction": "output"}]}, headers=H).json()
     assert [x["verdict"] for x in r["results"]][0] == "allow"
     r = client.post("/v1/scan/tool-call", json={"tool": "shell", "arguments": {"cmd": "ls"}}, headers=H).json()
-    assert r["verdict"] == "allow"
+    assert r["verdict"] == "allow" and r["metadata"]["capabilities"] == ["exec"]
+    r = client.post("/v1/scan/tool-call", json={"tool": "shell", "arguments": {"cmd": "git push --force"}, "metadata": {"session": "s1"}}, headers=H).json()
+    assert r["verdict"] == "review" and r["metadata"]["session"] == "s1"
+    assert r["detections"][0]["action"] == "review" and r["shadow_verdict"] is None
 
 
 def test_api_canary_corpus_settings(client):
@@ -136,6 +139,7 @@ def test_api_canary_corpus_settings(client):
     assert added["added"] == 1
     settings = client.get("/v1/settings", headers=H).json()
     assert settings["block_threshold"] == 0.8 and any(s["name"] == "heuristics" for s in settings["scanners"])
+    assert settings["mode"] == "enforce" and any(r["name"] == "destructive_command" for r in settings["tools"]["rules"])
 
 
 def test_load_samples_keeps_unicode_line_separators(tmp_path):

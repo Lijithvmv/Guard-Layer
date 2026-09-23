@@ -2,17 +2,36 @@
 
 Example `guardlayer.toml`:
 
+    preset = "balanced"            # observe | balanced | strict | airgap — the settings below override it
+
     [guard]
     flag_threshold = 0.4
     block_threshold = 0.8
     fail_closed = false
     auto_learn = true
-    tool_allowlist = ["search", "calculator"]
+    mode = "enforce"               # or "observe": log what would happen, enforce nothing
+    observe = ["egress_raw_ip"]    # only observe these rules/categories (globs), even in enforce mode
+    enforce = []                   # keep enforcing these in observe mode
 
-    [actions]                      # category or "direction:category" -> score|block|flag|redact|log
+    [actions]                      # category or "direction:category" -> score|block|flag|review|redact|log
     secret = "redact"
     "output:pii" = "redact"
     policy = "block"
+
+    [tools]                        # agent tool-call policy (see guardlayer.tools)
+    allowlist = ["search", "bash", "mcp__github__*"]
+    denylist = ["delete_repo"]
+    egress_allowlist = ["api.github.com"]
+    capabilities = { run_sql = ["write"], lookup = ["read"] }
+    capability_actions = { exec = "review" }
+    rule_actions = { egress_raw_ip = "block" }
+    disabled_rules = []
+    rules = [{ name = "no_prod", pattern = "prod-db", action = "block" }]
+
+    [audit]                        # tamper-evident JSONL audit log
+    path = "guardlayer-audit.jsonl"
+    min_verdict = "flag"
+    signing_key = "audit.key"      # optional Ed25519 PEM (needs the `signing` extra)
 
     [scanners.heuristics]
     disabled_rules = ["fake_role_header"]
@@ -36,8 +55,9 @@ Example `guardlayer.toml`:
 
 Every scanner section accepts `enabled` and `directions`. The default ensemble is on unless
 disabled; the opt-in scanners (`denylist`, `classifier`, `relevance`) switch on when their
-section is present. Environment variables override the `[guard]` section:
-GUARDLAYER_FLAG_THRESHOLD, GUARDLAYER_BLOCK_THRESHOLD, GUARDLAYER_FAIL_CLOSED, GUARDLAYER_AUTO_LEARN.
+section is present. Environment variables override the file: GUARDLAYER_PRESET,
+GUARDLAYER_MODE, GUARDLAYER_FLAG_THRESHOLD, GUARDLAYER_BLOCK_THRESHOLD, GUARDLAYER_FAIL_CLOSED,
+GUARDLAYER_AUTO_LEARN.
 """
 
 from __future__ import annotations
@@ -49,9 +69,11 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from guardlayer.audit import AuditLogger
 from guardlayer.canary import CanaryManager
-from guardlayer.models import Action
+from guardlayer.models import Action, Verdict
 from guardlayer.pipeline import DEFAULT_ACTIONS, GuardLayer, Policy
+from guardlayer.presets import deep_merge, get_preset
 from guardlayer.scanners.base import Scanner
 from guardlayer.scanners.heuristics import HeuristicScanner
 from guardlayer.scanners.leakage import CanaryScanner, PromptLeakScanner
@@ -63,6 +85,7 @@ from guardlayer.scanners.policy import DenyListScanner, LimitsScanner
 from guardlayer.scanners.relevance import RelevanceScanner
 from guardlayer.scanners.secrets import SecretsScanner
 from guardlayer.scanners.similarity import SimilarityScanner
+from guardlayer.tools import ToolPolicy
 from guardlayer.vectorstore import Embedder, NgramEmbedder, SentenceTransformerEmbedder
 
 ENV_PREFIX = "GUARDLAYER_"
@@ -130,7 +153,7 @@ SCANNER_REGISTRY: dict[str, tuple[bool, _Factory]] = {
 
 def _env_overrides(guard_cfg: dict[str, Any]) -> dict[str, Any]:
     out = dict(guard_cfg)
-    for key, cast in (("flag_threshold", float), ("block_threshold", float), ("fail_closed", _bool), ("auto_learn", _bool)):
+    for key, cast in (("flag_threshold", float), ("block_threshold", float), ("fail_closed", _bool), ("auto_learn", _bool), ("mode", str)):
         raw = os.environ.get(ENV_PREFIX + key.upper())
         if raw is not None:
             out[key] = cast(raw)
@@ -145,6 +168,9 @@ def build_guard(source: str | Path | Mapping[str, Any] | None = None) -> GuardLa
     """Construct a `GuardLayer` from a config file/dict (None = defaults + env overrides)."""
     config = load_config(source)
     base_dir = Path(source).parent if isinstance(source, (str, Path)) else None
+    preset = os.environ.get(ENV_PREFIX + "PRESET") or config.get("preset") or config.get("guard", {}).get("preset")
+    if preset:
+        config = deep_merge(get_preset(preset).config, config)
     guard_cfg = _env_overrides(config.get("guard", {}))
 
     actions = dict(DEFAULT_ACTIONS)
@@ -155,6 +181,9 @@ def build_guard(source: str | Path | Mapping[str, Any] | None = None) -> GuardLa
         actions=actions,
         fail_closed=_bool(guard_cfg.get("fail_closed", False)),
         redaction_format=guard_cfg.get("redaction_format", "[REDACTED:{rule}]"),
+        mode=guard_cfg.get("mode", "enforce"),
+        observe=list(guard_cfg.get("observe", [])),
+        enforce=list(guard_cfg.get("enforce", [])),
     )
 
     canaries = CanaryManager(prefix=guard_cfg.get("canary_prefix", "gl"))
@@ -171,10 +200,41 @@ def build_guard(source: str | Path | Mapping[str, Any] | None = None) -> GuardLa
             continue
         scanners.append(factory(options, canaries, base_dir))
 
-    return GuardLayer(
+    guard = GuardLayer(
         scanners,
         policy=policy,
         canaries=canaries,
         auto_learn=_bool(guard_cfg.get("auto_learn", False)),
-        tool_allowlist=guard_cfg.get("tool_allowlist"),
+        tool_policy=_tool_policy(config.get("tools", {}), guard_cfg, base_dir),
+    )
+    guard.preset = preset
+    audit_cfg = config.get("audit")
+    if audit_cfg:
+        guard.add_hook(_audit_logger(audit_cfg, base_dir))
+    return guard
+
+
+def _tool_policy(tools_cfg: Mapping[str, Any], guard_cfg: Mapping[str, Any], base_dir: Path | None) -> ToolPolicy:
+    options = dict(tools_cfg)
+    allowlist = options.pop("allowlist", guard_cfg.get("tool_allowlist"))  # [guard] tool_allowlist: pre-0.3 location
+    rules = list(options.pop("rules", []))
+    rules_file = options.pop("rules_file", None)
+    if rules_file:
+        rules.extend(load_config(_resolve(base_dir, rules_file)).get("rules", []))
+    try:
+        return ToolPolicy(allowlist=allowlist, rules=rules, **options)
+    except TypeError as exc:
+        raise ValueError(f"invalid [tools] config: {exc}") from exc
+
+
+def _audit_logger(audit_cfg: Mapping[str, Any], base_dir: Path | None) -> AuditLogger:
+    options = dict(audit_cfg)
+    if "path" not in options:
+        raise ValueError("[audit] needs a path")
+    return AuditLogger(
+        _resolve(base_dir, options["path"]),
+        min_verdict=Verdict(options.get("min_verdict", "allow")),
+        include_text=_bool(options.get("include_text", False)),
+        chain=_bool(options.get("chain", True)),
+        signer=_resolve(base_dir, options.get("signing_key")),
     )

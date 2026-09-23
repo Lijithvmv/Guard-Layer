@@ -3,19 +3,23 @@
 Design: layered detection. No single detector is reliable against prompt injection,
 so each scanner votes with Detections and a `Policy` decides what to do:
 
-* per category/direction **actions** — score, block, flag, redact, or just log;
+* per category/direction **actions** — score, block, flag, review, redact, or just log;
 * a **noisy-or** aggregate of the scored severities, mapped to allow / flag / block
   via two thresholds (independent weak signals compound, never exceeding 1.0);
+* **observe mode**, globally or per rule — detections are recorded and a `shadow_verdict`
+  says what enforcement would have done, but nothing is blocked or rewritten;
 * **fail-open or fail-closed** when a scanner raises.
 
 The same guard filters prompts (`scan_input`), responses (`scan_output`) and
 third-party content such as RAG chunks or tool results (`scan_context`), and wraps
-LLM calls and agent tool calls.
+LLM calls and agent tool calls (see `guardlayer.tools` for the tool-call policy).
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import fnmatch
 import functools
 import inspect
 import json
@@ -24,7 +28,7 @@ import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from guardlayer.canary import Canary, CanaryManager
 from guardlayer.models import DIRECTIONS, Action, Category, Detection, Direction, ScanContext, ScanResult, Verdict
@@ -37,6 +41,7 @@ from guardlayer.scanners.pii import PIIScanner
 from guardlayer.scanners.policy import LimitsScanner
 from guardlayer.scanners.secrets import SecretsScanner
 from guardlayer.scanners.similarity import SimilarityScanner
+from guardlayer.tools import ToolPolicy
 
 logger = logging.getLogger("guardlayer")
 
@@ -55,7 +60,13 @@ class Policy:
     """How detections become a verdict.
 
     `actions` maps a category — or a `"direction:category"` pair, which takes
-    precedence — to an `Action`. Unlisted categories are scored.
+    precedence — to an `Action`. Unlisted categories are scored. A detection that carries
+    its own `action` (tool-policy rules do) uses that instead.
+
+    `mode = "observe"` records everything but enforces nothing (shadow mode). `observe`
+    lists detections to only observe even in enforce mode; `enforce` lists detections to
+    keep enforcing in observe mode. Entries are globs matched against the rule name,
+    `scanner:rule` and the category, e.g. `"heuristics:*"`, `"egress_raw_ip"`, `"pii"`.
     """
 
     flag_threshold: float = 0.4
@@ -63,18 +74,33 @@ class Policy:
     actions: dict[str, Action] = field(default_factory=lambda: dict(DEFAULT_ACTIONS))
     fail_closed: bool = False
     redaction_format: str = "[REDACTED:{rule}]"
+    mode: Literal["enforce", "observe"] = "enforce"
+    observe: list[str] = field(default_factory=list)
+    enforce: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.flag_threshold <= self.block_threshold <= 1.0:
             raise ValueError("thresholds must satisfy 0 <= flag <= block <= 1")
+        if self.mode not in ("enforce", "observe"):
+            raise ValueError("mode must be 'enforce' or 'observe'")
         self.actions = {key: Action(value) for key, value in self.actions.items()}
+        self.observe, self.enforce = list(self.observe), list(self.enforce)
 
     def action_for(self, direction: str, category: str) -> Action:
         return self.actions.get(f"{direction}:{category}", self.actions.get(category, Action.SCORE))
 
+    def is_observed(self, detection: Detection) -> bool:
+        """True when this detection is recorded but not enforced."""
+        keys = (f"{detection.scanner}:{detection.rule}", detection.rule, detection.category)
+
+        def matches(patterns: list[str]) -> bool:
+            return any(fnmatch.fnmatchcase(k, p) for p in patterns for k in keys)
+
+        return matches(self.observe) or (self.mode == "observe" and not matches(self.enforce))
+
 
 class GuardBlocked(Exception):
-    """Raised by `protect`-wrapped calls when a prompt or response is blocked."""
+    """Raised by `protect`-wrapped calls when a prompt or response is blocked (or held for review)."""
 
     def __init__(self, result: ScanResult) -> None:
         self.result = result
@@ -110,16 +136,15 @@ class GuardLayer:
         canaries: CanaryManager | None = None,
         auto_learn: bool = False,
         tool_allowlist: Iterable[str] | None = None,
+        tool_policy: ToolPolicy | None = None,
         hooks: Iterable[Callable[[ScanResult], None]] = (),
     ) -> None:
         self.policy = policy or Policy()
         if flag_threshold is not None or block_threshold is not None:
-            self.policy = Policy(
+            self.policy = dataclasses.replace(
+                self.policy,
                 flag_threshold=self.policy.flag_threshold if flag_threshold is None else flag_threshold,
                 block_threshold=self.policy.block_threshold if block_threshold is None else block_threshold,
-                actions=self.policy.actions,
-                fail_closed=self.policy.fail_closed,
-                redaction_format=self.policy.redaction_format,
             )
         self.canaries = canaries if canaries is not None else CanaryManager()
         self.scanners: list[Scanner] = list(scanners) if scanners else default_scanners(self.canaries)
@@ -127,7 +152,10 @@ class GuardLayer:
             if isinstance(scanner, CanaryScanner) and canaries is None:
                 self.canaries = scanner.manager
         self.auto_learn = auto_learn
-        self.tool_allowlist = set(tool_allowlist) if tool_allowlist is not None else None
+        self.tool_policy = tool_policy or ToolPolicy()
+        if tool_allowlist is not None:
+            self.tool_policy.allowlist = set(tool_allowlist)
+        self.preset: str | None = None  # set by `from_preset` / a config with `preset = ...`
         self.hooks: list[Callable[[ScanResult], None]] = list(hooks)
 
     # ------------------------------------------------------------------ construction helpers
@@ -137,6 +165,21 @@ class GuardLayer:
         from guardlayer.config import build_guard
 
         return build_guard(source)
+
+    @classmethod
+    def from_preset(cls, name: str, overrides: Mapping[str, Any] | None = None) -> GuardLayer:
+        """Build a guard from a named preset (see `guardlayer.presets`), with optional config overrides."""
+        from guardlayer.config import build_guard
+
+        return build_guard({**dict(overrides or {}), "preset": name})
+
+    @property
+    def tool_allowlist(self) -> set[str] | None:
+        return self.tool_policy.allowlist
+
+    @tool_allowlist.setter
+    def tool_allowlist(self, value: Iterable[str] | None) -> None:
+        self.tool_policy.allowlist = set(value) if value is not None else None
 
     @property
     def flag_threshold(self) -> float:
@@ -214,14 +257,18 @@ class GuardLayer:
 
     # ------------------------------------------------------------------ agents
     def scan_tool_call(self, tool_name: str, arguments: Mapping[str, Any] | str | None = None, **context_fields: Any) -> ScanResult:
-        """Scan a model-proposed tool call (name + arguments) before executing it."""
+        """Scan a model-proposed tool call (name + arguments) before executing it.
+
+        Runs the tool policy (allow/deny lists, capability actions, argument and egress rules)
+        plus the content scanners over the arguments. A REVIEW verdict means: ask a human first.
+        """
         payload = arguments if isinstance(arguments, str) else json.dumps(arguments or {}, ensure_ascii=False, default=str)
-        extra: list[Detection] = []
-        if self.tool_allowlist is not None and tool_name not in self.tool_allowlist:
-            extra.append(
-                Detection("tool_policy", "tool_not_allowed", Category.POLICY.value, 1.0, f"Tool {tool_name!r} is not in the allow-list.", metadata={"tool": tool_name})
-            )
-        metadata = {**dict(context_fields.pop("metadata", {}) or {}), "tool": tool_name}
+        extra = self.tool_policy.evaluate(tool_name, arguments)
+        metadata = {
+            **dict(context_fields.pop("metadata", {}) or {}),
+            "tool": tool_name,
+            "capabilities": sorted(self.tool_policy.capabilities_of(tool_name)),
+        }
         ctx = ScanContext(direction="output", metadata=metadata, **context_fields)
         return self._run(payload, ctx, extra=extra)
 
@@ -277,26 +324,26 @@ class GuardLayer:
                 @functools.wraps(fn)
                 async def async_wrapper(prompt: str, *args: Any, **kwargs: Any) -> Any:
                     inbound = await self.ascan_input(prompt, system_prompt=system_prompt)
-                    if inbound.is_blocked:
+                    if not inbound.allowed:
                         return blocked(inbound)
                     response = await fn(inbound.text, *args, **kwargs)
                     if not isinstance(response, str):
                         return response
                     outbound = await self.ascan_output(response, prompt=inbound.text, system_prompt=system_prompt)
-                    return blocked(outbound) if outbound.is_blocked else outbound.text
+                    return outbound.text if outbound.allowed else blocked(outbound)
 
                 return async_wrapper  # type: ignore[return-value]
 
             @functools.wraps(fn)
             def wrapper(prompt: str, *args: Any, **kwargs: Any) -> Any:
                 inbound = self.scan_input(prompt, system_prompt=system_prompt)
-                if inbound.is_blocked:
+                if not inbound.allowed:
                     return blocked(inbound)
                 response = fn(inbound.text, *args, **kwargs)
                 if not isinstance(response, str):
                     return response
                 outbound = self.scan_output(response, prompt=inbound.text, system_prompt=system_prompt)
-                return blocked(outbound) if outbound.is_blocked else outbound.text
+                return outbound.text if outbound.allowed else blocked(outbound)
 
             return wrapper  # type: ignore[return-value]
 
@@ -335,24 +382,17 @@ class GuardLayer:
 
     def _decide(self, text: str, ctx: ScanContext, detections: list[Detection], errors: list[str]) -> ScanResult:
         policy = self.policy
-        scored: list[Detection] = []
-        redact: list[Detection] = []
-        forced = Verdict.ALLOW
-        for d in detections:
-            action = policy.action_for(ctx.direction, d.category)
-            if action is Action.SCORE:
-                scored.append(d)
-            elif action is Action.BLOCK:
-                forced = Verdict.BLOCK
-            elif action is Action.FLAG:
-                forced = max(forced, Verdict.FLAG)
-            elif action is Action.REDACT:
-                redact.append(d)
+        observed = [policy.is_observed(d) for d in detections]
+        enforced = [d for d, obs in zip(detections, observed, strict=True) if not obs]
+        verdict, _, redact = self._evaluate(ctx.direction, enforced)
+        full_verdict, score, _ = self._evaluate(ctx.direction, detections)  # the score reports risk, enforced or not
 
-        score = self._aggregate(scored)
-        verdict = max(self._verdict(score), forced)
-        if errors and policy.fail_closed:
+        fail = bool(errors) and policy.fail_closed
+        if fail and policy.mode == "enforce":
             verdict = Verdict.BLOCK
+        shadow: Verdict | None = None
+        if any(observed) or (fail and policy.mode == "observe"):
+            shadow = Verdict.BLOCK if fail else full_verdict
 
         sanitized = self._redact(text, redact) if redact else text
         return ScanResult(
@@ -364,7 +404,29 @@ class GuardLayer:
             modified=sanitized != text,
             errors=errors,
             metadata=dict(ctx.metadata),
+            shadow_verdict=shadow,
+            observed_rules=sorted({d.rule for d, obs in zip(detections, observed, strict=True) if obs}),
         )
+
+    def _evaluate(self, direction: str, detections: Sequence[Detection]) -> tuple[Verdict, float, list[Detection]]:
+        """Apply actions: returns (verdict, noisy-or score of the scored detections, detections to redact)."""
+        scored: list[Detection] = []
+        redact: list[Detection] = []
+        forced = Verdict.ALLOW
+        for d in detections:
+            action = Action(d.action) if d.action else self.policy.action_for(direction, d.category)
+            if action is Action.SCORE:
+                scored.append(d)
+            elif action is Action.BLOCK:
+                forced = Verdict.BLOCK
+            elif action is Action.REVIEW:
+                forced = max(forced, Verdict.REVIEW)
+            elif action is Action.FLAG:
+                forced = max(forced, Verdict.FLAG)
+            elif action is Action.REDACT:
+                redact.append(d)
+        score = self._aggregate(scored)
+        return max(self._verdict(score), forced), score, redact
 
     @staticmethod
     def _aggregate(detections: Iterable[Detection]) -> float:

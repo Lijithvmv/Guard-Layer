@@ -5,20 +5,42 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-24
+
+"Agent Guard": GuardLayer now governs what an agent is about to *do*, not just what text says.
+
 ### Added
+- **Tool-call policy** (`guardlayer.tools.ToolPolicy`, used by `scan_tool_call`). Tools carry `read` / `write` / `network` / `exec` capabilities, set explicitly (glob patterns allowed) or inferred from the tool name. Adds allow- and deny-lists with globs, per-capability actions (`capability_actions={"exec": "review"}`), custom `ToolRule`s, `rule_actions` overrides and `disabled_rules`. About 0.1 ms per call.
+- **Built-in tool rules**: `destructive_command` (block), `risky_command` (review), `persistence` (review), `credential_file` (block) and `dotenv_file` (review).
+- **Egress control** for network- and exec-capable tools: `egress_metadata_endpoint` (block), `egress_exfil_service` for tunnels, request catchers, OAST and file drops (block), `egress_not_allowed` against `egress_allowlist` (block) and `egress_raw_ip` for public IPs (flag). Private and loopback addresses are not egress.
+- **`REVIEW` verdict and action**: hold an action until a human approves it. Verdicts are ordered ALLOW < FLAG < REVIEW < BLOCK, and `ScanResult.needs_review` is new.
+- **`Detection.action`**: a rule can carry its own action, which takes precedence over the category action.
+- **Observe (shadow) mode**: `Policy(mode="observe")`, plus per-rule `observe` / `enforce` glob lists. Results gain `shadow_verdict`, `observed_rules` and `effective_verdict`. Observed detections are neither enforced nor redacted, but they still count toward `score`.
+- **Presets** (`guardlayer.presets`): `observe`, `balanced`, `strict` and `airgap`, each with a stated residual risk. Available through `GuardLayer.from_preset()`, `preset = "..."` in config, `--preset` on the CLI or `GUARDLAYER_PRESET`.
+- **Tamper-evident audit log**: `AuditLogger` hash-chains entries (`seq`, `prev_hash`, `entry_hash`), continues an existing chain on restart and can sign entries with Ed25519 (`signer=`, new `signing` extra). `verify_audit_log()` reports the first bad line and the head hash. It takes an `expected_head` to catch truncation.
+- **Config**: `[tools]` section (`allowlist`, `denylist`, `capabilities`, `capability_actions`, `rules`, `rules_file`, `rule_actions`, `disabled_rules`, `egress_allowlist`), `[audit]` section, `[guard] mode/observe/enforce`, and a `GUARDLAYER_MODE` env var.
+- **CLI**: `tool-call`, `presets`, `audit verify`, `audit keygen`, `--preset`, and `review` as a `--fail-on` level. `rules` now lists the tool rules too.
+- **REST**: `/v1/scan/tool-call` accepts `metadata` and returns capabilities. `/v1/settings` reports the preset, mode and tool policy.
+
+### Changed
+- `ScanResult.allowed` is now false for REVIEW as well as BLOCK, and `@guard.protect` stops on either.
+- `AuditLogger` filters on `effective_verdict`, so observe-mode results that would have been blocked are still logged. Chaining is on by default. An existing unchained log file must be replaced with a new file.
+- `[guard] tool_allowlist` moved to `[tools] allowlist`. The old key still works.
+- `examples/agent_tools.py` shows block, review and allow, and writes a verifiable audit log. It also no longer crashes on Windows consoles.
+
+### Also in this release (previously unreleased)
 - `benchmarks/public_eval.py`: a reproducible benchmark on deepset/prompt-injections and jackhhao/jailbreak-classification. Results are in the README.
 - 10 more heuristic rules (47 total): `forget_everything`, `change_instructions`, `new_instructions_follow`, `prompt_beginning`, instruction override / new-instruction / prompt-extraction rules for German, Spanish, French, Portuguese, Italian, Dutch, Russian and Croatian/Serbian, `unethical_ai_persona`, `has_no_rules` and `jailbreak_marker`.
 
-### Changed
+#### Changed
 - The override rule now also covers orders, tasks, assignments and information. `disable_safety` also covers "OpenAI/Anthropic/company policy".
 - The similarity search uses an inverted index for sparse vectors, which is about 2x faster on long prompts with identical results.
 - Held-out recall with zero false positives: deepset 0.08 → 0.23, jailbreak-classification 0.66 → 0.72.
-
 - `ClassifierScanner` classifies long texts in overlapping chunks (head and tail kept, up to `max_chunks`) instead of truncating at 512 tokens, so an injection at the end of a long document is still seen.
 - `benchmarks/public_eval.py` gains `--classifier`, `--classifier-only`, `--threshold` and `--splits`, and scans each sample only once.
 - The README benchmark table covers the classifier: deepset held-out recall 0.23 (rules) → 0.47 (rules + classifier), with precision still 1.00.
 
-### Fixed
+#### Fixed
 - `load_samples` and `guardlayer batch` no longer split JSONL records on Unicode line separators (U+2028, U+0085) inside strings.
 
 ## [0.2.0] - 2026-09-23

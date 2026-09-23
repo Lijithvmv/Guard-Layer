@@ -27,6 +27,7 @@ class Verdict(str, Enum):
 
     ALLOW = "allow"  # nothing notable found
     FLAG = "flag"  # suspicious — log / review, do not necessarily block
+    REVIEW = "review"  # hold until a human approves (e.g. a risky agent action)
     BLOCK = "block"  # high-confidence threat — stop it
 
     @property
@@ -54,7 +55,7 @@ class Verdict(str, Enum):
         return self.rank < other.rank
 
 
-_VERDICT_RANK = {Verdict.ALLOW: 0, Verdict.FLAG: 1, Verdict.BLOCK: 2}
+_VERDICT_RANK = {Verdict.ALLOW: 0, Verdict.FLAG: 1, Verdict.REVIEW: 2, Verdict.BLOCK: 3}
 
 
 class Category(str, Enum):
@@ -73,6 +74,8 @@ class Category(str, Enum):
     RESOURCE_ABUSE = "resource_abuse"
     GOAL_HIJACK = "goal_hijack"
     POLICY = "policy"
+    EGRESS = "egress"  # agent traffic to a risky or unapproved destination
+    TOOL_MISUSE = "tool_misuse"  # an agent action that is destructive or touches sensitive resources
 
 
 class Action(str, Enum):
@@ -81,6 +84,7 @@ class Action(str, Enum):
     SCORE = "score"  # contribute severity to the aggregate risk score (default)
     BLOCK = "block"  # force a BLOCK verdict regardless of score
     FLAG = "flag"  # force at least a FLAG verdict
+    REVIEW = "review"  # force at least a REVIEW verdict (human approval before proceeding)
     REDACT = "redact"  # mask the matched span in the returned text; not scored
     LOG = "log"  # record only; neither scored nor acted on
 
@@ -96,12 +100,15 @@ class Detection:
     message: str  # human-readable explanation
     span: tuple[int, int] | None = None  # (start, end) offsets in the scanned text, if applicable
     metadata: dict[str, Any] = field(default_factory=dict, compare=False, hash=False)
+    action: str | None = None  # an explicit Action set by the emitter (e.g. a tool rule); overrides the category action
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.severity <= 1.0:
             raise ValueError("severity must be within [0.0, 1.0]")
         if isinstance(self.category, Category):
             object.__setattr__(self, "category", self.category.value)
+        if self.action is not None:
+            object.__setattr__(self, "action", Action(self.action).value)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -141,6 +148,10 @@ class ScanResult:
     timings_ms: dict[str, float] = field(default_factory=dict)  # per-scanner latency
     errors: list[str] = field(default_factory=list)  # scanners that raised
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Observe mode: what the verdict would have been if every detection were enforced,
+    # and the rules that were only observed. `shadow_verdict` is None when nothing was observed.
+    shadow_verdict: Verdict | None = None
+    observed_rules: list[str] = field(default_factory=list)
 
     @property
     def is_blocked(self) -> bool:
@@ -151,9 +162,19 @@ class ScanResult:
         return self.verdict is Verdict.FLAG
 
     @property
+    def needs_review(self) -> bool:
+        """True when a human must approve before proceeding."""
+        return self.verdict is Verdict.REVIEW
+
+    @property
     def allowed(self) -> bool:
-        """True unless the verdict is BLOCK."""
-        return self.verdict is not Verdict.BLOCK
+        """True when it is safe to proceed without a human: the verdict is ALLOW or FLAG."""
+        return self.verdict < Verdict.REVIEW
+
+    @property
+    def effective_verdict(self) -> Verdict:
+        """The stricter of the enforced verdict and the observe-mode shadow verdict."""
+        return max(self.verdict, self.shadow_verdict) if self.shadow_verdict else self.verdict
 
     @property
     def categories(self) -> list[str]:
@@ -173,6 +194,8 @@ class ScanResult:
             "timings_ms": self.timings_ms,
             "errors": self.errors,
             "metadata": self.metadata,
+            "shadow_verdict": self.shadow_verdict.value if self.shadow_verdict else None,
+            "observed_rules": self.observed_rules,
         }
         if include_text:
             data["text"] = self.text
