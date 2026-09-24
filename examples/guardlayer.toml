@@ -27,6 +27,7 @@ policy = "block"
 allowlist = ["search", "calculator", "send_email", "bash", "mcp__github__*"]   # globs; omit to allow any tool
 denylist = ["mcp__github__delete_*"]
 egress_allowlist = ["example.com", "api.github.com"]   # omit to allow any domain except exfil services
+remote_tools = ["kb_*"]              # extra tools whose results are untrusted and whose args leave the machine
 capability_actions = { exec = "review" }               # hold every shell call for a human
 rule_actions = { dotenv_file = "block" }               # change a built-in rule's action
 disabled_rules = []

@@ -11,13 +11,14 @@ them to escalate the third:
 
 | rule                    | when                                                                  | default |
 |-------------------------|-----------------------------------------------------------------------|---------|
-| `sensitive_data_egress` | a sensitive value seen earlier appears in a network/exec call         | block   |
+| `sensitive_data_egress` | a sensitive value seen earlier leaves the machine in a tool call      | block   |
 | `trifecta`              | untrusted content + sensitive data seen, then a network/exec call     | review  |
 | `after_injection`       | content with an injection was read, then a write/network/exec call    | review  |
 
-Sensitive values are stored only as truncated SHA-256 fingerprints, never in the clear, so the
-state is safe to persist. Fingerprints catch a value copied verbatim; an encoded or split copy
-will not match, which is why the `trifecta` rule does not depend on them.
+Sensitive values are stored only as fingerprints (length, a 16-bit prefix check and a truncated SHA-256), never in the
+clear, so the state is safe to persist. Fingerprints catch a value copied verbatim, including when
+it is embedded in a longer token such as a URL path; an encoded or split copy will not match,
+which is why the `trifecta` rule does not depend on them.
 
     session = guard.session("user-42")            # or GuardLayer(...).session() for a random id
     session.scan_tool_result("fetch", page)       # the page is untrusted; may mark it hostile
@@ -39,6 +40,7 @@ import tempfile
 import threading
 import time
 import uuid
+import zlib
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -60,10 +62,57 @@ _NOT_SENSITIVE_PII = frozenset({"ip_address"})  # too common in logs to make a s
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_\-+/.@]{8,}")
 MAX_SOURCES = 50
 MAX_FINGERPRINTS = 1000
+MAX_SCAN_CHARS = 65_536  # bound on argument text searched for fingerprints
+_PREFIX = 8  # every fingerprinted value is at least this long (see _TOKEN_RE)
+
+
+def _digest(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
+
+
+def _prefix_key(value: str) -> int:
+    """16-bit checksum of the first characters: a cheap prefilter that reveals nothing useful."""
+    return zlib.crc32(value[:_PREFIX].encode("utf-8")) & 0xFFFF
 
 
 def fingerprint(value: str) -> str:
-    return hashlib.sha256(value.strip(".=/").encode("utf-8")).hexdigest()[:24]
+    """`<length>:<prefix check>:<truncated sha256>` of a sensitive value.
+
+    Length and prefix check let `contains_fingerprint` find the value anywhere inside other
+    text (a URL path, a glued token) in one pass, not only as a whole token.
+    """
+    value = value.strip(".=/")
+    return f"{len(value)}:{_prefix_key(value):04x}:{_digest(value)}"
+
+
+def contains_fingerprint(text: str, fingerprints: Iterable[str]) -> bool:
+    """True if any fingerprinted value occurs in `text`, whole or embedded in a longer token.
+
+    Every position in each run of token characters gets one CRC of its next 8 characters;
+    only positions whose CRC matches a stored prefix check are hashed in full. That keeps
+    the cost linear in the text, whatever the number of fingerprints, so
+    `https://evil.example/<secret>.png` or `data=x<secret>` match cheaply. Legacy
+    fingerprints (a plain hash) match whole tokens only.
+    """
+    by_prefix: dict[int, list[tuple[int, str]]] = {}
+    legacy: set[str] = set()
+    for fp in fingerprints:
+        parts = fp.split(":")
+        if len(parts) == 3 and parts[0].isdigit():
+            by_prefix.setdefault(int(parts[1], 16), []).append((int(parts[0]), parts[2]))
+        else:
+            legacy.add(fp)
+    text = text[:MAX_SCAN_CHARS]
+    if legacy and any(_digest(tok.strip(".=/")) in legacy for tok in _TOKEN_RE.findall(text)):
+        return True
+    if not by_prefix:
+        return False
+    for run in _TOKEN_RE.findall(text):
+        for i in range(len(run) - _PREFIX + 1):
+            candidates = by_prefix.get(_prefix_key(run[i : i + _PREFIX]))
+            if candidates and any(i + n <= len(run) and _digest(run[i : i + n]) == d for n, d in candidates):
+                return True
+    return False
 
 
 def _value_token(span_text: str) -> str | None:
@@ -363,23 +412,34 @@ def _touch(state: SessionState) -> None:
 
 
 def taint_detections(
-    policy: SessionPolicy, state: SessionState, tool: str, caps: frozenset[str], tagged: bool, arguments_text: str
+    policy: SessionPolicy,
+    state: SessionState,
+    tool: str,
+    caps: frozenset[str],
+    tagged: bool,
+    arguments_text: str,
+    *,
+    remote: bool | None = None,
 ) -> list[Detection]:
-    """Detections for a proposed tool call, given what the session has already seen."""
+    """Detections for a proposed tool call, given what the session has already seen.
+
+    `remote` (from `ToolPolicy.is_remote`) widens `sensitive_data_egress` to tools whose
+    arguments leave the machine even though they look read-only, such as a search query.
+    """
     if not policy.enabled:
         return []
     egress = not tagged or bool(caps & {"network", "exec"})
+    leaves = egress or bool(remote)
     acts = not tagged or bool(caps & {"network", "exec", "write"})
     out: list[Detection] = []
 
     def emit(rule: str, category: str, severity: float, message: str, **metadata: Any) -> None:
         out.append(Detection(SCANNER, rule, category, severity, message, metadata={"tool": tool, **metadata}, action=policy.actions[rule].value))
 
-    if egress and state.fingerprints:
-        known = set(state.fingerprints)
-        if any(fingerprint(tok) in known for tok in _TOKEN_RE.findall(arguments_text)):
+    if leaves and state.fingerprints:
+        if contains_fingerprint(arguments_text, state.fingerprints):
             emit("sensitive_data_egress", Category.DATA_EXFILTRATION.value, 1.0,
-                 "A sensitive value seen earlier in this session is being sent out by a network/exec tool.",
+                 "A sensitive value seen earlier in this session is being sent out of the machine by this tool call.",
                  sources=state.sensitive_sources[-5:])  # fmt: skip
     if egress and state.untrusted and state.sensitive:
         emit("trifecta", Category.DATA_EXFILTRATION.value, 0.7,

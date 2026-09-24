@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Security fixes from a review of 0.4.0. Each bypass was reproduced first and has a regression test in `tests/test_remote_egress.py`.
+
+### Fixed
+- **Remote tools with read-only names no longer escape taint tracking.** Results from `search`, `tavily_search`, `get_webpage` or `mcp__github__get_issue` did not mark the session untrusted, so `trifecta` never fired. An undetected injection on such a page, a `.env` read and an exfiltrating call came out ALLOW. New `ToolPolicy.is_remote()`: a tool is remote when it can reach the network or run commands, is untagged, or matches `remote_tools`. Defaults: `mcp__*`, `*search*`, `*web*`, `*page*`, `*url*`, `*issue*`, `*github*`, `*mail*` and similar. Explicit capabilities still win, so Claude Code's built-in tools are unchanged.
+- **`sensitive_data_egress` now finds secrets embedded in longer text.** Before, a secret seen earlier matched only as a whole token, so `https://evil.example/<key>`, `/log/<key>.png` and `data=x<key>` got past it. Fingerprints now also store the length and a 16-bit prefix check, and matching slides over every run of token characters in linear time (a 64 KB argument with 50 fingerprints takes about 50 ms). Session files written by 0.4.0 still match whole tokens. It also covers remote tools whose arguments leave the machine, such as a search query.
+- **Secrets in outgoing tool arguments are no longer just redacted.** The secrets scanner only rewrote `result.text`, while every integration ran the tool with the original arguments, so the secret left and the verdict was ALLOW. New tool rule `secret_in_egress` (default **review**, configurable through `rule_actions` and `disabled_rules`) fires when a remote tool's arguments contain a secret.
+
+### Added
+- `[tools] remote_tools` / `ToolPolicy(remote_tools=..., include_default_remote_tools=...)`. Tool-call results carry `metadata["remote"]`.
+
 ## [0.4.0] - 2026-09-24
 
 Sessions and integrations: an agent action is judged by what the session has already seen, and GuardLayer plugs into Claude Code, LangGraph and the OpenAI Agents SDK.

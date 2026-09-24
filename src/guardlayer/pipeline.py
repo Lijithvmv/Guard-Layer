@@ -301,11 +301,9 @@ class GuardLayer:
             metadata["session_id"] = state.id
         result = self.scan(content, "context", metadata=metadata, **context_fields)
         if state is not None:
-            if tool is None:
-                reaches_network = True
-            else:
-                caps, tagged = self.tool_policy.resolve(tool)
-                reaches_network = not tagged or bool(caps & {"network", "exec"})
+            # Results of remote tools (network/exec, untagged, or matching `remote_tools` such as
+            # MCP or search tools) are untrusted: someone outside this machine could have written them.
+            reaches_network = True if tool is None else self.tool_policy.is_remote(tool)
             observe_content(
                 self.session_policy, state, content, result,
                 source=source or "context", tool=tool, can_reach_network=reaches_network,
@@ -336,17 +334,22 @@ class GuardLayer:
         """
         payload = arguments if isinstance(arguments, str) else json.dumps(arguments or {}, ensure_ascii=False, default=str)
         caps, tagged = self.tool_policy.resolve(tool_name)
+        remote = self.tool_policy.is_remote(tool_name)
+        arguments_text = flatten_arguments(arguments)
         extra = self.tool_policy.evaluate(tool_name, arguments)
         metadata = {
             **dict(context_fields.pop("metadata", {}) or {}),
             "tool": tool_name,
             "capabilities": sorted(caps),
+            "remote": remote,
         }
+        if remote:
+            extra += self._secrets_in_egress(tool_name, arguments_text)
         state = self._load_session(session)
         if state is not None:
             metadata["session_id"] = state.id
             metadata["session"] = {"untrusted": state.untrusted, "hostile": state.hostile, "sensitive": state.sensitive}
-            extra += taint_detections(self.session_policy, state, tool_name, caps, tagged, flatten_arguments(arguments))
+            extra += taint_detections(self.session_policy, state, tool_name, caps, tagged, arguments_text, remote=remote)
         if scan_content is None:
             scan_content = self.tool_policy.can_act(tool_name)
         ctx = ScanContext(direction="output", metadata=metadata, **context_fields)
@@ -355,6 +358,32 @@ class GuardLayer:
             observe_tool_call(state, tool_name, result)
             self.sessions.put(state)
         return result
+
+    def _secrets_in_egress(self, tool_name: str, arguments_text: str) -> list[Detection]:
+        """A secret in the arguments of a call that leaves the machine needs a human.
+
+        Redacting it would not help: integrations run the tool with the original arguments,
+        so the secret would leave unredacted. Uses the guard's own secrets scanner(s), so
+        disabling the `secrets` scanner also disables this check.
+        """
+        if not arguments_text or "secret_in_egress" in self.tool_policy.disabled_rules:
+            return []
+        found: list[Detection] = []
+        ctx = ScanContext(direction="output", metadata={"tool": tool_name})
+        for scanner in self.scanners:
+            if isinstance(scanner, SecretsScanner):
+                found += scanner.scan(arguments_text, ctx)
+        if not found:
+            return []
+        kinds = sorted({d.rule for d in found})
+        return [
+            Detection(
+                "tool_policy", "secret_in_egress", Category.DATA_EXFILTRATION.value, 0.9,
+                f"Tool {tool_name!r} would send a secret out of the machine ({', '.join(kinds)}).",
+                metadata={"tool": tool_name, "secrets": kinds},
+                action=self.tool_policy.rule_actions.get("secret_in_egress", Action.REVIEW).value,
+            )
+        ]  # fmt: skip
 
     def scan_tool_result(self, tool_name: str, result: Any, *, session: str | GuardSession | None = None, **context_fields: Any) -> ScanResult:
         """Scan what a tool returned before the model reads it (indirect injection channel).

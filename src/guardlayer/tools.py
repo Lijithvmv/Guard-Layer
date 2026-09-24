@@ -12,7 +12,10 @@ needs a policy over the action itself:
   by capability: destructive and risky shell commands, persistence, credential files;
 * **egress control** — every destination in a network or exec call is checked for cloud
   metadata endpoints, tunnel and request-capture services, raw public IPs, and (optionally)
-  a domain allow-list.
+  a domain allow-list;
+* **remote tools** — `is_remote()` marks tools that reach outside the machine even when their
+  names sound read-only (`mcp__*`, `*search*`, `*page*`, ...). Their results count as untrusted
+  and their arguments as leaving the machine (see `DEFAULT_REMOTE_TOOLS`, `remote_tools`).
 
 Untagged tools (no explicit or inferred capability) are treated as able to do anything,
 so every rule applies to them. `ToolPolicy.evaluate` returns `Detection`s that carry
@@ -47,6 +50,19 @@ _NAME_HINTS: dict[str, frozenset[str]] = {
     ),
     "read": frozenset("read get list search query find open cat view lookup ls load retrieve".split()),
 }
+
+
+# Tools whose results come from, or whose arguments go to, somewhere outside this machine,
+# even when their names sound read-only: MCP servers, search engines, web pages, SaaS APIs.
+# Their results count as untrusted content, and secrets in their arguments count as leaving.
+# Matched case-insensitively against untagged/inferred tools; explicit capabilities win.
+DEFAULT_REMOTE_TOOLS: tuple[str, ...] = tuple(
+    """
+    mcp__* *search* *web* *page* *site* *url* *http* *scrape* *crawl* *browse* *browser* *google* *bing*
+    *serp* *tavily* *exa_* *wiki* *news* *rss* *feed* *issue* *github* *gitlab* *jira* *notion*
+    *confluence* *slack* *mail* *inbox* *drive* *dropbox* *s3* *tweet* *reddit* *youtube*
+    """.split()
+)
 
 
 def infer_capabilities(tool_name: str) -> frozenset[str]:
@@ -274,6 +290,8 @@ class ToolPolicy:
         block_exfil_services: bool = True,
         flag_raw_ips: bool = True,
         infer: bool = True,
+        remote_tools: Iterable[str] = (),
+        include_default_remote_tools: bool = True,
     ) -> None:
         self.allowlist = set(allowlist) if allowlist is not None else None
         self.denylist = set(denylist)
@@ -287,6 +305,7 @@ class ToolPolicy:
         if unknown:
             raise ValueError(f"capability_actions: unknown capabilities {sorted(unknown)}; use {CAPABILITIES}")
         disabled = set(disabled_rules)
+        self.disabled_rules = disabled
         custom = [r if isinstance(r, ToolRule) else ToolRule.from_dict(r) for r in rules]
         self.rules: list[ToolRule] = [r for r in (*(DEFAULT_TOOL_RULES if include_default_rules else ()), *custom) if r.name not in disabled]
         self.rule_actions = {k: Action(v) for k, v in (rule_actions or {}).items()}
@@ -294,6 +313,23 @@ class ToolPolicy:
         self.block_exfil_services = block_exfil_services
         self.flag_raw_ips = flag_raw_ips
         self.infer = infer
+        self.remote_tools = [p.lower() for p in (*(DEFAULT_REMOTE_TOOLS if include_default_remote_tools else ()), *remote_tools)]
+
+    def _explicit(self, tool: str) -> bool:
+        return tool in self.capabilities or any(fnmatch.fnmatchcase(tool, p) for p in self.capabilities)
+
+    def is_remote(self, tool: str) -> bool:
+        """True when the tool talks to something outside this machine: its results are untrusted
+        content and its arguments leave the machine. Network/exec-capable and untagged tools are
+        remote; so are inferred or untagged tools matching `remote_tools` (e.g. `mcp__*`,
+        `*search*`), even when their names sound read-only. Explicit capabilities win."""
+        caps, tagged = self.resolve(tool)
+        if not tagged or caps & {"network", "exec"}:
+            return True
+        if self._explicit(tool):
+            return False
+        name = tool.lower()
+        return any(fnmatch.fnmatchcase(name, p) for p in self.remote_tools)
 
     def resolve(self, tool: str) -> tuple[frozenset[str], bool]:
         """(capabilities, tagged). An explicit empty list tags a tool as harmless; untagged tools match every rule."""

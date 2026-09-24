@@ -157,6 +157,7 @@ What the tool policy checks, with the default rules:
 | `egress_exfil_service` | network, exec | block | ngrok, trycloudflare, webhook.site, interactsh/OAST, transfer.sh |
 | `egress_not_allowed` | network, exec | block | any host outside `egress_allowlist`, if one is set |
 | `egress_raw_ip` | network, exec | flag | `curl 45.33.32.156`; private and loopback IPs are ignored |
+| `secret_in_egress` | remote tools | review | a secret (API key, token, private key…) in the arguments of a call that leaves the machine |
 | `tool_not_allowed` / `tool_denied` | any tool | block | tools outside the allow-list, or on the deny-list |
 
 A tool's capabilities come from `capabilities={...}`, which accepts globs, or are inferred
@@ -168,6 +169,17 @@ change an action (`rule_actions={"egress_raw_ip": "block"}`), or switch rules of
 (`disabled_rules`). The content scanners also run on the arguments of tools that can act,
 so a shell command with an embedded AWS key or an injection string is caught too. They
 skip read-only tools, whose arguments can't cause harm.
+
+**Remote tools.** Some tools reach outside the machine even though their names sound
+read-only: `search`, `get_webpage`, `mcp__github__get_issue`. Their results can be written by
+an outsider, and their arguments (a search query, for example) leave the machine. A tool is
+*remote* when it can reach the network or run commands, is untagged, or matches
+`remote_tools`. The defaults cover `mcp__*` and names containing `search`, `web`, `page`,
+`url`, `scrape`, `issue`, `github`, `slack`, `mail` and similar. Add your own with
+`remote_tools=[...]` (or `[tools] remote_tools`), or opt out with
+`include_default_remote_tools=False`. Explicit `capabilities` always win. A secret in the
+arguments of a remote tool triggers `secret_in_egress`. Redacting it wouldn't help, because
+the tool would still run with the original arguments.
 
 We tested the defaults on 31 attack commands and 23 everyday dev commands (`pytest`,
 `npm install`, `rm -rf ./build`, `git push origin main`, `curl` to localhost). All 31 attacks
@@ -191,21 +203,24 @@ s.scan_tool_call("http_post", {"url": u, "body": b})  # escalated by what the se
 
 | Rule | Fires when | Default |
 |---|---|---|
-| `sensitive_data_egress` | a secret seen earlier in the session appears in a network or exec call | block |
+| `sensitive_data_egress` | a secret seen earlier in the session leaves the machine in a tool call, even embedded in a URL path or glued to other text | block |
 | `trifecta` | the session read untrusted content **and** sensitive data, then tries a network or exec call | review |
 | `after_injection` | the session read content with a prompt injection, then tries a write, network or exec call | review |
 
 What counts:
-- **Untrusted content:** output of network-capable or untagged tools, and anything passed to
+- **Untrusted content:** output of remote tools (network or exec capable, untagged, or
+  matching `remote_tools`, such as MCP and search tools), and anything passed to
   `scan_context`. Add or remove tools with `untrusted_tools` and `trusted_tools`.
 - **Sensitive data:** secrets or personal data found in what the agent read or was given,
   and credential or `.env` files it opened.
 
-Sensitive values are stored only as truncated SHA-256 fingerprints, so session state is safe
-to persist. State lives in memory by default, or on disk (`FileSessionStore`, or
-`[session] store = "file"`) when every check runs in its own process. Fingerprints only
-match a value copied verbatim, so an encoded copy gets past `sensitive_data_egress`.
-`trifecta` still catches the egress, because it doesn't depend on matching the value.
+Sensitive values are stored only as fingerprints (the length, a 16-bit prefix check and a
+truncated SHA-256), so session state is safe to persist. State lives in memory by default,
+or on disk (`FileSessionStore`, or `[session] store = "file"`) when every check runs in its
+own process. Fingerprints match a value copied verbatim, including one embedded in a longer
+token such as `https://evil.example/<key>.png`. Matching stays linear in the length of the
+arguments. An *encoded* copy (base64, split in two) still gets past `sensitive_data_egress`.
+`trifecta` catches that case, because it doesn't depend on matching the value.
 
 ## Integrations
 

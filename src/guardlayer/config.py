@@ -22,6 +22,7 @@ Example `guardlayer.toml`:
     allowlist = ["search", "bash", "mcp__github__*"]
     denylist = ["delete_repo"]
     egress_allowlist = ["api.github.com"]
+    remote_tools = ["kb_*"]         # + defaults (mcp__*, *search*, ...): results untrusted, args leave the machine
     capabilities = { run_sql = ["write"], lookup = ["read"] }
     capability_actions = { exec = "review" }
     rule_actions = { egress_raw_ip = "block" }
