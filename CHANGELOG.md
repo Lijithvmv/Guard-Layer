@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-27
+
 Security fixes from a review of 0.4.0. Each bypass was reproduced first and has a regression test in `tests/test_remote_egress.py`.
 
 ### Fixed

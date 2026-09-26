@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "guardlayer"
-version = "0.4.0"
+version = "0.4.1"
 description = "A lightweight security layer that filters the inputs and outputs of LLM and agent applications — prompt injection, jailbreaks, leakage, secrets, PII and unsafe actions."
 readme = "README.md"
 requires-python = ">=3.10"
