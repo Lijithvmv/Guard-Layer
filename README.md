@@ -382,6 +382,7 @@ $ guardlayer evidence controls                                            # the 
 | CSA AI Controls Matrix v1.1.1 | input and output monitoring (LOG-15/16), log records (LOG-09), sanitized logs (LOG-08), guardrails (TVM-13), input/output validation (AIS-09/10), prompt differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials (IAM-14), human supervision (GRC-15); log protection (LOG-02) only when the log verifies |
 | MITRE ATLAS mitigations (v2026.09) | guardrails (M0020), telemetry logging (M0024), agent tool permissions (M0028), human in the loop for agent actions (M0029), restricting tool calls on untrusted data (M0030), tool input/output validation (M0033), resource limits (M0036) |
 | OWASP AISVS 1.0 | injection screening and detection (C2.1.3, C12.2.1, C12.2.3), smuggling and special tokens (C2.1.2, C2.1.7), input limits and many-shot (C2.1.4, C2.1.8), output leakage and outbound-request prevention (C7.3.2–C7.3.4), human approval (C9.2.1), untrusted data vs tool calls (C9.3.5), runtime tool policy (C9.5.1, C9.5.3), secrets out of context (C9.5.4), decision logging (C12.1.2) |
+| UK Code of Practice for the Cyber Security of AI (2025) | logging of system and user actions (12.1), behaviour analysis (12.2), human oversight (4.1, 4.3), least-privilege permissions for the AI system (2.6), sensitive-data protection (5.4), input checks and sanitisation (5.4.1) |
 
 Every record carries the audit entry's `seq` and `entry_hash`, and the pack header carries the verification result, the
 source file's SHA-256 and the head hash, so an auditor can re-verify any row against the original log. The export refuses
@@ -395,7 +396,8 @@ system's risk classification.
 
 CSA AI Controls Matrix control IDs and titles are referenced from the Cloud Security Alliance AI Controls Matrix Version 1.1.1
 (© Cloud Security Alliance); no control text is reproduced. MITRE ATLAS mitigation names are from MITRE's atlas-data
-(Apache-2.0). OWASP AISVS (CC BY-SA 4.0) requirement IDs are cited as `v1.0-C<id>`; the short descriptions are GuardLayer's own.
+(Apache-2.0). OWASP AISVS (CC BY-SA 4.0) requirement IDs are cited as `v1.0-C<id>`; the short descriptions are GuardLayer's own. The UK Code of Practice for the
+Cyber Security of AI is Crown copyright, used under the Open Government Licence v3.0.
 
 ### Canary tokens
 

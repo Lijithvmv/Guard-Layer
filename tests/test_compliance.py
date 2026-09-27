@@ -249,3 +249,20 @@ def test_aisvs_ids_exist_in_v1_0():
     verified = {"C2.1.2", "C2.1.3", "C2.1.4", "C2.1.7", "C2.1.8", "C7.3.2", "C7.3.3", "C7.3.4", "C9.2.1", "C9.3.5",
                 "C9.5.1", "C9.5.3", "C9.5.4", "C12.1.2", "C12.2.1", "C12.2.3"}  # fmt: skip
     assert {c.id for c in CONTROLS.values() if c.framework == "owasp-aisvs-1.0"} == verified
+
+
+def test_uk_code_of_practice_mapping():
+    assert "uk-ai-cop:12.1" in entry_controls({"verdict": "allow", "detections": []})
+    inj = entry_controls({"verdict": "block", "direction": "context",
+                          "detections": [{"scanner": "heuristics", "rule": "r", "category": "prompt_injection"}]})
+    assert {"uk-ai-cop:12.2", "uk-ai-cop:5.4.1"} <= set(inj)
+    review = entry_controls({"verdict": "review", "direction": "output", "metadata": {"tool": "bash"},
+                             "detections": [{"scanner": "tool_policy", "rule": "risky_command", "category": "tool_misuse"}]})
+    assert {"uk-ai-cop:4.1", "uk-ai-cop:4.3", "uk-ai-cop:2.6"} <= set(review)
+    pii = entry_controls({"verdict": "allow", "direction": "output", "detections": [{"rule": "email", "category": "pii"}]})
+    assert "uk-ai-cop:5.4" in pii
+
+
+def test_uk_code_provisions_exist():
+    # Provision numbers checked against the gov.uk publication (January 2025) on 2026-09-27.
+    assert {c.id for c in CONTROLS.values() if c.framework == "uk-ai-cop"} == {"2.6", "4.1", "4.3", "5.4", "5.4.1", "12.1", "12.2"}

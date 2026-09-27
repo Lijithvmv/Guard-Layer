@@ -24,6 +24,9 @@ All notable changes to this project are documented here. The format follows
   differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
   (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
   referenced with attribution; no control text is included.
+- **UK Code of Practice for the Cyber Security of AI (2025) in the evidence export** (mapping version `2026.09.4`,
+  Open Government Licence v3.0): 12.1 logging, 12.2 behaviour analysis, 4.1/4.3 human oversight, 2.6 least-privilege
+  permissions for the AI system, 5.4 sensitive data, 5.4.1 input checks and sanitisation.
 - **MITRE ATLAS mitigations and OWASP AISVS 1.0 in the evidence export** (mapping version `2026.09.3`). ATLAS
   mitigations (v2026.09): M0020, M0024, M0028, M0029, M0030, M0033, M0036. AISVS 1.0: C2.1.2–C2.1.8, C7.3.2–C7.3.4,
   C9.2.1, C9.3.5, C9.5.1/C9.5.3/C9.5.4, C12.1.2, C12.2.1, C12.2.3. Human-in-the-loop mappings apply only to reviews of
