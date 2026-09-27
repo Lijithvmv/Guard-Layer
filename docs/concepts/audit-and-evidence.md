@@ -60,6 +60,7 @@ guardlayer evidence export audit.jsonl --format jsonl --framework iso-42001   # 
 | HIPAA Security Rule | audit controls, access control, transmission security, incident response, activity review, malicious software (only where the system handles ePHI) |
 | GDPR | integrity and confidentiality, protection by design, security of processing (for personal data detected); minimisation and protection by default (for hash-only logs) |
 | PCI DSS v4.0.1 | audit logs, change detection on logs (verified), card-number masking in output, least-privilege application accounts, outbound allow-list (where cardholder data is in scope) |
+| CMMC 2.0 Level 2 | auditing and audit protection, monitoring for attacks, access and function control for agent tools, CUI flow, boundary protection, malicious code |
 
 Every record carries the audit entry's `seq` and `entry_hash`, and the pack header carries the verification result, the
 source file's SHA-256 and the head hash, so an auditor can re-verify any row against the original log. The export

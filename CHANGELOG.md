@@ -24,6 +24,10 @@ All notable changes to this project are documented here. The format follows
   differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
   (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
   referenced with attribution; no control text is included.
+- **CMMC 2.0 Level 2 in the evidence export** (mapping version `2026.09.13`), practice IDs and titles from the DoD CMMC
+  Assessment Guide Level 2 v2.13: AU.L2-3.3.1 on every entry, AU.L2-3.3.8 when the log verifies, SI.L2-3.14.6 on
+  detections, AC.L2-3.1.1/3.1.2/3.1.5 for tool policy, AC.L2-3.1.3 for session taint and data leaving, SC.L2-3.13.1 for
+  egress rules and SC.L2-3.13.6 for allow-list blocks, SI.L2-3.14.2 for blocked persistence.
 - **PCI DSS v4.0.1 in the evidence export** (mapping version `2026.09.12`): 10.2.1 on every entry, 10.3.4 when the log
   verifies, 3.4.1 for card numbers masked in output, 7.2.5 for tool policy, 1.3.2 for allow-list egress blocks. 3.5.1 is
   deliberately not claimed (the log's text hash is unkeyed).

@@ -28,6 +28,7 @@ Frameworks mapped (see `CONTROLS`):
     hipaa-security      HIPAA Security Rule standards and implementation specifications
     gdpr                GDPR articles (where personal data is processed)
     pci-dss-4           PCI DSS v4.0.1 requirements (where cardholder data is in scope)
+    cmmc-l2             CMMC 2.0 Level 2 practices (NIST SP 800-171 Rev. 2)
 
 **What a mapping means.** A mapped entry is evidence *relevant to* a control: it shows the
 control's runtime safeguard operating. It is not an attestation that the control, or the
@@ -52,7 +53,7 @@ from typing import Any
 
 from guardlayer.audit import AuditVerification, verify_audit_log
 
-MAPPING_VERSION = "2026.09.12"
+MAPPING_VERSION = "2026.09.13"
 
 DISCLAIMER = (
     "Control mappings identify runtime evidence relevant to each control. They do not certify compliance "
@@ -91,6 +92,7 @@ FRAMEWORKS: dict[str, str] = {
     "hipaa-security": "HIPAA Security Rule (45 CFR Part 164, Subpart C)",
     "gdpr": "GDPR (Regulation (EU) 2016/679)",
     "pci-dss-4": "PCI DSS v4.0.1",
+    "cmmc-l2": "CMMC 2.0 Level 2 (NIST SP 800-171 Rev. 2)",
 }
 
 _CATALOG: list[tuple[str, str, str]] = [
@@ -252,6 +254,17 @@ _CATALOG: list[tuple[str, str, str]] = [
     ("pci-dss-4", "7.2.5", "Application and system account privileges limited to what's necessary"),
     ("pci-dss-4", "10.2.1", "Audit logs enabled and active"),
     ("pci-dss-4", "10.3.4", "Change detection on audit logs"),
+    # CMMC Level 2 practices, IDs and titles from the DoD CMMC Assessment Guide Level 2 v2.13 (Sept 2024), public domain.
+    ("cmmc-l2", "AC.L2-3.1.1", "Authorized Access Control"),
+    ("cmmc-l2", "AC.L2-3.1.2", "Transaction & Function Control"),
+    ("cmmc-l2", "AC.L2-3.1.3", "Control CUI Flow"),
+    ("cmmc-l2", "AC.L2-3.1.5", "Least Privilege"),
+    ("cmmc-l2", "AU.L2-3.3.1", "System Auditing"),
+    ("cmmc-l2", "AU.L2-3.3.8", "Audit Protection"),
+    ("cmmc-l2", "SC.L2-3.13.1", "Boundary Protection"),
+    ("cmmc-l2", "SC.L2-3.13.6", "Network Communication by Exception"),
+    ("cmmc-l2", "SI.L2-3.14.2", "Malicious Code Protection"),
+    ("cmmc-l2", "SI.L2-3.14.6", "Monitor Communications for Attacks"),
 ]
 
 CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, cid, title in _CATALOG}
@@ -265,6 +278,7 @@ BASELINE: tuple[str, ...] = (
     "etsi-en-304-223:5.4.2-1", "nist-sp-800-53:AU-2", "nist-sp-800-53:AU-3", "nist-sp-800-53:AU-12",
     "nist-csf-2.0:PR.PS-04", "nist-csf-2.0:DE.CM-09", "iso-27001:A.8.15", "iso-27001:A.8.16",
     "soc2-tsc:CC7.2", "hipaa-security:164.312(b)", "pci-dss-4:10.2.1",
+    "cmmc-l2:AU.L2-3.3.1",
 )  # fmt: skip
 # By direction: what was monitored.
 ON_DIRECTION: dict[str, tuple[str, ...]] = {
@@ -272,7 +286,7 @@ ON_DIRECTION: dict[str, tuple[str, ...]] = {
 }  # fmt: skip
 # Claimed only when the log's hash chain (and signatures, if checked) verified: the log itself is protected.
 ON_VERIFIED: tuple[str, ...] = ("csa-aicm:LOG-02", "nist-sp-800-53:AU-9", "nist-sp-800-53:AU-9(3)", "nist-csf-2.0:PR.DS-01",
-    "iso-27001:A.5.33", "pci-dss-4:10.3.4",
+    "iso-27001:A.5.33", "pci-dss-4:10.3.4", "cmmc-l2:AU.L2-3.3.8",
 )
 # Claimed only when every entry's Ed25519 signature verified: origin can't be repudiated.
 ON_SIGNED: tuple[str, ...] = ("nist-sp-800-53:AU-10",)
@@ -282,7 +296,7 @@ ON_SANITIZED: tuple[str, ...] = ("csa-aicm:LOG-08", "gdpr:Art. 5(1)(c)", "gdpr:A
 ON_DETECTION: tuple[str, ...] = (
     "nist-ai-rmf:MEASURE 2.7", "eu-ai-act:Art. 15", "csa-aicm:TVM-13", "mitre-atlas-mitigations:AML.M0020",
     "uk-ai-cop:12.2", "etsi-en-304-223:5.4.2-2", "nist-sp-800-53:SI-4", "soc2-tsc:CC7.3",
-    "hipaa-security:164.308(a)(6)(ii)", "hipaa-security:164.308(a)(1)(ii)(D)",
+    "hipaa-security:164.308(a)(6)(ii)", "hipaa-security:164.308(a)(1)(ii)(D)", "cmmc-l2:SI.L2-3.14.6",
 )  # fmt: skip
 # REVIEW: a human decides before the action proceeds.
 ON_REVIEW: tuple[str, ...] = ("eu-ai-act:Art. 14", "csa-aicm:GRC-15", "uk-ai-cop:4.1", "uk-ai-cop:4.3",
@@ -298,10 +312,11 @@ SCANNER_CONTROLS: dict[str, tuple[str, ...]] = {
     "tool_policy": ("mitre-atlas-mitigations:AML.M0028", "owasp-aisvs-1.0:C9.5.1", "owasp-aisvs-1.0:C9.5.3", "uk-ai-cop:2.6",
                     "etsi-en-304-223:5.1.2-6", "nist-sp-800-53:AC-3", "nist-sp-800-53:AC-6",
                     "nist-csf-2.0:PR.AA-05", "iso-27001:A.5.15", "soc2-tsc:CC6.1", "soc2-tsc:CC6.3",
-                    "hipaa-security:164.312(a)(1)", "pci-dss-4:7.2.5"),
+                    "hipaa-security:164.312(a)(1)", "pci-dss-4:7.2.5",
+                    "cmmc-l2:AC.L2-3.1.1", "cmmc-l2:AC.L2-3.1.2", "cmmc-l2:AC.L2-3.1.5"),
     "session": ("mitre-atlas-mitigations:AML.M0030", "owasp-aisvs-1.0:C9.3.5", "owasp-aisvs-1.0:C9.5.3",
                 "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12", "soc2-tsc:CC6.7",
-                "hipaa-security:164.312(e)(1)"),
+                "hipaa-security:164.312(e)(1)", "cmmc-l2:AC.L2-3.1.3"),
 }  # fmt: skip
 
 _INJECTION = ("owasp-llm-2026:LLM01", "owasp-llm-2025:LLM01", "mitre-atlas:AML.T0051")
@@ -321,7 +336,8 @@ CATEGORY_CONTROLS: dict[str, tuple[str, ...]] = {
     "secret": _DISCLOSURE,
     "pii": _DISCLOSURE,
     "egress": (*_DISCLOSURE, "owasp-agentic-2026:ASI02", "csa-aicm:DSP-10", "nist-sp-800-53:SC-7", "nist-csf-2.0:PR.DS-02",
-               "iso-27001:A.8.12", "iso-27001:A.8.23", "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)"),
+               "iso-27001:A.8.12", "iso-27001:A.8.23", "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)",
+               "cmmc-l2:SC.L2-3.13.1"),
     "unsafe_link": ("owasp-llm-2026:LLM10", "owasp-llm-2025:LLM05", *_DISCLOSURE, *_OUTPUT),
     "unsafe_command": (*_AGENCY, "owasp-agentic-2026:ASI05"),
     "tool_misuse": _AGENCY,
@@ -333,7 +349,8 @@ RULE_CONTROLS: dict[str, tuple[str, ...]] = {
     "credential_file": ("owasp-agentic-2026:ASI03", *_DISCLOSURE, "csa-aicm:IAM-14", "iso-27001:A.8.3"),
     "dotenv_file": ("owasp-agentic-2026:ASI03", *_DISCLOSURE, "csa-aicm:IAM-14", "iso-27001:A.8.3"),
     "destructive_command": ("owasp-agentic-2026:ASI05",),
-    "persistence": ("owasp-agentic-2026:ASI05", "nist-csf-2.0:PR.PS-05", "soc2-tsc:CC6.8", "hipaa-security:164.308(a)(5)(ii)(B)"),  # e.g. a curl | sh line in ~/.bashrc
+    "persistence": ("owasp-agentic-2026:ASI05", "nist-csf-2.0:PR.PS-05", "soc2-tsc:CC6.8", "hipaa-security:164.308(a)(5)(ii)(B)",
+                    "cmmc-l2:SI.L2-3.14.2"),  # e.g. a curl | sh line in ~/.bashrc
     "risky_command": ("owasp-agentic-2026:ASI03", "owasp-agentic-2026:ASI05"),  # includes privilege escalation
     "egress_metadata_endpoint": ("owasp-agentic-2026:ASI03",),  # cloud instance credentials
     "capability_exec": ("owasp-agentic-2026:ASI05",),
@@ -341,11 +358,11 @@ RULE_CONTROLS: dict[str, tuple[str, ...]] = {
     "tool_denied": _AGENCY,
     "after_injection": ("owasp-agentic-2026:ASI01", "owasp-agentic-2026:ASI06"),
     "trifecta": ("owasp-agentic-2026:ASI02",),
-    "egress_not_allowed": ("nist-sp-800-53:SC-7(5)", "pci-dss-4:1.3.2"),  # fires only when an egress allow-list is set
+    "egress_not_allowed": ("nist-sp-800-53:SC-7(5)", "pci-dss-4:1.3.2", "cmmc-l2:SC.L2-3.13.6"),  # fires only when an egress allow-list is set
     "sensitive_data_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12",
-                              "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)"),
+                              "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)", "cmmc-l2:AC.L2-3.1.3"),
     "secret_in_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12",
-                         "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)"),
+                         "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)", "cmmc-l2:AC.L2-3.1.3"),
     "fake_special_tokens": ("owasp-aisvs-1.0:C2.1.7",),
     "many_shot_pattern": ("owasp-aisvs-1.0:C2.1.8",),
     "oversized_input": ("owasp-aisvs-1.0:C2.1.4",),

@@ -433,3 +433,21 @@ def test_pci_change_detection_only_on_verified_logs(tmp_path):
     lines = log.read_text(encoding="utf-8").splitlines()
     log.write_text("\n".join(lines[1:]) + "\n", encoding="utf-8")   # delete the first entry
     assert not any("pci-dss-4:10.3.4" in r["controls"] for r in build_evidence(log).records)
+
+
+def test_cmmc_level_2_mapping():
+    assert "cmmc-l2:AU.L2-3.3.1" in entry_controls({"verdict": "allow", "detections": []})
+    det = set(entry_controls({"verdict": "block", "direction": "context",
+                              "detections": [{"scanner": "heuristics", "rule": "r", "category": "prompt_injection"}]}))
+    assert "cmmc-l2:SI.L2-3.14.6" in det
+    tool = set(entry_controls({"verdict": "block", "direction": "output", "metadata": {"tool": "http_get"},
+                               "detections": [{"scanner": "tool_policy", "rule": "egress_not_allowed", "category": "egress"}]}))
+    assert {"cmmc-l2:AC.L2-3.1.1", "cmmc-l2:AC.L2-3.1.2", "cmmc-l2:AC.L2-3.1.5", "cmmc-l2:SC.L2-3.13.1",
+            "cmmc-l2:SC.L2-3.13.6"} <= tool
+    flow = set(entry_controls({"verdict": "block", "direction": "output", "metadata": {"tool": "http_post"},
+                               "detections": [{"scanner": "session", "rule": "sensitive_data_egress", "category": "data_exfiltration"}]}))
+    assert "cmmc-l2:AC.L2-3.1.3" in flow
+    persist = set(entry_controls({"verdict": "review", "direction": "output", "metadata": {"tool": "bash"},
+                                  "detections": [{"scanner": "tool_policy", "rule": "persistence", "category": "tool_misuse"}]}))
+    assert "cmmc-l2:SI.L2-3.14.2" in persist
+    assert len([c for c in CONTROLS.values() if c.framework == "cmmc-l2"]) == 10
