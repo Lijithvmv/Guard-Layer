@@ -18,11 +18,12 @@ All notable changes to this project are documented here. The format follows
   with non-root/read-only/no-capabilities, Service, deny-egress NetworkPolicy, HPA, PodDisruptionBudget; strict-validated against
   Kubernetes 1.31), sizing, sessions across replicas, audit-log storage, rollout, and measured performance.
 - `[audit] path` accepts `{hostname}` and `{pid}`, so each worker or pod owns its own hash-chained file.
-- **CSA AI Controls Matrix in the evidence export** (`--framework csa-aicm`, mapping version `2026.09.1`): input/output
-  monitoring (LOG-14/15), activity logging (LOG-11), guardrails (TVM-11), malicious-instruction protection (TVM-02),
-  input/output validation (AIS-08/09), prompt differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-19),
-  sensitive data (DSP-10/17), secrets management (IAM-15), human supervision (GRC-15). Log-protection controls (LOG-02,
-  IAM-12) are claimed only when the log verifies. IDs as published for AICM v1.0.x; v1.1 may renumber some.
+- **CSA AI Controls Matrix v1.1.1 in the evidence export** (`--framework csa-aicm`, mapping version `2026.09.2`), verified
+  against CSA's official spreadsheet: log records (LOG-09), input and output monitoring (LOG-15/16), sanitized logs
+  (LOG-08, when the entry holds hashes only), guardrails (TVM-13), input/output validation (AIS-09/10), prompt
+  differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
+  (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
+  referenced with attribution; no control text is included.
 - **Two more held-out datasets** in `benchmarks/public_eval.py`: Lakera's Gandalf injections (1,000, recall 0.57) and SPML
   (16,011 prompts: precision 1.00, recall 0.21, no false positives on 3,470 benign prompts). Downloads are now atomic, retry
   with back-off, and skip empty rows.

@@ -48,7 +48,7 @@ guardlayer evidence export audit.jsonl --format jsonl --framework iso-42001   # 
 | ISO/IEC 42001 Annex A | A.6.2.6 operation and monitoring, A.6.2.8 recording of event logs |
 | NIST AI RMF | MEASURE 2.4, MEASURE 2.7, MANAGE 4.1 |
 | EU AI Act | Art. 12 record-keeping, Art. 14 human oversight (every review), Art. 15 robustness and cybersecurity |
-| CSA AI Controls Matrix (v1.0.x IDs) | monitoring, guardrails, input/output validation, prompt differentiation, agent boundaries, sensitive data, human supervision; log protection only when the log verifies |
+| CSA AI Controls Matrix v1.1.1 | input and output monitoring, log records, sanitized logs, guardrails, input/output validation, prompt differentiation, agent boundaries and access, sensitive data, credentials, human supervision; log protection only when the log verifies |
 
 Every record carries the audit entry's `seq` and `entry_hash`, and the pack header carries the verification result, the
 source file's SHA-256 and the head hash, so an auditor can re-verify any row against the original log. The export

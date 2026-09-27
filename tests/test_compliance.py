@@ -72,7 +72,7 @@ def test_rule_specific_controls():
 
 def test_entry_controls_baseline_detection_and_review():
     clean = entry_controls({"verdict": "allow", "detections": []})
-    assert clean == list(BASELINE)  # a logged decision is still logging/monitoring evidence
+    assert clean == [*BASELINE, "csa-aicm:LOG-08"]  # a logged decision is still logging evidence; no raw text kept
     flagged = entry_controls({"verdict": "block", "detections": [{"rule": "x", "category": "jailbreak"}]})
     assert "eu-ai-act:Art. 15" in flagged and "mitre-atlas:AML.T0054" in flagged and "eu-ai-act:Art. 14" not in flagged
     held = entry_controls({"verdict": "review", "detections": [{"rule": "trifecta", "category": "data_exfiltration"}]})
@@ -91,7 +91,8 @@ def test_evidence_pack_from_real_audit_log(tmp_path):
 
     injection, benign, destructive, dotenv, metadata = pack.records
     assert injection["verdict"] == "block" and "owasp-llm-2026:LLM01" in injection["controls"]
-    assert benign["controls"] == [*BASELINE, "csa-aicm:LOG-14", *ON_VERIFIED]   # logged, monitored, protected log
+    # logged, input monitored, sanitized (hashes only), and the log verified
+    assert benign["controls"] == [*BASELINE, "csa-aicm:LOG-15", "csa-aicm:LOG-08", *ON_VERIFIED]
     assert destructive["tool"] == "bash" and "owasp-agentic-2026:ASI05" in destructive["controls"]
     assert "owasp-agentic-2026:ASI03" in dotenv["controls"]
     assert "owasp-agentic-2026:ASI03" in metadata["controls"]  # cloud metadata endpoint = credential theft
@@ -181,9 +182,24 @@ def test_cli_controls(capsys):
 def test_csa_aicm_mapping():
     inj = entry_controls({"verdict": "block", "direction": "context",
                           "detections": [{"rule": "ignore_previous_instructions", "category": "prompt_injection"}]})
-    assert {"csa-aicm:LOG-14", "csa-aicm:TVM-11", "csa-aicm:TVM-02", "csa-aicm:AIS-08", "csa-aicm:AIS-15"} <= set(inj)
-    out = entry_controls({"verdict": "block", "direction": "output", "detections": [{"rule": "x", "category": "unsafe_link"}]})
-    assert {"csa-aicm:LOG-15", "csa-aicm:AIS-09", "csa-aicm:DSP-17"} <= set(out) and "csa-aicm:LOG-14" not in out
+    assert {"csa-aicm:LOG-15", "csa-aicm:TVM-13", "csa-aicm:AIS-09", "csa-aicm:AIS-15", "csa-aicm:LOG-08"} <= set(inj)
+    out = entry_controls({"verdict": "block", "direction": "output", "text": "kept",
+                          "detections": [{"rule": "x", "category": "unsafe_link"}]})
+    assert {"csa-aicm:LOG-16", "csa-aicm:AIS-10", "csa-aicm:DSP-17"} <= set(out)
+    assert "csa-aicm:LOG-15" not in out and "csa-aicm:LOG-08" not in out   # raw text kept: not sanitized
     agent = entry_controls({"verdict": "review", "direction": "output",
                             "detections": [{"rule": "dotenv_file", "category": "tool_misuse"}]})
-    assert {"csa-aicm:AIS-11", "csa-aicm:IAM-19", "csa-aicm:IAM-15", "csa-aicm:GRC-15"} <= set(agent)
+    assert {"csa-aicm:AIS-11", "csa-aicm:IAM-18", "csa-aicm:IAM-14", "csa-aicm:GRC-15"} <= set(agent)
+
+
+def test_csa_aicm_ids_match_the_verified_v111_titles():
+    # Checked against the official AICM v1.1.1 spreadsheet on 2026-09-27; v1.1 renumbered many controls.
+    expected = {
+        "AIS-09": "Input Validation", "AIS-10": "Output Validation", "AIS-11": "Agents Security Boundaries",
+        "AIS-15": "Prompt Differentiation", "DSP-10": "Sensitive Data Transfer", "DSP-17": "Sensitive Data Protection",
+        "GRC-15": "Human supervision", "IAM-14": "Credentials Management", "IAM-18": "Agent Access Restriction",
+        "LOG-02": "Audit Logs Protection", "LOG-08": "Audit Logs Sanitization", "LOG-09": "Log Records",
+        "LOG-15": "Input Monitoring", "LOG-16": "Output Monitoring", "TVM-13": "Guardrails",
+    }  # fmt: skip
+    actual = {c.id: c.title for c in CONTROLS.values() if c.framework == "csa-aicm"}
+    assert actual == expected
