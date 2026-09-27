@@ -35,7 +35,7 @@ Read this before relying on it. GuardLayer lowers risk; it does not make prompt 
 
 | Gap | Why | Mitigation |
 |---|---|---|
-| **Paraphrased injections** | Signature and similarity layers catch known and near-known phrasing; held-out recall is ~0.23 rules-only, ~0.47 with the classifier | Architecture first: least-privilege tools, egress allow-list, REVIEW for consequential actions, decisions that don't read free text |
+| **Paraphrased injections** | Signature and similarity layers catch known and near-known phrasing; held-out recall is ~0.23 rules-only, ~0.47 with the classifier; on real adaptive attacks (LLMail-Inject) that hijacked a model, 17% rules-only and 47% with the classifier | Architecture first: least-privilege tools, egress allow-list, REVIEW for consequential actions, decisions that don't read free text |
 | **Attack families seen only once** | AgentDojo's 0 / 10 attack success came *after* rules were added for its injection families; a new template can still get through (a plain TODO-style goal is undetectable by design) | Treat the post-fix numbers as a closed gap, not a detection rate; rely on the session rules and REVIEW for consequential actions |
 | **Encoded or split secrets** | `sensitive_data_egress` matches verbatim copies (including embedded ones), not base64 or split values | `trifecta` rule escalates untrusted + sensitive + outbound regardless of value matching |
 | **Semantic leaks** | Summarised or paraphrased sensitive *information* isn't fingerprintable | Keep secrets out of the context; restrict what the agent can read |

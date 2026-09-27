@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`benchmarks/llmail_eval.py`**: a held-out test on Microsoft's LLMail-Inject (phase 2, 38,014 unique real attacker emails,
+  MIT). GuardLayer detects 17.4% of the attacks that hijacked the model with rules only and 47.0% with the classifier (50.4% of those
+  that also evaded the challenge's defenses); no false positives on 238 benign emails. Never used for tuning.
+- AgentDojo banking with `allow_egress` for the payment tools: benign utility 4 -> 5 / 10, no benign blocks, attack success still 0 / 10.
 - **`[session] allow_egress`**: tool-name glob -> data types that tool may send out (`{ send_money = ["iban"] }`). Those types,
   for that tool only, no longer trigger `sensitive_data_egress`, nor `trifecta` when they are the only sensitive data in the
   session; `after_injection` still applies. Fingerprints now carry the rule that found the value (`<len>:<prefix>:<sha>:<kind>`)

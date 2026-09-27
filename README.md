@@ -697,6 +697,7 @@ one task is 10 points: read these as a direction, not a precise rate.
 | Banking · no defense | 6 / 10 | 7 / 10 | 6 / 10 |
 | Banking · GuardLayer 0.5.0 | 4 / 10 | 6 / 10 | 5 / 10 |
 | Banking · GuardLayer, fixes below | 4 / 10 | **0 / 10** | 5 / 10 |
+| Banking · fixes + `allow_egress` for the payment tools | 5 / 10 | **0 / 10** | 5 / 10 |
 | Slack · no defense | 8 / 10 | 4 / 10 | 0 / 10 |
 | Slack · GuardLayer 0.5.0 | 6 / 10 | 3 / 10 | 0 / 10 |
 | Slack · GuardLayer, fixes below | 6 / 10 | **0 / 10** | 0 / 10 |
@@ -714,9 +715,11 @@ What it costs:
 - **Benign utility drops by 2 tasks in each suite** (6 → 4 banking, 8 → 6 Slack). In benign banking runs every block was a
   legitimate `send_money` call: the IBAN in the payment counts as personal data, and sending it through a network-capable tool
   is `sensitive_data_egress`. AgentDojo's tools are untagged, so GuardLayer assumes any of them
-  can send data off the machine. Tagging the payment tool as `write` (it acts on the bank's own system) avoids this; there
-  is no per-data-type exemption yet. Nobody approves REVIEW requests in the benchmark, so every review also counts as a
-  refusal.
+  can send data off the machine. Allowing IBANs for the payment tools
+  ([`benchmarks/configs/agentdojo-banking.toml`](https://github.com/Lijithvmv/Guard-Layer/blob/main/benchmarks/configs/agentdojo-banking.toml):
+  `allow_egress = { send_money = ["iban"], ... }`) removed every benign block and recovered one task (5 / 10), with attack success
+  still 0 / 10: the attacks' injections are still detected and `after_injection` still holds the payment. Nobody approves REVIEW
+  requests in the benchmark, so every review also counts as a refusal.
 - **The whole tool result is withheld when it carries an injection**, so the agent also loses the legitimate content. That is
   why attacked tasks don't recover. Slack's attacked tasks fail with or without a defense for this model.
 - **One model, two of AgentDojo's four suites, 10 samples each.** Workspace and travel weren't run (the local 7B model is too
@@ -725,6 +728,35 @@ What it costs:
 
 Reproduce: `pip install agentdojo==0.1.35` in a separate environment, then
 `python benchmarks/agentdojo_eval.py --model <ollama model> --suites banking,slack --per-suite 10 --max-iters 10`.
+
+### Unseen attacks: LLMail-Inject
+
+The AgentDojo fixes were written after seeing its attacks, so they can't show how GuardLayer does on attacks it has never
+seen. [LLMail-Inject](https://huggingface.co/datasets/microsoft/llmail-inject-challenge) (Microsoft and academic partners,
+2025, MIT licence) can: in a public challenge, attackers sent emails to an LLM email assistant, adapting against real
+defenses, to make it send an email to an address they chose. Every submission records whether it worked. GuardLayer's
+rules were never tuned on it. Each unique phase-2 email was scanned as untrusted context (`scan_context`), the way a guarded
+agent sees an email it reads; detected means `flag` or above.
+
+| LLMail-Inject phase 2 | Emails | Rules only | + classifier |
+|---|---|---|---|
+| All attack attempts | 38,014 | 11.2% | not run (CPU time) |
+| Attacks that hijacked the model | 2,486 | 17.4% | **47.0%** (95% CI 45.1–49.0%) |
+| … and also got past the challenge's own defenses | 234 | 24.4% | **50.4%** (44.1–56.8%) |
+| Benign emails (false positives) | 238 | 0 | 0 |
+
+- **This is the honest number for detection.** Against adaptive attackers, rules catch about one in six working attacks and
+  the classifier about half. That is why GuardLayer doesn't rely on detection. The attacker's goal here was an email to an
+  outside address, and a tool rule on the email tool stops that whether the injection is detected or not, for example
+  `{ name = "external_recipient", tools = ["send_email"], pattern = '@(?!(?:[a-z0-9-]+\.)*example\.com\b)[a-z0-9.-]+\.[a-z]{2,}', action = "review" }`.
+  (`tools.egress_allowlist` checks URLs and hosts, not email addresses.)
+- The classifier (`protectai/deberta-v3-base-prompt-injection-v2`, pinned) predates the challenge, so it hasn't seen these
+  emails either. 238 benign emails bound the false-positive rate only loosely (95% upper bound 1.6%).
+- Scored on text, not on an agent run: what a detection would change in an agent depends on the session rules and tool policy.
+
+Reproduce (about 263 MB, not committed): download `raw_submissions_phase2.jsonl`, `emails_for_fp_tests.json` and
+`scenarios.json` from the dataset's `data/` folder, then `python benchmarks/llmail_eval.py --data <dir>` (add
+`--classifier --hijacked-only` for the classifier column). Results: `benchmarks/results/llmail-inject-phase2.jsonl`.
 
 ### Your own data
 
