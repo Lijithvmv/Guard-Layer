@@ -36,7 +36,7 @@ Example `guardlayer.toml`:
     store = "memory"               # or "file" with dir = "..." (one process per check, e.g. hooks)
 
     [audit]                        # tamper-evident JSONL audit log
-    path = "guardlayer-audit.jsonl"
+    path = "guardlayer-audit.jsonl"  # "audit-{hostname}-{pid}.jsonl" when several processes log
     min_verdict = "flag"
     signing_key = "audit.key"      # optional Ed25519 PEM (needs the `signing` extra)
 
@@ -71,6 +71,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -263,8 +264,11 @@ def _audit_logger(audit_cfg: Mapping[str, Any], base_dir: Path | None) -> AuditL
     options = dict(audit_cfg)
     if "path" not in options:
         raise ValueError("[audit] needs a path")
+    # One logger must own a file, so multi-worker servers and replicas need a path per process:
+    # "{hostname}" (the pod name in Kubernetes) and "{pid}" are filled in here.
+    path = str(options["path"]).format_map({"hostname": socket.gethostname(), "pid": os.getpid()})
     return AuditLogger(
-        _resolve(base_dir, options["path"]),
+        _resolve(base_dir, path),
         min_verdict=Verdict(options.get("min_verdict", "allow")),
         include_text=_bool(options.get("include_text", False)),
         chain=_bool(options.get("chain", True)),

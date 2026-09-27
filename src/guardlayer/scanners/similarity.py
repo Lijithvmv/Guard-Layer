@@ -32,7 +32,7 @@ class SimilarityScanner(BaseScanner):
         load_builtin: bool = True,
         corpus_file: str | Path | None = None,
         window_sentences: int = 3,
-        max_windows: int = 64,
+        max_windows: int = 256,
         directions: Iterable[str] | None = None,
     ) -> None:
         super().__init__(directions)
@@ -47,11 +47,23 @@ class SimilarityScanner(BaseScanner):
 
     def _windows(self, text: str) -> list[str]:
         sentences = [s for s in _SENTENCE_RE.split(text.strip()) if s.strip()]
-        if len(sentences) <= self.window_sentences:
+        size = self.window_sentences
+        if len(sentences) <= size:
             return [text]
-        windows = [" ".join(sentences[i : i + self.window_sentences]) for i in range(len(sentences) - self.window_sentences + 1)]
-        windows += sentences  # single sentences catch short attacks padded by long neighbours
-        return windows[: self.max_windows]
+        spans = [" ".join(sentences[i : i + size]) for i in range(len(sentences) - size + 1)]
+        if len(spans) + len(sentences) <= self.max_windows:
+            return spans + sentences  # single sentences catch short attacks padded by long neighbours
+        # Over budget: spread the windows across the whole document rather than stopping early,
+        # so an attack buried at the end of a long page is still seen. Windows overlap by one
+        # sentence (step size - 1), so any attack of up to two sentences sits whole in one window.
+        step = max(1, size - 1)
+        starts = list(range(0, len(spans), step))
+        if starts[-1] != len(spans) - 1:
+            starts.append(len(spans) - 1)
+        if len(starts) > self.max_windows:  # a very long text: even spacing, with gaps
+            starts = _spread(starts, self.max_windows)
+        windows = [spans[i] for i in starts]
+        return windows + _spread(sentences, self.max_windows - len(windows))
 
     def scan(self, text: str, context: ScanContext) -> list[Detection]:
         if not text.strip() or not len(self.store):
@@ -81,3 +93,14 @@ class SimilarityScanner(BaseScanner):
     def learn(self, text: str, **metadata: object) -> bool:
         """Add a confirmed attack to the store. Returns True if it was new."""
         return self.store.add([text], {"source": "learned", **metadata}) > 0
+
+
+def _spread(items: list, n: int) -> list:  # type: ignore[type-arg]
+    """`n` items evenly spaced across `items`, keeping the first and last."""
+    if n <= 0:
+        return []
+    if n >= len(items):
+        return list(items)
+    if n == 1:
+        return [items[0]]
+    return [items[round(i * (len(items) - 1) / (n - 1))] for i in range(n)]

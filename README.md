@@ -3,7 +3,8 @@
 > A lightweight security layer that filters the **inputs and outputs** of LLM and agent
 > applications: prompt injection, jailbreaks, system-prompt leakage, secrets, PII, data
 > exfiltration and unsafe agent actions. It checks what an agent *reads* and what it is
-> about to *do*. Pure-Python core, zero dependencies, ~1 ms per scan.
+> about to *do*. Pure-Python core, zero dependencies: ~1.4 ms for a typical chat turn, ~0.2 ms for a tool call
+> ([measured](DEPLOYMENT.md#performance)).
 
 ![Python](https://img.shields.io/badge/python-3.10–3.13-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -55,7 +56,7 @@ flowchart LR
 
 Around the scanners:
 
-- **Agent tool-call policy** (`scan_tool_call`): tools tagged `read` / `write` / `network` / `exec` (explicitly or inferred from the name), allow- and deny-lists with globs, per-capability actions, built-in rules for destructive and risky commands, persistence, credential files and `.env` access, and **egress control** (cloud metadata endpoints, tunnels and request-capture services, raw public IPs, domain allow-list). About 0.1 ms per call.
+- **Agent tool-call policy** (`scan_tool_call`): tools tagged `read` / `write` / `network` / `exec` (explicitly or inferred from the name), allow- and deny-lists with globs, per-capability actions, built-in rules for destructive and risky commands, persistence, credential files and `.env` access, and **egress control** (cloud metadata endpoints, tunnels and request-capture services, raw public IPs, domain allow-list). About 0.2 ms for a shell command.
 - **Human-in-the-loop**: a `review` verdict for actions that need approval before they run (force-push, `sudo`, `DROP TABLE`, or every shell call under `strict`).
 - **Session taint tracking**: an action is judged by what the session has already read. A secret read earlier and then sent out is blocked; untrusted content plus sensitive data, followed by a network call, needs review; so does any side effect after the agent read an injection.
 - **Integrations**: a Claude Code hook, LangGraph (review becomes `interrupt()`), OpenAI Agents SDK guardrails, and `guard_tool` for any other framework.
@@ -502,8 +503,11 @@ guardlayer --config guardlayer.toml serve --port 8000
 ## REST API
 
 ```bash
-docker build -t guardlayer . && docker run -p 8000:8000 -e GUARDLAYER_API_KEY=change-me guardlayer
+docker build -t guardlayer . && docker run -p 127.0.0.1:8000:8000 -e GUARDLAYER_API_KEY=change-me --read-only --tmpfs /tmp guardlayer
 ```
+
+For production (hardened Compose, Kubernetes manifests with NetworkPolicy/HPA/PDB, sizing, sessions across replicas,
+audit-log storage), see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 | Method | Path | Body |
 |---|---|---|
@@ -595,6 +599,22 @@ $ guardlayer eval                        # bundled 67-sample smoke test (also us
 | LLM06 [LLM10] Unbounded Consumption | limits scanner (size, flooding, many-shot) |
 | LLM08 [LLM07] Hidden Context Exposure (was System Prompt Leakage) | canary tokens, prompt-overlap scanner, extraction rules |
 | LLM10 [LLM05] Improper Output Handling | unsafe-command rules, link/exfiltration scanner, tool-call argument rules |
+
+## Performance
+
+Measured with [`benchmarks/perf.py`](benchmarks/perf.py) on a laptop CPU (i5-9300H, Python 3.13, default config, no classifier).
+Full tables, API throughput and memory: [DEPLOYMENT.md](DEPLOYMENT.md#performance).
+
+| Call | p50 | p95 |
+|---|---|---|
+| Tool call, shell command | 0.23 ms | 0.33 ms |
+| Input, 200 chars | 1.4 ms | 1.6 ms |
+| Input, 1,000 chars | 13 ms | 14 ms |
+| Input, 16,000 chars | 167 ms | 172 ms |
+| Output, 4,000 chars | 10 ms | 11 ms |
+
+Cost grows with text length (roughly 10–13 ms per 1,000 characters of input or retrieved context). One process handles about 78
+1,000-character scans per second; scale with processes. Memory is ~55 MB per API worker.
 
 ## Limitations
 

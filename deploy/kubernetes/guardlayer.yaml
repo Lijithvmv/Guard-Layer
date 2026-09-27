@@ -1,0 +1,157 @@
+# GuardLayer REST API on Kubernetes: a hardened, horizontally scaled internal service.
+# See DEPLOYMENT.md for the design choices and what to change. Apply with:
+#   kubectl create namespace guardlayer
+#   kubectl -n guardlayer create secret generic guardlayer-api --from-literal=api-key="$(openssl rand -hex 32)"
+#   kubectl -n guardlayer apply -k deploy/kubernetes/
+#
+# Sizing comes from benchmarks/perf.py: one worker holds ~55 MB RSS after 48,000-char scans and
+# serves ~70 x 1,000-char input scans/s per core. The optional classifier (`ml` extra) needs ~1.5 GiB.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: guardlayer-config
+  labels: {app.kubernetes.io/name: guardlayer}
+data:
+  guardlayer.toml: |
+    preset = "balanced"
+
+    [session]
+    # Taint lives in each pod's memory. Route one conversation to one pod (session affinity on your
+    # gateway), or use store = "file" with dir on a ReadWriteMany volume shared by all pods.
+    store = "memory"
+    ttl_seconds = 86400
+
+    [audit]
+    # One file per pod: two writers on one file would fork the hash chain.
+    path = "/var/log/guardlayer/audit-{hostname}.jsonl"
+    min_verdict = "flag"
+    # signing_key = "/etc/guardlayer-signing/audit.key"   # mount from a Secret; needs the `signing` extra
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guardlayer
+  labels: {app.kubernetes.io/name: guardlayer}
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: {app.kubernetes.io/name: guardlayer}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: guardlayer}
+    spec:
+      automountServiceAccountToken: false   # GuardLayer never calls the Kubernetes API
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      terminationGracePeriodSeconds: 20
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app.kubernetes.io/name: guardlayer}
+      containers:
+        - name: guardlayer
+          image: guardlayer:0.5.0          # build from the repo Dockerfile and push to your registry; pin by digest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 8000}
+          env:
+            - {name: GUARDLAYER_CONFIG, value: /etc/guardlayer/guardlayer.toml}
+            - name: GUARDLAYER_API_KEY
+              valueFrom:
+                secretKeyRef: {name: guardlayer-api, key: api-key}
+            - {name: WEB_CONCURRENCY, value: "1"}   # one worker per pod; scale with replicas
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 250m, memory: 128Mi}
+            limits: {memory: 256Mi}          # no CPU limit: throttling adds tail latency; the HPA scales out instead
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - {name: config, mountPath: /etc/guardlayer, readOnly: true}
+            - {name: audit, mountPath: /var/log/guardlayer}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: guardlayer-config}
+        - name: audit
+          # emptyDir is lost with the pod. For evidence you must keep, mount a ReadWriteMany
+          # PersistentVolumeClaim here (file names are per pod, so pods never share a file),
+          # or ship the files to durable storage with your log agent.
+          emptyDir: {sizeLimit: 1Gi}
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guardlayer
+  labels: {app.kubernetes.io/name: guardlayer}
+spec:
+  type: ClusterIP                       # internal only; never expose the guard to the internet
+  selector: {app.kubernetes.io/name: guardlayer}
+  ports:
+    - {name: http, port: 8000, targetPort: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: guardlayer
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: guardlayer}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {guardlayer-client: "true"}   # label the pods allowed to call the guard
+          namespaceSelector: {}
+      ports:
+        - {port: 8000, protocol: TCP}
+  egress: []   # the core engine needs no network at all; open DNS + the model host only if you enable an LLM judge
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: guardlayer
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: guardlayer}
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: 70}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: guardlayer
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: guardlayer}

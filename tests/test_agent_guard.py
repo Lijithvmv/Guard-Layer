@@ -371,3 +371,13 @@ def _clear_preset_env():
     yield
     for var in ("GUARDLAYER_PRESET", "GUARDLAYER_MODE"):
         os.environ.pop(var, None)
+
+
+def test_config_audit_path_per_process(tmp_path):
+    import os
+    import socket
+
+    guard = build_guard({"audit": {"path": str(tmp_path / "audit-{hostname}-{pid}.jsonl")}})
+    guard.scan_input(ATTACK)
+    expected = tmp_path / f"audit-{socket.gethostname()}-{os.getpid()}.jsonl"
+    assert expected.exists() and verify_audit_log(expected).ok

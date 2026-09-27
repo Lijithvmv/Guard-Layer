@@ -1,0 +1,40 @@
+{
+  "mode": "api",
+  "target": "http://127.0.0.1:8765",
+  "concurrency": 8,
+  "endpoints": [
+    {
+      "endpoint": "/v1/scan/input",
+      "requests": 1600,
+      "errors": 0,
+      "rps": 67,
+      "n": 1600,
+      "mean_ms": 117.808,
+      "p50_ms": 116.904,
+      "p95_ms": 163.268,
+      "p99_ms": 193.213,
+      "max_ms": 245.753
+    },
+    {
+      "endpoint": "/v1/scan/tool-call",
+      "requests": 1600,
+      "errors": 0,
+      "rps": 208,
+      "n": 1600,
+      "mean_ms": 38.189,
+      "p50_ms": 37.941,
+      "p95_ms": 48.034,
+      "p99_ms": 55.361,
+      "max_ms": 65.446
+    }
+  ],
+  "machine": {
+    "guardlayer": "0.5.0",
+    "python": "3.13.5",
+    "implementation": "CPython",
+    "os": "Windows 11",
+    "cpu": "Intel64 Family 6 Model 158 Stepping 13, GenuineIntel",
+    "logical_cpus": 8
+  },
+  "date": "2026-09-27"
+}

@@ -44,6 +44,16 @@ class NgramEmbedder:
 
     def __init__(self, dim: int = 1 << 20) -> None:
         self.dim = dim
+        self._index: dict[str, int] = {}  # feature -> hashed index; features repeat heavily across windows
+
+    def _feature_index(self, feat: str) -> int:
+        idx = self._index.get(feat)
+        if idx is None:
+            idx = zlib.crc32(feat.encode()) % self.dim
+            if len(self._index) >= 200_000:  # bound memory on adversarial input
+                self._index.clear()
+            self._index[feat] = idx
+        return idx
 
     def _features(self, text: str) -> Counter[str]:
         text = normalize(text).lower()
@@ -60,9 +70,10 @@ class NgramEmbedder:
 
     def embed_one(self, text: str) -> SparseVector:
         vec: SparseVector = {}
+        index, log = self._feature_index, math.log
         for feat, count in self._features(text).items():
-            idx = zlib.crc32(feat.encode()) % self.dim
-            vec[idx] = vec.get(idx, 0.0) + 1.0 + math.log(count)
+            idx = index(feat)
+            vec[idx] = vec.get(idx, 0.0) + 1.0 + log(count)
         norm = math.sqrt(sum(v * v for v in vec.values())) or 1.0
         return {k: v / norm for k, v in vec.items()}
 
@@ -170,12 +181,16 @@ class VectorStore:
         with self._lock:
             if isinstance(vector, dict) and self._entries and isinstance(self._entries[0].vector, dict):
                 sums: dict[int, float] = {}
+                get, postings = sums.get, self._postings.get
                 for feature, weight in vector.items():
-                    for idx, other in self._postings.get(feature, ()):
-                        sums[idx] = sums.get(idx, 0.0) + weight * other
+                    for idx, other in postings(feature, ()):
+                        sums[idx] = get(idx, 0.0) + weight * other
                 scored = [(score, self._entries[idx]) for idx, score in sums.items()]
             else:
                 scored = [(cosine(vector, e.vector), e) for e in self._entries]
+        if k == 1 and scored:
+            best = max(scored, key=lambda pair: pair[0])  # first maximum, as a stable sort would give
+            return [Match(best[1].text, round(best[0], 4), best[1].metadata)]
         scored.sort(key=lambda pair: pair[0], reverse=True)
         return [Match(e.text, round(s, 4), e.metadata) for s, e in scored[:k]]
 

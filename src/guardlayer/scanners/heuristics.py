@@ -59,8 +59,12 @@ class HeuristicScanner(BaseScanner):
                 pending.append((rule, pattern))
 
         if pending and self.deobfuscate:
-            views = list(text_variants(text).items())
-            views += [(f"decoded:{enc}", decoded) for enc, decoded in decode_payloads(text)]
+            views, seen = [], {text}
+            candidates = list(text_variants(text).items()) + [(f"decoded:{enc}", d) for enc, d in decode_payloads(text)]
+            for variant, view in candidates:  # a view identical to one already searched can't match anything new
+                if view not in seen:
+                    seen.add(view)
+                    views.append((variant, view))
             for rule, pattern in pending:
                 for variant, view in views:
                     if pattern.search(view):

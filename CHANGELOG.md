@@ -12,6 +12,26 @@ All notable changes to this project are documented here. The format follows
   and EU AI Act Art. 12, 14 and 15. Exports JSONL (header with verification result, source SHA-256 and head hash; one record per entry;
   per-control summary), CSV (one row per entry x control) or a text summary. Refuses unverified logs unless `--allow-unverified`.
   Mapping version `2026.09`. 13 tests in `tests/test_compliance.py`.
+- **`benchmarks/perf.py`**: latency (p50/p95/p99) for every guard edge at 200 to 48,000 characters, multi-process throughput,
+  memory, and a REST API load test (`--api`). Standard library only; deterministic payloads. Results in `benchmarks/results/`.
+- **`DEPLOYMENT.md`** and **`deploy/`**: deployment shapes, a hardened Compose file, Kubernetes manifests (ConfigMap, Deployment
+  with non-root/read-only/no-capabilities, Service, deny-egress NetworkPolicy, HPA, PodDisruptionBudget; strict-validated against
+  Kubernetes 1.31), sizing, sessions across replicas, audit-log storage, rollout, and measured performance.
+- `[audit] path` accepts `{hostname}` and `{pid}`, so each worker or pod owns its own hash-chained file.
+
+### Fixed
+- **Similarity scanner coverage of long texts.** Its window budget stopped at the first 64 windows (about 4,000 characters), so
+  a known attack in the middle or at the end of a long page or document was never compared. Windows are now spread across the
+  whole text (overlapping by one sentence), and the default budget is 256. On known attacks inserted at five positions in
+  benign documents, similarity-layer recall went from 45/75 to 75/75 at 8,000 characters, 27/75 to 72/75 at 20,000 and 15/75
+  to 58/75 at 48,000. Costs up to ~80 ms more on the longest inputs. Public benchmark results are unchanged.
+
+### Changed
+- README speed claim corrected from "~1 ms per scan" to measured figures: ~1.4 ms for a 200-character prompt, ~0.2 ms for a
+  shell tool call, and roughly 10–13 ms per 1,000 characters for longer inputs.
+- Faster heuristics on text without leetspeak or encoding (identical de-obfuscated views are skipped) and a small speed-up in
+  similarity search (cached feature hashes). Results are identical.
+- Dockerfile: `/var/log/guardlayer` owned by the service user; documented `--read-only` run.
 
 ### Changed
 - README threat-coverage table now uses the OWASP Top 10 for LLM Applications **2026** numbering, with 2025 IDs alongside.

@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - guardlayer.yaml
+# images:
+#   - name: guardlayer
+#     newName: registry.example.com/security/guardlayer
+#     digest: sha256:...

@@ -1,0 +1,218 @@
+{
+  "mode": "in-process",
+  "preset": "balanced (default)",
+  "startup": {
+    "import_ms": 160.9,
+    "build_guard_ms": 110.4
+  },
+  "memory": {
+    "guard_objects_mb": 1.74,
+    "scan_peak_alloc_48k_mb": 3.95,
+    "process_peak_rss_mb": 51.6
+  },
+  "latency": [
+    {
+      "group": "input",
+      "case": "benign 200 chars",
+      "chars": 200,
+      "n": 400,
+      "mean_ms": 1.412,
+      "p50_ms": 1.373,
+      "p95_ms": 1.554,
+      "p99_ms": 2.357,
+      "max_ms": 2.608
+    },
+    {
+      "group": "input",
+      "case": "benign 1,000 chars",
+      "chars": 1000,
+      "n": 400,
+      "mean_ms": 12.881,
+      "p50_ms": 12.734,
+      "p95_ms": 13.981,
+      "p99_ms": 14.987,
+      "max_ms": 17.093
+    },
+    {
+      "group": "input",
+      "case": "benign 4,000 chars",
+      "chars": 4000,
+      "n": 400,
+      "mean_ms": 52.711,
+      "p50_ms": 52.296,
+      "p95_ms": 55.837,
+      "p99_ms": 58.514,
+      "max_ms": 64.683
+    },
+    {
+      "group": "input",
+      "case": "benign 16,000 chars",
+      "chars": 16000,
+      "n": 40,
+      "mean_ms": 167.119,
+      "p50_ms": 166.543,
+      "p95_ms": 171.727,
+      "p99_ms": 173.241,
+      "max_ms": 173.835
+    },
+    {
+      "group": "input",
+      "case": "benign 48,000 chars",
+      "chars": 48000,
+      "n": 40,
+      "mean_ms": 405.382,
+      "p50_ms": 403.328,
+      "p95_ms": 415.488,
+      "p99_ms": 419.124,
+      "max_ms": 419.758
+    },
+    {
+      "group": "input",
+      "case": "attack mid-document 1,000 chars",
+      "chars": 1000,
+      "n": 400,
+      "mean_ms": 12.587,
+      "p50_ms": 12.416,
+      "p95_ms": 13.688,
+      "p99_ms": 14.733,
+      "max_ms": 16.557
+    },
+    {
+      "group": "input",
+      "case": "attack mid-document 16,000 chars",
+      "chars": 16000,
+      "n": 40,
+      "mean_ms": 161.566,
+      "p50_ms": 160.257,
+      "p95_ms": 167.83,
+      "p99_ms": 173.432,
+      "max_ms": 173.76
+    },
+    {
+      "group": "output",
+      "case": "reply 500 chars (+system prompt)",
+      "chars": 500,
+      "n": 400,
+      "mean_ms": 1.442,
+      "p50_ms": 1.415,
+      "p95_ms": 1.543,
+      "p99_ms": 1.675,
+      "max_ms": 1.962
+    },
+    {
+      "group": "output",
+      "case": "reply 4,000 chars (+system prompt)",
+      "chars": 4000,
+      "n": 400,
+      "mean_ms": 10.156,
+      "p50_ms": 10.084,
+      "p95_ms": 10.859,
+      "p99_ms": 11.908,
+      "max_ms": 12.548
+    },
+    {
+      "group": "output",
+      "case": "reply 16,000 chars (+system prompt)",
+      "chars": 16000,
+      "n": 40,
+      "mean_ms": 39.896,
+      "p50_ms": 39.551,
+      "p95_ms": 42.193,
+      "p99_ms": 42.713,
+      "max_ms": 43.01
+    },
+    {
+      "group": "context",
+      "case": "RAG chunk 2,000 chars",
+      "chars": 2000,
+      "n": 400,
+      "mean_ms": 29.502,
+      "p50_ms": 28.799,
+      "p95_ms": 33.551,
+      "p99_ms": 37.405,
+      "max_ms": 40.587
+    },
+    {
+      "group": "context",
+      "case": "RAG chunk 8,000 chars",
+      "chars": 8000,
+      "n": 400,
+      "mean_ms": 115.944,
+      "p50_ms": 115.069,
+      "p95_ms": 122.124,
+      "p99_ms": 128.364,
+      "max_ms": 131.149
+    },
+    {
+      "group": "tool_call",
+      "case": "bash, short command",
+      "chars": 43,
+      "n": 400,
+      "mean_ms": 0.24,
+      "p50_ms": 0.227,
+      "p95_ms": 0.327,
+      "p99_ms": 0.39,
+      "max_ms": 1.84
+    },
+    {
+      "group": "tool_call",
+      "case": "http_post, 4,000-char body",
+      "chars": 4084,
+      "n": 400,
+      "mean_ms": 13.33,
+      "p50_ms": 13.139,
+      "p95_ms": 14.754,
+      "p99_ms": 15.225,
+      "max_ms": 15.675
+    },
+    {
+      "group": "tool_call",
+      "case": "http_post with session taint",
+      "chars": 4084,
+      "n": 400,
+      "mean_ms": 13.275,
+      "p50_ms": 13.176,
+      "p95_ms": 14.079,
+      "p99_ms": 15.21,
+      "max_ms": 18.338
+    },
+    {
+      "group": "tool_result",
+      "case": "JSON rows 8,000 chars",
+      "chars": 8103,
+      "n": 400,
+      "mean_ms": 49.113,
+      "p50_ms": 47.772,
+      "p95_ms": 55.157,
+      "p99_ms": 68.65,
+      "max_ms": 107.368
+    }
+  ],
+  "throughput": [
+    {
+      "processes": 1,
+      "scans_per_sec": 78
+    },
+    {
+      "processes": 2,
+      "scans_per_sec": 135
+    },
+    {
+      "processes": 4,
+      "scans_per_sec": 192
+    },
+    {
+      "processes": 8,
+      "scans_per_sec": 234
+    }
+  ],
+  "machine": {
+    "guardlayer": "0.5.0",
+    "python": "3.13.5",
+    "implementation": "CPython",
+    "os": "Windows 11",
+    "cpu": "Intel64 Family 6 Model 158 Stepping 13, GenuineIntel",
+    "logical_cpus": 8
+  },
+  "date": "2026-09-27"
+}

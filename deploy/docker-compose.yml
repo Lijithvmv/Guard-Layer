@@ -1,0 +1,35 @@
+# GuardLayer REST API next to your app, hardened. From the repo root:
+#   GUARDLAYER_API_KEY=$(openssl rand -hex 32) docker compose -f deploy/docker-compose.yml up --build
+services:
+  guardlayer:
+    build: ..
+    image: guardlayer:0.5.0
+    environment:
+      GUARDLAYER_API_KEY: ${GUARDLAYER_API_KEY:?set GUARDLAYER_API_KEY}
+      GUARDLAYER_CONFIG: /etc/guardlayer/guardlayer.toml
+      WEB_CONCURRENCY: "2"            # uvicorn workers; audit path below includes {pid} so each owns a file
+    configs:
+      - source: guardlayer_toml
+        target: /etc/guardlayer/guardlayer.toml
+    volumes:
+      - audit:/var/log/guardlayer
+    tmpfs: [/tmp]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    expose: ["8000"]                  # reachable by services on this network only
+    # ports: ["127.0.0.1:8000:8000"]  # uncomment to reach it from the host
+    restart: unless-stopped
+
+configs:
+  guardlayer_toml:
+    content: |
+      preset = "balanced"
+
+      [audit]
+      path = "/var/log/guardlayer/audit-{hostname}-{pid}.jsonl"
+      min_verdict = "flag"
+
+volumes:
+  audit:
