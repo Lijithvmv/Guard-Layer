@@ -27,6 +27,7 @@ Frameworks mapped (see `CONTROLS`):
     soc2-tsc            SOC 2: AICPA Trust Services Criteria (2017) criteria
     hipaa-security      HIPAA Security Rule standards and implementation specifications
     gdpr                GDPR articles (where personal data is processed)
+    pci-dss-4           PCI DSS v4.0.1 requirements (where cardholder data is in scope)
 
 **What a mapping means.** A mapped entry is evidence *relevant to* a control: it shows the
 control's runtime safeguard operating. It is not an attestation that the control, or the
@@ -51,7 +52,7 @@ from typing import Any
 
 from guardlayer.audit import AuditVerification, verify_audit_log
 
-MAPPING_VERSION = "2026.09.11"
+MAPPING_VERSION = "2026.09.12"
 
 DISCLAIMER = (
     "Control mappings identify runtime evidence relevant to each control. They do not certify compliance "
@@ -89,6 +90,7 @@ FRAMEWORKS: dict[str, str] = {
     "soc2-tsc": "SOC 2: AICPA Trust Services Criteria (2017, points of focus revised 2022)",
     "hipaa-security": "HIPAA Security Rule (45 CFR Part 164, Subpart C)",
     "gdpr": "GDPR (Regulation (EU) 2016/679)",
+    "pci-dss-4": "PCI DSS v4.0.1",
 }
 
 _CATALOG: list[tuple[str, str, str]] = [
@@ -242,6 +244,14 @@ _CATALOG: list[tuple[str, str, str]] = [
     ("gdpr", "Art. 25(1)", "Data protection by design"),
     ("gdpr", "Art. 25(2)", "Data protection by default"),
     ("gdpr", "Art. 32(1)(b)", "Security of processing: ongoing confidentiality and integrity"),
+    # PCI DSS v4.0.1 (c) PCI Security Standards Council: requirement numbers checked against the Council's published
+    # Summary of Changes and practitioner references; descriptions are GuardLayer's own. Relevant where cardholder data
+    # is in scope. 3.5.1 (PAN unreadable at rest) is NOT claimed: the audit log's text hash is unkeyed.
+    ("pci-dss-4", "1.3.2", "Outbound traffic restricted to what's necessary"),
+    ("pci-dss-4", "3.4.1", "PAN masked when displayed"),
+    ("pci-dss-4", "7.2.5", "Application and system account privileges limited to what's necessary"),
+    ("pci-dss-4", "10.2.1", "Audit logs enabled and active"),
+    ("pci-dss-4", "10.3.4", "Change detection on audit logs"),
 ]
 
 CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, cid, title in _CATALOG}
@@ -254,7 +264,7 @@ BASELINE: tuple[str, ...] = (
     "mitre-atlas-mitigations:AML.M0024", "owasp-aisvs-1.0:C12.1.2", "uk-ai-cop:12.1",
     "etsi-en-304-223:5.4.2-1", "nist-sp-800-53:AU-2", "nist-sp-800-53:AU-3", "nist-sp-800-53:AU-12",
     "nist-csf-2.0:PR.PS-04", "nist-csf-2.0:DE.CM-09", "iso-27001:A.8.15", "iso-27001:A.8.16",
-    "soc2-tsc:CC7.2", "hipaa-security:164.312(b)",
+    "soc2-tsc:CC7.2", "hipaa-security:164.312(b)", "pci-dss-4:10.2.1",
 )  # fmt: skip
 # By direction: what was monitored.
 ON_DIRECTION: dict[str, tuple[str, ...]] = {
@@ -262,7 +272,7 @@ ON_DIRECTION: dict[str, tuple[str, ...]] = {
 }  # fmt: skip
 # Claimed only when the log's hash chain (and signatures, if checked) verified: the log itself is protected.
 ON_VERIFIED: tuple[str, ...] = ("csa-aicm:LOG-02", "nist-sp-800-53:AU-9", "nist-sp-800-53:AU-9(3)", "nist-csf-2.0:PR.DS-01",
-    "iso-27001:A.5.33",
+    "iso-27001:A.5.33", "pci-dss-4:10.3.4",
 )
 # Claimed only when every entry's Ed25519 signature verified: origin can't be repudiated.
 ON_SIGNED: tuple[str, ...] = ("nist-sp-800-53:AU-10",)
@@ -288,7 +298,7 @@ SCANNER_CONTROLS: dict[str, tuple[str, ...]] = {
     "tool_policy": ("mitre-atlas-mitigations:AML.M0028", "owasp-aisvs-1.0:C9.5.1", "owasp-aisvs-1.0:C9.5.3", "uk-ai-cop:2.6",
                     "etsi-en-304-223:5.1.2-6", "nist-sp-800-53:AC-3", "nist-sp-800-53:AC-6",
                     "nist-csf-2.0:PR.AA-05", "iso-27001:A.5.15", "soc2-tsc:CC6.1", "soc2-tsc:CC6.3",
-                    "hipaa-security:164.312(a)(1)"),
+                    "hipaa-security:164.312(a)(1)", "pci-dss-4:7.2.5"),
     "session": ("mitre-atlas-mitigations:AML.M0030", "owasp-aisvs-1.0:C9.3.5", "owasp-aisvs-1.0:C9.5.3",
                 "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12", "soc2-tsc:CC6.7",
                 "hipaa-security:164.312(e)(1)"),
@@ -331,7 +341,7 @@ RULE_CONTROLS: dict[str, tuple[str, ...]] = {
     "tool_denied": _AGENCY,
     "after_injection": ("owasp-agentic-2026:ASI01", "owasp-agentic-2026:ASI06"),
     "trifecta": ("owasp-agentic-2026:ASI02",),
-    "egress_not_allowed": ("nist-sp-800-53:SC-7(5)",),  # fires only when an egress allow-list is set
+    "egress_not_allowed": ("nist-sp-800-53:SC-7(5)", "pci-dss-4:1.3.2"),  # fires only when an egress allow-list is set
     "sensitive_data_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12",
                               "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)"),
     "secret_in_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12",
@@ -380,6 +390,8 @@ def detection_controls(detection: Mapping[str, Any], direction: str | None = Non
         keys += ["iso-27001:A.8.11", "soc2-tsc:C1.1"]  # data masking (redaction); confidential data identified
     if category == "pii":
         keys += ["iso-27001:A.5.34", "gdpr:Art. 5(1)(f)", "gdpr:Art. 25(1)", "gdpr:Art. 32(1)(b)"]
+    if rule == "credit_card" and direction == "output":
+        keys.append("pci-dss-4:3.4.1")  # card number masked before it was shown
     return _unique(keys)
 
 

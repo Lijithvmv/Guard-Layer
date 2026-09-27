@@ -412,3 +412,24 @@ def test_gdpr_mapping_only_where_personal_data_is_involved():
     inj = set(entry_controls({"verdict": "block", "direction": "input", "text": "x",
                               "detections": [{"scanner": "heuristics", "rule": "r", "category": "prompt_injection"}]}))
     assert not any(k.startswith("gdpr:") for k in inj)             # no personal data involved
+
+
+def test_pci_dss_mapping():
+    assert "pci-dss-4:10.2.1" in entry_controls({"verdict": "allow", "detections": []})
+    card_out = set(entry_controls({"verdict": "allow", "direction": "output", "detections": [{"rule": "credit_card", "category": "pii"}]}))
+    assert "pci-dss-4:3.4.1" in card_out
+    card_in = set(entry_controls({"verdict": "allow", "direction": "input", "detections": [{"rule": "credit_card", "category": "pii"}]}))
+    assert "pci-dss-4:3.4.1" not in card_in                       # 3.4.1 is about display
+    tool = set(entry_controls({"verdict": "block", "direction": "output", "metadata": {"tool": "http_get"},
+                               "detections": [{"scanner": "tool_policy", "rule": "egress_not_allowed", "category": "egress"}]}))
+    assert {"pci-dss-4:7.2.5", "pci-dss-4:1.3.2"} <= tool
+    assert not any(c.id == "3.5.1" for c in CONTROLS.values() if c.framework == "pci-dss-4")   # unkeyed hash: not claimed
+
+
+def test_pci_change_detection_only_on_verified_logs(tmp_path):
+    log = tmp_path / "audit.jsonl"
+    _audited_run(log)
+    assert all("pci-dss-4:10.3.4" in r["controls"] for r in build_evidence(log).records)
+    lines = log.read_text(encoding="utf-8").splitlines()
+    log.write_text("\n".join(lines[1:]) + "\n", encoding="utf-8")   # delete the first entry
+    assert not any("pci-dss-4:10.3.4" in r["controls"] for r in build_evidence(log).records)

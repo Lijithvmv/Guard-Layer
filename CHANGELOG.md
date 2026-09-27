@@ -24,6 +24,9 @@ All notable changes to this project are documented here. The format follows
   differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
   (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
   referenced with attribution; no control text is included.
+- **PCI DSS v4.0.1 in the evidence export** (mapping version `2026.09.12`): 10.2.1 on every entry, 10.3.4 when the log
+  verifies, 3.4.1 for card numbers masked in output, 7.2.5 for tool policy, 1.3.2 for allow-list egress blocks. 3.5.1 is
+  deliberately not claimed (the log's text hash is unkeyed).
 - **GDPR in the evidence export** (mapping version `2026.09.11`), only where personal data is involved: Art. 5(1)(f),
   25(1) and 32(1)(b) for detected and redacted personal data; Art. 5(1)(c) and 25(2) for audit entries that keep hashes
   rather than text (not claimed with `include_text=True`). Art. 32(1)(a) is not claimed: a hash isn't pseudonymisation.

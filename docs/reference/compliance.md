@@ -23,3 +23,7 @@ The HIPAA Security Rule (45 CFR Part 164 Subpart C) is US federal regulation; ci
 handles electronic protected health information, and GuardLayer detects common personal identifiers, not health data.
 GDPR (Regulation (EU) 2016/679) mappings apply only where personal data is involved; article numbers and titles per the
 official text on EUR-Lex. GuardLayer's personal-data detection covers common identifiers, not every category of personal data.
+PCI DSS v4.0.1 (© PCI Security Standards Council) is referenced by requirement number, checked against the Council's
+published Summary of Changes and practitioner references; descriptions are GuardLayer's own. 10.3.4 expects alerts on
+log changes: run `guardlayer audit verify` on a schedule with alerting. 3.5.1 isn't claimed: the audit log's hash of the
+scanned text is unkeyed, and PCI DSS requires keyed hashes for card numbers at rest.
