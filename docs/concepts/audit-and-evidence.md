@@ -54,6 +54,7 @@ guardlayer evidence export audit.jsonl --format jsonl --framework iso-42001   # 
 | UK Code of Practice for the Cyber Security of AI (2025) | logging, behaviour analysis, human oversight, least-privilege permissions, sensitive-data protection, input checks |
 | ETSI EN 304 223 V2.1.1 (supersedes TS 104 223) | the UK Code's provisions under the European Standard's numbering, plus withstanding adversarial attacks and unexpected input |
 | NIST SP 800-53 Rev. 5.2.0 | audit logging and protection (non-repudiation only for verified signatures), monitoring, input validation, output filtering, access enforcement, least privilege, information flow, boundary protection |
+| NIST CSF 2.0 | log records, runtime monitoring, least privilege, data in transit and in use, log integrity, unauthorized execution prevented, escalation to authorized staff |
 
 Every record carries the audit entry's `seq` and `entry_hash`, and the pack header carries the verification result, the
 source file's SHA-256 and the head hash, so an auditor can re-verify any row against the original log. The export

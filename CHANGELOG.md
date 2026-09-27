@@ -24,6 +24,10 @@ All notable changes to this project are documented here. The format follows
   differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
   (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
   referenced with attribution; no control text is included.
+- **NIST CSF 2.0 in the evidence export** (mapping version `2026.09.7`): PR.PS-04 and DE.CM-09 on every entry,
+  PR.DS-01 when the log verifies, PR.AA-05 for tool policy, PR.DS-02 for data leaving (egress rules, session taint),
+  PR.DS-10 for secrets and personal data redacted before the model, PR.PS-05 for blocked persistence, DE.AE-06 for
+  reviews. Subcategory text from NIST's CSF 2.0 export, matched exactly.
 - **NIST SP 800-53 Rev. 5.2.0 in the evidence export** (mapping version `2026.09.6`), titles from NIST's OSCAL catalog:
   AU-2/AU-3/AU-12 on every entry; AU-9 and AU-9(3) only when the hash chain verifies and AU-10 (non-repudiation) only when
   Ed25519 signatures verify; SI-4 on detections; SI-10 input validation; SI-15 output filtering; AC-3/AC-6 for tool

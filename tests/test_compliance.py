@@ -329,3 +329,22 @@ def test_nist_titles_match_rev_5_2_0():
     ids = {c.id for c in CONTROLS.values() if c.framework == "nist-sp-800-53"}
     assert ids == {"AC-3", "AC-4", "AC-6", "AU-2", "AU-3", "AU-9", "AU-9(3)", "AU-10", "AU-12", "SC-5", "SC-7", "SC-7(5)",
                    "SI-4", "SI-10", "SI-15"}  # fmt: skip
+
+
+def test_nist_csf_2_mapping():
+    base = set(entry_controls({"verdict": "allow", "detections": []}))
+    assert {"nist-csf-2.0:PR.PS-04", "nist-csf-2.0:DE.CM-09"} <= base
+    tool = set(entry_controls({"verdict": "review", "direction": "output", "metadata": {"tool": "bash"},
+                               "detections": [{"scanner": "tool_policy", "rule": "persistence", "category": "tool_misuse"}]}))
+    assert {"nist-csf-2.0:PR.AA-05", "nist-csf-2.0:PR.PS-05", "nist-csf-2.0:DE.AE-06"} <= tool
+    taint = set(entry_controls({"verdict": "block", "direction": "output", "metadata": {"tool": "http_post"},
+                                "detections": [{"scanner": "session", "rule": "sensitive_data_egress", "category": "data_exfiltration"}]}))
+    assert "nist-csf-2.0:PR.DS-02" in taint
+    redacted = set(entry_controls({"verdict": "allow", "direction": "context", "detections": [{"rule": "aws", "category": "secret"}]}))
+    assert "nist-csf-2.0:PR.DS-10" in redacted
+
+
+def test_nist_csf_ids():
+    # Checked against NIST's CSF 2.0 reference export (csf_2_0_0) on 2026-09-27.
+    assert {c.id for c in CONTROLS.values() if c.framework == "nist-csf-2.0"} == {
+        "DE.AE-06", "DE.CM-09", "PR.AA-05", "PR.DS-01", "PR.DS-02", "PR.DS-10", "PR.PS-04", "PR.PS-05"}
