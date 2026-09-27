@@ -384,3 +384,18 @@ def test_soc2_tsc_mapping():
     assert "soc2-tsc:C1.1" in pii
     assert {c.id for c in CONTROLS.values() if c.framework == "soc2-tsc"} == {
         "C1.1", "CC6.1", "CC6.3", "CC6.6", "CC6.7", "CC6.8", "CC7.2", "CC7.3"}
+
+
+def test_hipaa_security_rule_mapping():
+    assert "hipaa-security:164.312(b)" in entry_controls({"verdict": "allow", "detections": []})
+    det = set(entry_controls({"verdict": "block", "direction": "input",
+                              "detections": [{"scanner": "heuristics", "rule": "r", "category": "prompt_injection"}]}))
+    assert {"hipaa-security:164.308(a)(6)(ii)", "hipaa-security:164.308(a)(1)(ii)(D)"} <= det
+    tool = set(entry_controls({"verdict": "review", "direction": "output", "metadata": {"tool": "bash"},
+                               "detections": [{"scanner": "tool_policy", "rule": "persistence", "category": "tool_misuse"}]}))
+    assert {"hipaa-security:164.312(a)(1)", "hipaa-security:164.308(a)(5)(ii)(B)"} <= tool
+    leak = set(entry_controls({"verdict": "block", "direction": "output", "metadata": {"tool": "http_post"},
+                               "detections": [{"scanner": "session", "rule": "sensitive_data_egress", "category": "data_exfiltration"}]}))
+    assert "hipaa-security:164.312(e)(1)" in leak
+    assert {c.id for c in CONTROLS.values() if c.framework == "hipaa-security"} == {
+        "164.308(a)(1)(ii)(D)", "164.308(a)(5)(ii)(B)", "164.308(a)(6)(ii)", "164.312(a)(1)", "164.312(b)", "164.312(e)(1)"}

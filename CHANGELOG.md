@@ -24,6 +24,10 @@ All notable changes to this project are documented here. The format follows
   differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
   (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
   referenced with attribution; no control text is included.
+- **HIPAA Security Rule in the evidence export** (mapping version `2026.09.10`): 164.312(b) audit controls on every entry,
+  164.312(a)(1) access control for tool policy (the rule covers software programs), 164.312(e)(1) transmission security
+  for blocked data leaving, 164.308(a)(6)(ii) and 164.308(a)(1)(ii)(D) on detections, 164.308(a)(5)(ii)(B) for blocked
+  persistence. Checked against the eCFR (2026-09-24). Relevant only where ePHI is handled.
 - **SOC 2 (AICPA Trust Services Criteria 2017) in the evidence export** (mapping version `2026.09.9`): CC7.2 on every
   entry, CC7.3 on detections, CC6.1/CC6.3 for tool policy, CC6.6 for injections in outside content, CC6.7 for blocked
   data movement, CC6.8 for blocked persistence, C1.1 for secrets and personal data. Criterion IDs checked against the

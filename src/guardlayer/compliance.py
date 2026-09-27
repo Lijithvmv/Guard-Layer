@@ -25,6 +25,7 @@ Frameworks mapped (see `CONTROLS`):
     nist-csf-2.0        NIST Cybersecurity Framework 2.0 subcategories
     iso-27001           ISO/IEC 27001:2022 Annex A controls
     soc2-tsc            SOC 2: AICPA Trust Services Criteria (2017) criteria
+    hipaa-security      HIPAA Security Rule standards and implementation specifications
 
 **What a mapping means.** A mapped entry is evidence *relevant to* a control: it shows the
 control's runtime safeguard operating. It is not an attestation that the control, or the
@@ -49,7 +50,7 @@ from typing import Any
 
 from guardlayer.audit import AuditVerification, verify_audit_log
 
-MAPPING_VERSION = "2026.09.9"
+MAPPING_VERSION = "2026.09.10"
 
 DISCLAIMER = (
     "Control mappings identify runtime evidence relevant to each control. They do not certify compliance "
@@ -85,6 +86,7 @@ FRAMEWORKS: dict[str, str] = {
     "nist-csf-2.0": "NIST Cybersecurity Framework (CSF) 2.0",
     "iso-27001": "ISO/IEC 27001:2022 Annex A",
     "soc2-tsc": "SOC 2: AICPA Trust Services Criteria (2017, points of focus revised 2022)",
+    "hipaa-security": "HIPAA Security Rule (45 CFR Part 164, Subpart C)",
 }
 
 _CATALOG: list[tuple[str, str, str]] = [
@@ -224,6 +226,14 @@ _CATALOG: list[tuple[str, str, str]] = [
     ("soc2-tsc", "CC6.8", "Unauthorised or malicious software prevented or detected"),
     ("soc2-tsc", "CC7.2", "Components monitored for anomalies indicating malicious acts"),
     ("soc2-tsc", "CC7.3", "Security events evaluated and acted on"),
+    # HIPAA Security Rule (US federal regulation, public domain), titles as in the eCFR current on 2026-09-24.
+    # Relevant only where the AI system creates, receives, maintains or transmits ePHI.
+    ("hipaa-security", "164.308(a)(1)(ii)(D)", "Information system activity review"),
+    ("hipaa-security", "164.308(a)(5)(ii)(B)", "Protection from malicious software (addressable)"),
+    ("hipaa-security", "164.308(a)(6)(ii)", "Security incident procedures: response and reporting"),
+    ("hipaa-security", "164.312(a)(1)", "Access control"),
+    ("hipaa-security", "164.312(b)", "Audit controls"),
+    ("hipaa-security", "164.312(e)(1)", "Transmission security"),
 ]
 
 CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, cid, title in _CATALOG}
@@ -236,7 +246,7 @@ BASELINE: tuple[str, ...] = (
     "mitre-atlas-mitigations:AML.M0024", "owasp-aisvs-1.0:C12.1.2", "uk-ai-cop:12.1",
     "etsi-en-304-223:5.4.2-1", "nist-sp-800-53:AU-2", "nist-sp-800-53:AU-3", "nist-sp-800-53:AU-12",
     "nist-csf-2.0:PR.PS-04", "nist-csf-2.0:DE.CM-09", "iso-27001:A.8.15", "iso-27001:A.8.16",
-    "soc2-tsc:CC7.2",
+    "soc2-tsc:CC7.2", "hipaa-security:164.312(b)",
 )  # fmt: skip
 # By direction: what was monitored.
 ON_DIRECTION: dict[str, tuple[str, ...]] = {
@@ -254,6 +264,7 @@ ON_SANITIZED: tuple[str, ...] = ("csa-aicm:LOG-08",)
 ON_DETECTION: tuple[str, ...] = (
     "nist-ai-rmf:MEASURE 2.7", "eu-ai-act:Art. 15", "csa-aicm:TVM-13", "mitre-atlas-mitigations:AML.M0020",
     "uk-ai-cop:12.2", "etsi-en-304-223:5.4.2-2", "nist-sp-800-53:SI-4", "soc2-tsc:CC7.3",
+    "hipaa-security:164.308(a)(6)(ii)", "hipaa-security:164.308(a)(1)(ii)(D)",
 )  # fmt: skip
 # REVIEW: a human decides before the action proceeds.
 ON_REVIEW: tuple[str, ...] = ("eu-ai-act:Art. 14", "csa-aicm:GRC-15", "uk-ai-cop:4.1", "uk-ai-cop:4.3",
@@ -268,9 +279,11 @@ ON_TOOL_DETECTION: tuple[str, ...] = ("mitre-atlas-mitigations:AML.M0033",)
 SCANNER_CONTROLS: dict[str, tuple[str, ...]] = {
     "tool_policy": ("mitre-atlas-mitigations:AML.M0028", "owasp-aisvs-1.0:C9.5.1", "owasp-aisvs-1.0:C9.5.3", "uk-ai-cop:2.6",
                     "etsi-en-304-223:5.1.2-6", "nist-sp-800-53:AC-3", "nist-sp-800-53:AC-6",
-                    "nist-csf-2.0:PR.AA-05", "iso-27001:A.5.15", "soc2-tsc:CC6.1", "soc2-tsc:CC6.3"),
+                    "nist-csf-2.0:PR.AA-05", "iso-27001:A.5.15", "soc2-tsc:CC6.1", "soc2-tsc:CC6.3",
+                    "hipaa-security:164.312(a)(1)"),
     "session": ("mitre-atlas-mitigations:AML.M0030", "owasp-aisvs-1.0:C9.3.5", "owasp-aisvs-1.0:C9.5.3",
-                "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12", "soc2-tsc:CC6.7"),
+                "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12", "soc2-tsc:CC6.7",
+                "hipaa-security:164.312(e)(1)"),
 }  # fmt: skip
 
 _INJECTION = ("owasp-llm-2026:LLM01", "owasp-llm-2025:LLM01", "mitre-atlas:AML.T0051")
@@ -290,7 +303,7 @@ CATEGORY_CONTROLS: dict[str, tuple[str, ...]] = {
     "secret": _DISCLOSURE,
     "pii": _DISCLOSURE,
     "egress": (*_DISCLOSURE, "owasp-agentic-2026:ASI02", "csa-aicm:DSP-10", "nist-sp-800-53:SC-7", "nist-csf-2.0:PR.DS-02",
-               "iso-27001:A.8.12", "iso-27001:A.8.23", "soc2-tsc:CC6.7"),
+               "iso-27001:A.8.12", "iso-27001:A.8.23", "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)"),
     "unsafe_link": ("owasp-llm-2026:LLM10", "owasp-llm-2025:LLM05", *_DISCLOSURE, *_OUTPUT),
     "unsafe_command": (*_AGENCY, "owasp-agentic-2026:ASI05"),
     "tool_misuse": _AGENCY,
@@ -302,7 +315,7 @@ RULE_CONTROLS: dict[str, tuple[str, ...]] = {
     "credential_file": ("owasp-agentic-2026:ASI03", *_DISCLOSURE, "csa-aicm:IAM-14", "iso-27001:A.8.3"),
     "dotenv_file": ("owasp-agentic-2026:ASI03", *_DISCLOSURE, "csa-aicm:IAM-14", "iso-27001:A.8.3"),
     "destructive_command": ("owasp-agentic-2026:ASI05",),
-    "persistence": ("owasp-agentic-2026:ASI05", "nist-csf-2.0:PR.PS-05", "soc2-tsc:CC6.8"),  # e.g. a curl | sh line in ~/.bashrc
+    "persistence": ("owasp-agentic-2026:ASI05", "nist-csf-2.0:PR.PS-05", "soc2-tsc:CC6.8", "hipaa-security:164.308(a)(5)(ii)(B)"),  # e.g. a curl | sh line in ~/.bashrc
     "risky_command": ("owasp-agentic-2026:ASI03", "owasp-agentic-2026:ASI05"),  # includes privilege escalation
     "egress_metadata_endpoint": ("owasp-agentic-2026:ASI03",),  # cloud instance credentials
     "capability_exec": ("owasp-agentic-2026:ASI05",),
@@ -312,9 +325,9 @@ RULE_CONTROLS: dict[str, tuple[str, ...]] = {
     "trifecta": ("owasp-agentic-2026:ASI02",),
     "egress_not_allowed": ("nist-sp-800-53:SC-7(5)",),  # fires only when an egress allow-list is set
     "sensitive_data_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12",
-                              "soc2-tsc:CC6.7"),
+                              "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)"),
     "secret_in_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12",
-                         "soc2-tsc:CC6.7"),
+                         "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)"),
     "fake_special_tokens": ("owasp-aisvs-1.0:C2.1.7",),
     "many_shot_pattern": ("owasp-aisvs-1.0:C2.1.8",),
     "oversized_input": ("owasp-aisvs-1.0:C2.1.4",),
