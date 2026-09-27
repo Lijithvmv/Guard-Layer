@@ -21,6 +21,7 @@ Frameworks mapped (see `CONTROLS`):
     owasp-aisvs-1.0     OWASP AI Security Verification Standard 1.0 requirements
     uk-ai-cop           UK Code of Practice for the Cyber Security of AI (2025) provisions
     etsi-en-304-223     ETSI EN 304 223 V2.1.1 (supersedes TS 104 223) provision numbers
+    nist-sp-800-53      NIST SP 800-53 Rev. 5.2.0 controls
 
 **What a mapping means.** A mapped entry is evidence *relevant to* a control: it shows the
 control's runtime safeguard operating. It is not an attestation that the control, or the
@@ -45,7 +46,7 @@ from typing import Any
 
 from guardlayer.audit import AuditVerification, verify_audit_log
 
-MAPPING_VERSION = "2026.09.5"
+MAPPING_VERSION = "2026.09.6"
 
 DISCLAIMER = (
     "Control mappings identify runtime evidence relevant to each control. They do not certify compliance "
@@ -77,6 +78,7 @@ FRAMEWORKS: dict[str, str] = {
     "owasp-aisvs-1.0": "OWASP AI Security Verification Standard (AISVS) 1.0",
     "uk-ai-cop": "UK Code of Practice for the Cyber Security of AI (2025)",
     "etsi-en-304-223": "ETSI EN 304 223 V2.1.1 (2025-12), baseline cyber security for AI",
+    "nist-sp-800-53": "NIST SP 800-53 Rev. 5.2.0",
 }
 
 _CATALOG: list[tuple[str, str, str]] = [
@@ -171,6 +173,22 @@ _CATALOG: list[tuple[str, str, str]] = [
     ("etsi-en-304-223", "5.2.1-4.1", "Checks and sanitisation applied to data and inputs (shall)"),
     ("etsi-en-304-223", "5.4.2-1", "System and user actions logged for security compliance and investigations (shall)"),
     ("etsi-en-304-223", "5.4.2-2", "Behaviour analysed to detect breaches and unexpected behaviour (should)"),
+    # NIST SP 800-53 Rev. 5.2.0 (public domain), titles from NIST's OSCAL catalog (last modified 2026-05-11).
+    ("nist-sp-800-53", "AC-3", "Access Enforcement"),
+    ("nist-sp-800-53", "AC-4", "Information Flow Enforcement"),
+    ("nist-sp-800-53", "AC-6", "Least Privilege"),
+    ("nist-sp-800-53", "AU-2", "Event Logging"),
+    ("nist-sp-800-53", "AU-3", "Content of Audit Records"),
+    ("nist-sp-800-53", "AU-9", "Protection of Audit Information"),
+    ("nist-sp-800-53", "AU-9(3)", "Protection of Audit Information | Cryptographic Protection"),
+    ("nist-sp-800-53", "AU-10", "Non-repudiation"),
+    ("nist-sp-800-53", "AU-12", "Audit Record Generation"),
+    ("nist-sp-800-53", "SC-5", "Denial-of-service Protection"),
+    ("nist-sp-800-53", "SC-7", "Boundary Protection"),
+    ("nist-sp-800-53", "SC-7(5)", "Boundary Protection | Deny by Default — Allow by Exception"),
+    ("nist-sp-800-53", "SI-4", "System Monitoring"),
+    ("nist-sp-800-53", "SI-10", "Information Input Validation"),
+    ("nist-sp-800-53", "SI-15", "Information Output Filtering"),
 ]
 
 CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, cid, title in _CATALOG}
@@ -181,20 +199,22 @@ BASELINE: tuple[str, ...] = (
     "nist-ai-rmf:MEASURE 2.4", "nist-ai-rmf:MANAGE 4.1",
     "eu-ai-act:Art. 12", "csa-aicm:LOG-09",
     "mitre-atlas-mitigations:AML.M0024", "owasp-aisvs-1.0:C12.1.2", "uk-ai-cop:12.1",
-    "etsi-en-304-223:5.4.2-1",
+    "etsi-en-304-223:5.4.2-1", "nist-sp-800-53:AU-2", "nist-sp-800-53:AU-3", "nist-sp-800-53:AU-12",
 )  # fmt: skip
 # By direction: what was monitored.
 ON_DIRECTION: dict[str, tuple[str, ...]] = {
     "input": ("csa-aicm:LOG-15",), "context": ("csa-aicm:LOG-15",), "output": ("csa-aicm:LOG-16",),
 }  # fmt: skip
 # Claimed only when the log's hash chain (and signatures, if checked) verified: the log itself is protected.
-ON_VERIFIED: tuple[str, ...] = ("csa-aicm:LOG-02",)
+ON_VERIFIED: tuple[str, ...] = ("csa-aicm:LOG-02", "nist-sp-800-53:AU-9", "nist-sp-800-53:AU-9(3)")
+# Claimed only when every entry's Ed25519 signature verified: origin can't be repudiated.
+ON_SIGNED: tuple[str, ...] = ("nist-sp-800-53:AU-10",)
 # The entry holds hashes, not the scanned text: the log is sanitized by design.
 ON_SANITIZED: tuple[str, ...] = ("csa-aicm:LOG-08",)
 # Any detection: a security safeguard acted (or, in observe mode, would have).
 ON_DETECTION: tuple[str, ...] = (
     "nist-ai-rmf:MEASURE 2.7", "eu-ai-act:Art. 15", "csa-aicm:TVM-13", "mitre-atlas-mitigations:AML.M0020",
-    "uk-ai-cop:12.2", "etsi-en-304-223:5.4.2-2",
+    "uk-ai-cop:12.2", "etsi-en-304-223:5.4.2-2", "nist-sp-800-53:SI-4",
 )  # fmt: skip
 # REVIEW: a human decides before the action proceeds.
 ON_REVIEW: tuple[str, ...] = ("eu-ai-act:Art. 14", "csa-aicm:GRC-15", "uk-ai-cop:4.1", "uk-ai-cop:4.3",
@@ -207,8 +227,9 @@ ON_TOOL_DETECTION: tuple[str, ...] = ("mitre-atlas-mitigations:AML.M0033",)
 # By the component that decided.
 SCANNER_CONTROLS: dict[str, tuple[str, ...]] = {
     "tool_policy": ("mitre-atlas-mitigations:AML.M0028", "owasp-aisvs-1.0:C9.5.1", "owasp-aisvs-1.0:C9.5.3", "uk-ai-cop:2.6",
-                    "etsi-en-304-223:5.1.2-6"),
-    "session": ("mitre-atlas-mitigations:AML.M0030", "owasp-aisvs-1.0:C9.3.5", "owasp-aisvs-1.0:C9.5.3"),
+                    "etsi-en-304-223:5.1.2-6", "nist-sp-800-53:AC-3", "nist-sp-800-53:AC-6"),
+    "session": ("mitre-atlas-mitigations:AML.M0030", "owasp-aisvs-1.0:C9.3.5", "owasp-aisvs-1.0:C9.5.3",
+                "nist-sp-800-53:AC-4"),
 }  # fmt: skip
 
 _INJECTION = ("owasp-llm-2026:LLM01", "owasp-llm-2025:LLM01", "mitre-atlas:AML.T0051")
@@ -227,11 +248,11 @@ CATEGORY_CONTROLS: dict[str, tuple[str, ...]] = {
     "data_exfiltration": (*_DISCLOSURE, "owasp-agentic-2026:ASI02", "csa-aicm:DSP-10"),
     "secret": _DISCLOSURE,
     "pii": _DISCLOSURE,
-    "egress": (*_DISCLOSURE, "owasp-agentic-2026:ASI02", "csa-aicm:DSP-10"),
+    "egress": (*_DISCLOSURE, "owasp-agentic-2026:ASI02", "csa-aicm:DSP-10", "nist-sp-800-53:SC-7"),
     "unsafe_link": ("owasp-llm-2026:LLM10", "owasp-llm-2025:LLM05", *_DISCLOSURE, *_OUTPUT),
     "unsafe_command": (*_AGENCY, "owasp-agentic-2026:ASI05"),
     "tool_misuse": _AGENCY,
-    "resource_abuse": ("owasp-llm-2026:LLM06", "owasp-llm-2025:LLM10", "mitre-atlas-mitigations:AML.M0036"),
+    "resource_abuse": ("owasp-llm-2026:LLM06", "owasp-llm-2025:LLM10", "mitre-atlas-mitigations:AML.M0036", "nist-sp-800-53:SC-5"),
     "policy": (),
 }
 
@@ -247,8 +268,9 @@ RULE_CONTROLS: dict[str, tuple[str, ...]] = {
     "tool_denied": _AGENCY,
     "after_injection": ("owasp-agentic-2026:ASI01", "owasp-agentic-2026:ASI06"),
     "trifecta": ("owasp-agentic-2026:ASI02",),
-    "sensitive_data_egress": ("owasp-agentic-2026:ASI02",),
-    "secret_in_egress": ("owasp-agentic-2026:ASI02",),
+    "egress_not_allowed": ("nist-sp-800-53:SC-7(5)",),  # fires only when an egress allow-list is set
+    "sensitive_data_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4"),
+    "secret_in_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4"),
     "fake_special_tokens": ("owasp-aisvs-1.0:C2.1.7",),
     "many_shot_pattern": ("owasp-aisvs-1.0:C2.1.8",),
     "oversized_input": ("owasp-aisvs-1.0:C2.1.4",),
@@ -272,13 +294,15 @@ def detection_controls(detection: Mapping[str, Any], direction: str | None = Non
     incoming = direction in {"input", "context"}
     if injection and incoming:
         keys += ["csa-aicm:AIS-09", "owasp-aisvs-1.0:C2.1.3", "owasp-aisvs-1.0:C12.2.1", "uk-ai-cop:5.4.1",
-                 "etsi-en-304-223:5.2.1-4.1", "etsi-en-304-223:5.1.2-2"]  # input screened, attack withstood
+                 "etsi-en-304-223:5.2.1-4.1", "etsi-en-304-223:5.1.2-2", "nist-sp-800-53:SI-10"]  # input screened
         if detection.get("scanner") == "heuristics":
             keys.append("owasp-aisvs-1.0:C12.2.3")  # custom detection rules
     if injection and direction == "context":
         keys += ["owasp-agentic-2026:ASI06", "csa-aicm:AIS-15"]  # indirect injection: data kept apart from instructions
     if category == "obfuscation":
         keys.append("owasp-aisvs-1.0:C2.1.2" if incoming else "owasp-aisvs-1.0:C7.3.4")
+    if direction == "output" and category in {"system_prompt_leak", "unsafe_link", "pii", "secret", "data_exfiltration"}:
+        keys.append("nist-sp-800-53:SI-15")  # output filtered before it left
     if category == "system_prompt_leak":
         keys.append("owasp-aisvs-1.0:C7.3.2" if direction == "output" else "owasp-aisvs-1.0:C12.2.3")
     if category == "unsafe_link" and direction == "output":
@@ -461,6 +485,8 @@ def build_evidence(
         keys = entry_controls(entry)
         if verification.ok and entry.get("entry_hash"):
             keys = _unique([*keys, *ON_VERIFIED])  # the log is protected, so this entry is evidence for that too
+            if verification.signed and entry.get("signature"):
+                keys = _unique([*keys, *ON_SIGNED])
         controls = [k for k in keys if CONTROLS[k].framework in selected]
         metadata = entry.get("metadata") or {}
         detections = entry.get("detections") or []

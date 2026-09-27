@@ -24,6 +24,11 @@ All notable changes to this project are documented here. The format follows
   differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
   (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
   referenced with attribution; no control text is included.
+- **NIST SP 800-53 Rev. 5.2.0 in the evidence export** (mapping version `2026.09.6`), titles from NIST's OSCAL catalog:
+  AU-2/AU-3/AU-12 on every entry; AU-9 and AU-9(3) only when the hash chain verifies and AU-10 (non-repudiation) only when
+  Ed25519 signatures verify; SI-4 on detections; SI-10 input validation; SI-15 output filtering; AC-3/AC-6 for tool
+  policy; AC-4 for session taint and secrets leaving; SC-7 for egress rules and SC-7(5) when an allow-list blocks; SC-5
+  for size limits. AC-3(2) dual authorization is deliberately not claimed for single-approver reviews.
 - **ETSI EN 304 223 V2.1.1 in the evidence export** (mapping version `2026.09.5`): the European Standard (2025-12) that
   supersedes ETSI TS 104 223. It renumbers the UK Code's provisions (5.4.2-1/-2 logging and analysis, 5.1.4-1/-3 human
   oversight, 5.1.2-6 permissions, 5.2.1-4 and 5.2.1-4.1 sensitive data and input checks) and adds 5.1.2-2 (withstanding

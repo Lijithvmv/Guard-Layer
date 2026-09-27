@@ -290,3 +290,42 @@ def test_etsi_provisions_exist():
     # Provision numbers checked against ETSI EN 304 223 V2.1.1 (2025-12) PDF on 2026-09-27.
     assert {c.id for c in CONTROLS.values() if c.framework == "etsi-en-304-223"} == {
         "5.1.2-2", "5.1.2-6", "5.1.4-1", "5.1.4-3", "5.2.1-4", "5.2.1-4.1", "5.4.2-1", "5.4.2-2"}
+
+
+def test_nist_sp_800_53_mapping():
+    base = set(entry_controls({"verdict": "allow", "detections": []}))
+    assert {"nist-sp-800-53:AU-2", "nist-sp-800-53:AU-3", "nist-sp-800-53:AU-12"} <= base
+    inj = set(entry_controls({"verdict": "block", "direction": "input",
+                              "detections": [{"scanner": "heuristics", "rule": "r", "category": "prompt_injection"}]}))
+    assert {"nist-sp-800-53:SI-4", "nist-sp-800-53:SI-10"} <= inj
+    out = set(entry_controls({"verdict": "block", "direction": "output", "detections": [{"rule": "x", "category": "unsafe_link"}]}))
+    assert "nist-sp-800-53:SI-15" in out and "nist-sp-800-53:SI-10" not in out
+    tool = set(entry_controls({"verdict": "block", "direction": "output", "metadata": {"tool": "http_get"},
+                               "detections": [{"scanner": "tool_policy", "rule": "egress_not_allowed", "category": "egress"}]}))
+    assert {"nist-sp-800-53:AC-3", "nist-sp-800-53:AC-6", "nist-sp-800-53:SC-7", "nist-sp-800-53:SC-7(5)"} <= tool
+    raw_ip = set(entry_controls({"verdict": "flag", "direction": "output", "metadata": {"tool": "bash"},
+                                 "detections": [{"scanner": "tool_policy", "rule": "egress_raw_ip", "category": "egress"}]}))
+    assert "nist-sp-800-53:SC-7(5)" not in raw_ip   # no allow-list involved
+    taint = set(entry_controls({"verdict": "review", "direction": "output", "metadata": {"tool": "http_post"},
+                                "detections": [{"scanner": "session", "rule": "trifecta", "category": "data_exfiltration"}]}))
+    assert "nist-sp-800-53:AC-4" in taint
+
+
+def test_nist_audit_protection_claims_follow_verification(tmp_path):
+    from guardlayer import AuditSigner
+
+    signer = AuditSigner.generate()
+    (tmp_path / "audit.pub").write_bytes(signer.public_pem())
+    signed = tmp_path / "signed.jsonl"
+    GuardLayer(hooks=[AuditLogger(signed, signer=signer)]).scan_input(ATTACK)
+    with_key = build_evidence(signed, public_key=tmp_path / "audit.pub").records[0]["controls"]
+    assert {"nist-sp-800-53:AU-9", "nist-sp-800-53:AU-9(3)", "nist-sp-800-53:AU-10"} <= set(with_key)
+    without_key = build_evidence(signed).records[0]["controls"]   # chain checked, signatures not
+    assert "nist-sp-800-53:AU-9" in without_key and "nist-sp-800-53:AU-10" not in without_key
+
+
+def test_nist_titles_match_rev_5_2_0():
+    # Checked against NIST's OSCAL catalog for SP 800-53 Rev 5.2.0 (last modified 2026-05-11) on 2026-09-27.
+    ids = {c.id for c in CONTROLS.values() if c.framework == "nist-sp-800-53"}
+    assert ids == {"AC-3", "AC-4", "AC-6", "AU-2", "AU-3", "AU-9", "AU-9(3)", "AU-10", "AU-12", "SC-5", "SC-7", "SC-7(5)",
+                   "SI-4", "SI-10", "SI-15"}  # fmt: skip

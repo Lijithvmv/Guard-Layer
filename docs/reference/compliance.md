@@ -13,4 +13,5 @@ summaries; cite a requirement as `v1.0-C<id>`. The UK Code of Practice for the C
 Crown copyright, used under the [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/);
 provision numbers as published on gov.uk, descriptions GuardLayer's own. ETSI EN 304 223 V2.1.1 (2025-12), the European
 Standard that supersedes ETSI TS 104 223, is © ETSI with all rights reserved: GuardLayer references provision numbers only
-(checked against ETSI's official PDF), with its own descriptions.
+(checked against ETSI's official PDF), with its own descriptions. NIST SP 800-53 Rev. 5.2.0 is a US government work in the
+public domain; titles from NIST's OSCAL catalog.
