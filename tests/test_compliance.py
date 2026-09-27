@@ -203,3 +203,49 @@ def test_csa_aicm_ids_match_the_verified_v111_titles():
     }  # fmt: skip
     actual = {c.id: c.title for c in CONTROLS.values() if c.framework == "csa-aicm"}
     assert actual == expected
+
+
+def test_atlas_mitigations_and_aisvs_mapping():
+    base = entry_controls({"verdict": "allow", "detections": []})
+    assert {"mitre-atlas-mitigations:AML.M0024", "owasp-aisvs-1.0:C12.1.2"} <= set(base)
+    inj = entry_controls({"verdict": "block", "direction": "input",
+                          "detections": [{"scanner": "heuristics", "rule": "r", "category": "prompt_injection"}]})
+    assert {"mitre-atlas-mitigations:AML.M0020", "owasp-aisvs-1.0:C2.1.3", "owasp-aisvs-1.0:C12.2.1",
+            "owasp-aisvs-1.0:C12.2.3"} <= set(inj)
+    review = entry_controls({"verdict": "review", "direction": "output", "metadata": {"tool": "bash"},
+                             "detections": [{"scanner": "tool_policy", "rule": "risky_command", "category": "tool_misuse"}]})
+    assert {"mitre-atlas-mitigations:AML.M0029", "owasp-aisvs-1.0:C9.2.1", "mitre-atlas-mitigations:AML.M0028",
+            "owasp-aisvs-1.0:C9.5.1", "owasp-aisvs-1.0:C9.5.3", "mitre-atlas-mitigations:AML.M0033"} <= set(review)
+    taint = entry_controls({"verdict": "review", "direction": "output", "metadata": {"tool": "http_post"},
+                            "detections": [{"scanner": "session", "rule": "trifecta", "category": "data_exfiltration"}]})
+    assert {"mitre-atlas-mitigations:AML.M0030", "owasp-aisvs-1.0:C9.3.5"} <= set(taint)
+    chat_review = entry_controls({"verdict": "review", "direction": "input", "detections": [{"rule": "r", "category": "policy"}]})
+    assert "mitre-atlas-mitigations:AML.M0029" not in chat_review   # not an agent action
+    leak = entry_controls({"verdict": "block", "direction": "output", "detections": [{"rule": "x", "category": "system_prompt_leak"}]})
+    assert "owasp-aisvs-1.0:C7.3.2" in leak
+    link = entry_controls({"verdict": "block", "direction": "output", "detections": [{"rule": "x", "category": "unsafe_link"}]})
+    assert "owasp-aisvs-1.0:C7.3.3" in link
+    secret = entry_controls({"verdict": "allow", "direction": "context", "detections": [{"rule": "aws", "category": "secret"}]})
+    assert "owasp-aisvs-1.0:C9.5.4" in secret
+    many = entry_controls({"verdict": "flag", "direction": "input",
+                           "detections": [{"rule": "many_shot_pattern", "category": "resource_abuse"}]})
+    assert {"owasp-aisvs-1.0:C2.1.8", "mitre-atlas-mitigations:AML.M0036"} <= set(many)
+
+
+def test_atlas_mitigation_names_match_v2026_09():
+    # Checked against atlas-data release v2026.09 (ATLAS-2026.09.yaml) on 2026-09-27.
+    expected = {
+        "AML.M0020": "Generative AI Guardrails", "AML.M0024": "AI Telemetry Logging",
+        "AML.M0028": "AI Agent Tools Permissions Configuration", "AML.M0029": "Human In-the-Loop for AI Agent Actions",
+        "AML.M0030": "Restrict AI Agent Tool Invocation on Untrusted Data",
+        "AML.M0033": "Input and Output Validation for AI Agent Components",
+        "AML.M0036": "Limit AI Workload Resource Consumption",
+    }  # fmt: skip
+    assert {c.id: c.title for c in CONTROLS.values() if c.framework == "mitre-atlas-mitigations"} == expected
+
+
+def test_aisvs_ids_exist_in_v1_0():
+    # IDs checked against OWASP/AISVS 1.0/en chapters C2, C7, C9, C12 on 2026-09-27.
+    verified = {"C2.1.2", "C2.1.3", "C2.1.4", "C2.1.7", "C2.1.8", "C7.3.2", "C7.3.3", "C7.3.4", "C9.2.1", "C9.3.5",
+                "C9.5.1", "C9.5.3", "C9.5.4", "C12.1.2", "C12.2.1", "C12.2.3"}  # fmt: skip
+    assert {c.id for c in CONTROLS.values() if c.framework == "owasp-aisvs-1.0"} == verified

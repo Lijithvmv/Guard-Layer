@@ -24,6 +24,10 @@ All notable changes to this project are documented here. The format follows
   differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
   (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
   referenced with attribution; no control text is included.
+- **MITRE ATLAS mitigations and OWASP AISVS 1.0 in the evidence export** (mapping version `2026.09.3`). ATLAS
+  mitigations (v2026.09): M0020, M0024, M0028, M0029, M0030, M0033, M0036. AISVS 1.0: C2.1.2–C2.1.8, C7.3.2–C7.3.4,
+  C9.2.1, C9.3.5, C9.5.1/C9.5.3/C9.5.4, C12.1.2, C12.2.1, C12.2.3. Human-in-the-loop mappings apply only to reviews of
+  agent tool calls. IDs verified against the official sources; AISVS descriptions are GuardLayer's own.
 - **Two more held-out datasets** in `benchmarks/public_eval.py`: Lakera's Gandalf injections (1,000, recall 0.57) and SPML
   (16,011 prompts: precision 1.00, recall 0.21, no false positives on 3,470 benign prompts). Downloads are now atomic, retry
   with back-off, and skip empty rows.

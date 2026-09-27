@@ -17,6 +17,8 @@ Frameworks mapped (see `CONTROLS`):
     nist-ai-rmf         NIST AI RMF 1.0 subcategories
     eu-ai-act           EU AI Act articles (obligations for high-risk AI systems)
     csa-aicm            CSA AI Controls Matrix v1.1.1 (IDs and titles referenced with attribution)
+    mitre-atlas-mitigations  MITRE ATLAS mitigations (v2026.09)
+    owasp-aisvs-1.0     OWASP AI Security Verification Standard 1.0 requirements
 
 **What a mapping means.** A mapped entry is evidence *relevant to* a control: it shows the
 control's runtime safeguard operating. It is not an attestation that the control, or the
@@ -41,7 +43,7 @@ from typing import Any
 
 from guardlayer.audit import AuditVerification, verify_audit_log
 
-MAPPING_VERSION = "2026.09.2"
+MAPPING_VERSION = "2026.09.3"
 
 DISCLAIMER = (
     "Control mappings identify runtime evidence relevant to each control. They do not certify compliance "
@@ -69,6 +71,8 @@ FRAMEWORKS: dict[str, str] = {
     "nist-ai-rmf": "NIST AI RMF 1.0",
     "eu-ai-act": "EU AI Act (Regulation (EU) 2024/1689)",
     "csa-aicm": "CSA AI Controls Matrix v1.1.1",
+    "mitre-atlas-mitigations": "MITRE ATLAS mitigations (v2026.09)",
+    "owasp-aisvs-1.0": "OWASP AI Security Verification Standard (AISVS) 1.0",
 }
 
 _CATALOG: list[tuple[str, str, str]] = [
@@ -118,6 +122,32 @@ _CATALOG: list[tuple[str, str, str]] = [
     ("csa-aicm", "LOG-15", "Input Monitoring"),
     ("csa-aicm", "LOG-16", "Output Monitoring"),
     ("csa-aicm", "TVM-13", "Guardrails"),
+    # MITRE ATLAS mitigations, names as in atlas-data v2026.09 (Apache-2.0, (c) MITRE).
+    ("mitre-atlas-mitigations", "AML.M0020", "Generative AI Guardrails"),
+    ("mitre-atlas-mitigations", "AML.M0024", "AI Telemetry Logging"),
+    ("mitre-atlas-mitigations", "AML.M0028", "AI Agent Tools Permissions Configuration"),
+    ("mitre-atlas-mitigations", "AML.M0029", "Human In-the-Loop for AI Agent Actions"),
+    ("mitre-atlas-mitigations", "AML.M0030", "Restrict AI Agent Tool Invocation on Untrusted Data"),
+    ("mitre-atlas-mitigations", "AML.M0033", "Input and Output Validation for AI Agent Components"),
+    ("mitre-atlas-mitigations", "AML.M0036", "Limit AI Workload Resource Consumption"),
+    # OWASP AISVS 1.0 (CC BY-SA 4.0). Requirements have no titles: these are GuardLayer's own short summaries, not
+    # AISVS text. Cite as "v1.0-C<id>".
+    ("owasp-aisvs-1.0", "C2.1.2", "Encoded or smuggled input is detected"),
+    ("owasp-aisvs-1.0", "C2.1.3", "Untrusted input is screened for prompt injection; flagged input is blocked"),
+    ("owasp-aisvs-1.0", "C2.1.4", "Input length limits are enforced"),
+    ("owasp-aisvs-1.0", "C2.1.7", "Reserved special tokens can't be injected"),
+    ("owasp-aisvs-1.0", "C2.1.8", "Many-shot jailbreak patterns are detected"),
+    ("owasp-aisvs-1.0", "C7.3.2", "Output disclosing the system prompt or backend data is blocked"),
+    ("owasp-aisvs-1.0", "C7.3.3", "Model output can't trigger outbound requests"),
+    ("owasp-aisvs-1.0", "C7.3.4", "Hidden or encoded content in output is checked"),
+    ("owasp-aisvs-1.0", "C9.2.1", "High-impact agent actions wait for human approval"),
+    ("owasp-aisvs-1.0", "C9.3.5", "Processing of untrusted data can't trigger tool calls"),
+    ("owasp-aisvs-1.0", "C9.5.1", "Agent tool use is restricted by runtime policy"),
+    ("owasp-aisvs-1.0", "C9.5.3", "Access decisions are made by a policy engine, not the model"),
+    ("owasp-aisvs-1.0", "C9.5.4", "Secrets are kept out of the model's context"),
+    ("owasp-aisvs-1.0", "C12.1.2", "Guardrail decisions are recorded for audit"),
+    ("owasp-aisvs-1.0", "C12.2.1", "Known jailbreak and injection attempts are detected and alerted"),
+    ("owasp-aisvs-1.0", "C12.2.3", "Custom rules detect injection and prompt-extraction attempts"),
 ]
 
 CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, cid, title in _CATALOG}
@@ -127,6 +157,7 @@ BASELINE: tuple[str, ...] = (
     "iso-42001:A.6.2.6", "iso-42001:A.6.2.8",
     "nist-ai-rmf:MEASURE 2.4", "nist-ai-rmf:MANAGE 4.1",
     "eu-ai-act:Art. 12", "csa-aicm:LOG-09",
+    "mitre-atlas-mitigations:AML.M0024", "owasp-aisvs-1.0:C12.1.2",
 )  # fmt: skip
 # By direction: what was monitored.
 ON_DIRECTION: dict[str, tuple[str, ...]] = {
@@ -137,9 +168,20 @@ ON_VERIFIED: tuple[str, ...] = ("csa-aicm:LOG-02",)
 # The entry holds hashes, not the scanned text: the log is sanitized by design.
 ON_SANITIZED: tuple[str, ...] = ("csa-aicm:LOG-08",)
 # Any detection: a security safeguard acted (or, in observe mode, would have).
-ON_DETECTION: tuple[str, ...] = ("nist-ai-rmf:MEASURE 2.7", "eu-ai-act:Art. 15", "csa-aicm:TVM-13")
+ON_DETECTION: tuple[str, ...] = (
+    "nist-ai-rmf:MEASURE 2.7", "eu-ai-act:Art. 15", "csa-aicm:TVM-13", "mitre-atlas-mitigations:AML.M0020",
+)  # fmt: skip
 # REVIEW: a human decides before the action proceeds.
 ON_REVIEW: tuple[str, ...] = ("eu-ai-act:Art. 14", "csa-aicm:GRC-15")
+# REVIEW of an agent's tool call specifically.
+ON_TOOL_REVIEW: tuple[str, ...] = ("mitre-atlas-mitigations:AML.M0029", "owasp-aisvs-1.0:C9.2.1")
+# A detection on a tool call or tool result: the agent's tool inputs/outputs are validated.
+ON_TOOL_DETECTION: tuple[str, ...] = ("mitre-atlas-mitigations:AML.M0033",)
+# By the component that decided.
+SCANNER_CONTROLS: dict[str, tuple[str, ...]] = {
+    "tool_policy": ("mitre-atlas-mitigations:AML.M0028", "owasp-aisvs-1.0:C9.5.1", "owasp-aisvs-1.0:C9.5.3"),
+    "session": ("mitre-atlas-mitigations:AML.M0030", "owasp-aisvs-1.0:C9.3.5", "owasp-aisvs-1.0:C9.5.3"),
+}  # fmt: skip
 
 _INJECTION = ("owasp-llm-2026:LLM01", "owasp-llm-2025:LLM01", "mitre-atlas:AML.T0051")
 _DISCLOSURE = ("owasp-llm-2026:LLM02", "owasp-llm-2025:LLM02", "mitre-atlas:AML.T0057", "csa-aicm:DSP-17")
@@ -160,7 +202,7 @@ CATEGORY_CONTROLS: dict[str, tuple[str, ...]] = {
     "unsafe_link": ("owasp-llm-2026:LLM10", "owasp-llm-2025:LLM05", *_DISCLOSURE, *_OUTPUT),
     "unsafe_command": (*_AGENCY, "owasp-agentic-2026:ASI05"),
     "tool_misuse": _AGENCY,
-    "resource_abuse": ("owasp-llm-2026:LLM06", "owasp-llm-2025:LLM10"),
+    "resource_abuse": ("owasp-llm-2026:LLM06", "owasp-llm-2025:LLM10", "mitre-atlas-mitigations:AML.M0036"),
     "policy": (),
 }
 
@@ -178,6 +220,11 @@ RULE_CONTROLS: dict[str, tuple[str, ...]] = {
     "trifecta": ("owasp-agentic-2026:ASI02",),
     "sensitive_data_egress": ("owasp-agentic-2026:ASI02",),
     "secret_in_egress": ("owasp-agentic-2026:ASI02",),
+    "fake_special_tokens": ("owasp-aisvs-1.0:C2.1.7",),
+    "many_shot_pattern": ("owasp-aisvs-1.0:C2.1.8",),
+    "oversized_input": ("owasp-aisvs-1.0:C2.1.4",),
+    "token_flooding": ("owasp-aisvs-1.0:C2.1.4",),
+    "character_flooding": ("owasp-aisvs-1.0:C2.1.4",),
 }
 
 _RULE_PREFIX_CONTROLS: dict[str, tuple[str, ...]] = {"capability_": _AGENCY}
@@ -191,11 +238,23 @@ def detection_controls(detection: Mapping[str, Any], direction: str | None = Non
     for prefix, extra in _RULE_PREFIX_CONTROLS.items():
         if rule.startswith(prefix):
             keys += extra
+    keys += SCANNER_CONTROLS.get(str(detection.get("scanner", "")), ())
     injection = category in {"prompt_injection", "jailbreak", "goal_hijack", "known_attack", "obfuscation"}
-    if injection and direction in {"input", "context"}:
-        keys.append("csa-aicm:AIS-09")  # input validation
+    incoming = direction in {"input", "context"}
+    if injection and incoming:
+        keys += ["csa-aicm:AIS-09", "owasp-aisvs-1.0:C2.1.3", "owasp-aisvs-1.0:C12.2.1"]  # input screened, detected
+        if detection.get("scanner") == "heuristics":
+            keys.append("owasp-aisvs-1.0:C12.2.3")  # custom detection rules
     if injection and direction == "context":
         keys += ["owasp-agentic-2026:ASI06", "csa-aicm:AIS-15"]  # indirect injection: data kept apart from instructions
+    if category == "obfuscation":
+        keys.append("owasp-aisvs-1.0:C2.1.2" if incoming else "owasp-aisvs-1.0:C7.3.4")
+    if category == "system_prompt_leak":
+        keys.append("owasp-aisvs-1.0:C7.3.2" if direction == "output" else "owasp-aisvs-1.0:C12.2.3")
+    if category == "unsafe_link" and direction == "output":
+        keys.append("owasp-aisvs-1.0:C7.3.3")
+    if category == "secret" and direction == "context":
+        keys.append("owasp-aisvs-1.0:C9.5.4")  # a secret in retrieved or tool content was redacted before the model
     return _unique(keys)
 
 
@@ -207,8 +266,13 @@ def entry_controls(entry: Mapping[str, Any]) -> list[str]:
     detections = entry.get("detections") or []
     if detections:
         keys += ON_DETECTION
+    tool_call = bool((entry.get("metadata") or {}).get("tool"))
     if "review" in {entry.get("verdict"), entry.get("shadow_verdict")}:
         keys += ON_REVIEW
+        if tool_call:
+            keys += ON_TOOL_REVIEW
+    if detections and tool_call:
+        keys += ON_TOOL_DETECTION
     for d in detections:
         keys += detection_controls(d, entry.get("direction"))
     return _unique(keys)
