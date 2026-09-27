@@ -16,4 +16,5 @@ Standard that supersedes ETSI TS 104 223, is © ETSI with all rights reserved: G
 (checked against ETSI's official PDF), with its own descriptions. NIST SP 800-53 Rev. 5.2.0 is a US government work in the
 public domain; titles from NIST's OSCAL catalog. NIST CSF 2.0 (public domain): subcategory text from NIST's CSF 2.0
 reference export; each CSF subcategory used is consistent with the SP 800-53 families NIST relates it to. ISO/IEC 42001 and ISO/IEC 27001 (© ISO) are referenced by
-control number and short title only.
+control number and short title only. SOC 2 Trust Services Criteria (© AICPA) are referenced by criterion ID, checked against
+the 2022 revised edition; descriptions are GuardLayer's own.

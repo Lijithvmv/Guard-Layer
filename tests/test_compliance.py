@@ -363,3 +363,24 @@ def test_iso_27001_mapping():
     assert "iso-27001:A.8.3" in cred
     assert {c.id for c in CONTROLS.values() if c.framework == "iso-27001"} == {
         "A.5.15", "A.5.33", "A.5.34", "A.8.3", "A.8.11", "A.8.12", "A.8.15", "A.8.16", "A.8.23"}
+
+
+def test_soc2_tsc_mapping():
+    base = set(entry_controls({"verdict": "allow", "detections": []}))
+    assert "soc2-tsc:CC7.2" in base and "soc2-tsc:CC7.3" not in base
+    ctx = set(entry_controls({"verdict": "block", "direction": "context",
+                              "detections": [{"scanner": "heuristics", "rule": "r", "category": "prompt_injection"}]}))
+    assert {"soc2-tsc:CC7.3", "soc2-tsc:CC6.6"} <= ctx
+    direct = set(entry_controls({"verdict": "block", "direction": "input",
+                                 "detections": [{"scanner": "heuristics", "rule": "r", "category": "prompt_injection"}]}))
+    assert "soc2-tsc:CC6.6" not in direct   # a user prompt isn't from outside the system boundary in this sense
+    tool = set(entry_controls({"verdict": "review", "direction": "output", "metadata": {"tool": "bash"},
+                               "detections": [{"scanner": "tool_policy", "rule": "persistence", "category": "tool_misuse"}]}))
+    assert {"soc2-tsc:CC6.1", "soc2-tsc:CC6.3", "soc2-tsc:CC6.8"} <= tool
+    egress = set(entry_controls({"verdict": "block", "direction": "output", "metadata": {"tool": "http_post"},
+                                 "detections": [{"scanner": "session", "rule": "sensitive_data_egress", "category": "data_exfiltration"}]}))
+    assert "soc2-tsc:CC6.7" in egress
+    pii = set(entry_controls({"verdict": "allow", "direction": "output", "detections": [{"rule": "email", "category": "pii"}]}))
+    assert "soc2-tsc:C1.1" in pii
+    assert {c.id for c in CONTROLS.values() if c.framework == "soc2-tsc"} == {
+        "C1.1", "CC6.1", "CC6.3", "CC6.6", "CC6.7", "CC6.8", "CC7.2", "CC7.3"}

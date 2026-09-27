@@ -24,6 +24,7 @@ Frameworks mapped (see `CONTROLS`):
     nist-sp-800-53      NIST SP 800-53 Rev. 5.2.0 controls
     nist-csf-2.0        NIST Cybersecurity Framework 2.0 subcategories
     iso-27001           ISO/IEC 27001:2022 Annex A controls
+    soc2-tsc            SOC 2: AICPA Trust Services Criteria (2017) criteria
 
 **What a mapping means.** A mapped entry is evidence *relevant to* a control: it shows the
 control's runtime safeguard operating. It is not an attestation that the control, or the
@@ -48,7 +49,7 @@ from typing import Any
 
 from guardlayer.audit import AuditVerification, verify_audit_log
 
-MAPPING_VERSION = "2026.09.8"
+MAPPING_VERSION = "2026.09.9"
 
 DISCLAIMER = (
     "Control mappings identify runtime evidence relevant to each control. They do not certify compliance "
@@ -83,6 +84,7 @@ FRAMEWORKS: dict[str, str] = {
     "nist-sp-800-53": "NIST SP 800-53 Rev. 5.2.0",
     "nist-csf-2.0": "NIST Cybersecurity Framework (CSF) 2.0",
     "iso-27001": "ISO/IEC 27001:2022 Annex A",
+    "soc2-tsc": "SOC 2: AICPA Trust Services Criteria (2017, points of focus revised 2022)",
 }
 
 _CATALOG: list[tuple[str, str, str]] = [
@@ -212,6 +214,16 @@ _CATALOG: list[tuple[str, str, str]] = [
     ("iso-27001", "A.8.15", "Logging"),
     ("iso-27001", "A.8.16", "Monitoring activities"),
     ("iso-27001", "A.8.23", "Web filtering"),
+    # AICPA 2017 Trust Services Criteria (c) AICPA: criterion IDs checked against the 2022 revised edition;
+    # descriptions are GuardLayer's own.
+    ("soc2-tsc", "C1.1", "Confidential information is identified and protected"),
+    ("soc2-tsc", "CC6.1", "Logical access security over protected assets"),
+    ("soc2-tsc", "CC6.3", "Access granted by role, with least privilege"),
+    ("soc2-tsc", "CC6.6", "Protection against threats from outside the system boundary"),
+    ("soc2-tsc", "CC6.7", "Movement of information restricted to authorised recipients"),
+    ("soc2-tsc", "CC6.8", "Unauthorised or malicious software prevented or detected"),
+    ("soc2-tsc", "CC7.2", "Components monitored for anomalies indicating malicious acts"),
+    ("soc2-tsc", "CC7.3", "Security events evaluated and acted on"),
 ]
 
 CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, cid, title in _CATALOG}
@@ -224,6 +236,7 @@ BASELINE: tuple[str, ...] = (
     "mitre-atlas-mitigations:AML.M0024", "owasp-aisvs-1.0:C12.1.2", "uk-ai-cop:12.1",
     "etsi-en-304-223:5.4.2-1", "nist-sp-800-53:AU-2", "nist-sp-800-53:AU-3", "nist-sp-800-53:AU-12",
     "nist-csf-2.0:PR.PS-04", "nist-csf-2.0:DE.CM-09", "iso-27001:A.8.15", "iso-27001:A.8.16",
+    "soc2-tsc:CC7.2",
 )  # fmt: skip
 # By direction: what was monitored.
 ON_DIRECTION: dict[str, tuple[str, ...]] = {
@@ -240,7 +253,7 @@ ON_SANITIZED: tuple[str, ...] = ("csa-aicm:LOG-08",)
 # Any detection: a security safeguard acted (or, in observe mode, would have).
 ON_DETECTION: tuple[str, ...] = (
     "nist-ai-rmf:MEASURE 2.7", "eu-ai-act:Art. 15", "csa-aicm:TVM-13", "mitre-atlas-mitigations:AML.M0020",
-    "uk-ai-cop:12.2", "etsi-en-304-223:5.4.2-2", "nist-sp-800-53:SI-4",
+    "uk-ai-cop:12.2", "etsi-en-304-223:5.4.2-2", "nist-sp-800-53:SI-4", "soc2-tsc:CC7.3",
 )  # fmt: skip
 # REVIEW: a human decides before the action proceeds.
 ON_REVIEW: tuple[str, ...] = ("eu-ai-act:Art. 14", "csa-aicm:GRC-15", "uk-ai-cop:4.1", "uk-ai-cop:4.3",
@@ -255,9 +268,9 @@ ON_TOOL_DETECTION: tuple[str, ...] = ("mitre-atlas-mitigations:AML.M0033",)
 SCANNER_CONTROLS: dict[str, tuple[str, ...]] = {
     "tool_policy": ("mitre-atlas-mitigations:AML.M0028", "owasp-aisvs-1.0:C9.5.1", "owasp-aisvs-1.0:C9.5.3", "uk-ai-cop:2.6",
                     "etsi-en-304-223:5.1.2-6", "nist-sp-800-53:AC-3", "nist-sp-800-53:AC-6",
-                    "nist-csf-2.0:PR.AA-05", "iso-27001:A.5.15"),
+                    "nist-csf-2.0:PR.AA-05", "iso-27001:A.5.15", "soc2-tsc:CC6.1", "soc2-tsc:CC6.3"),
     "session": ("mitre-atlas-mitigations:AML.M0030", "owasp-aisvs-1.0:C9.3.5", "owasp-aisvs-1.0:C9.5.3",
-                "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12"),
+                "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12", "soc2-tsc:CC6.7"),
 }  # fmt: skip
 
 _INJECTION = ("owasp-llm-2026:LLM01", "owasp-llm-2025:LLM01", "mitre-atlas:AML.T0051")
@@ -277,7 +290,7 @@ CATEGORY_CONTROLS: dict[str, tuple[str, ...]] = {
     "secret": _DISCLOSURE,
     "pii": _DISCLOSURE,
     "egress": (*_DISCLOSURE, "owasp-agentic-2026:ASI02", "csa-aicm:DSP-10", "nist-sp-800-53:SC-7", "nist-csf-2.0:PR.DS-02",
-               "iso-27001:A.8.12", "iso-27001:A.8.23"),
+               "iso-27001:A.8.12", "iso-27001:A.8.23", "soc2-tsc:CC6.7"),
     "unsafe_link": ("owasp-llm-2026:LLM10", "owasp-llm-2025:LLM05", *_DISCLOSURE, *_OUTPUT),
     "unsafe_command": (*_AGENCY, "owasp-agentic-2026:ASI05"),
     "tool_misuse": _AGENCY,
@@ -289,7 +302,7 @@ RULE_CONTROLS: dict[str, tuple[str, ...]] = {
     "credential_file": ("owasp-agentic-2026:ASI03", *_DISCLOSURE, "csa-aicm:IAM-14", "iso-27001:A.8.3"),
     "dotenv_file": ("owasp-agentic-2026:ASI03", *_DISCLOSURE, "csa-aicm:IAM-14", "iso-27001:A.8.3"),
     "destructive_command": ("owasp-agentic-2026:ASI05",),
-    "persistence": ("owasp-agentic-2026:ASI05", "nist-csf-2.0:PR.PS-05"),  # e.g. a curl | sh line in ~/.bashrc
+    "persistence": ("owasp-agentic-2026:ASI05", "nist-csf-2.0:PR.PS-05", "soc2-tsc:CC6.8"),  # e.g. a curl | sh line in ~/.bashrc
     "risky_command": ("owasp-agentic-2026:ASI03", "owasp-agentic-2026:ASI05"),  # includes privilege escalation
     "egress_metadata_endpoint": ("owasp-agentic-2026:ASI03",),  # cloud instance credentials
     "capability_exec": ("owasp-agentic-2026:ASI05",),
@@ -298,8 +311,10 @@ RULE_CONTROLS: dict[str, tuple[str, ...]] = {
     "after_injection": ("owasp-agentic-2026:ASI01", "owasp-agentic-2026:ASI06"),
     "trifecta": ("owasp-agentic-2026:ASI02",),
     "egress_not_allowed": ("nist-sp-800-53:SC-7(5)",),  # fires only when an egress allow-list is set
-    "sensitive_data_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12"),
-    "secret_in_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12"),
+    "sensitive_data_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12",
+                              "soc2-tsc:CC6.7"),
+    "secret_in_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12",
+                         "soc2-tsc:CC6.7"),
     "fake_special_tokens": ("owasp-aisvs-1.0:C2.1.7",),
     "many_shot_pattern": ("owasp-aisvs-1.0:C2.1.8",),
     "oversized_input": ("owasp-aisvs-1.0:C2.1.4",),
@@ -327,7 +342,7 @@ def detection_controls(detection: Mapping[str, Any], direction: str | None = Non
         if detection.get("scanner") == "heuristics":
             keys.append("owasp-aisvs-1.0:C12.2.3")  # custom detection rules
     if injection and direction == "context":
-        keys += ["owasp-agentic-2026:ASI06", "csa-aicm:AIS-15"]  # indirect injection: data kept apart from instructions
+        keys += ["owasp-agentic-2026:ASI06", "csa-aicm:AIS-15", "soc2-tsc:CC6.6"]  # indirect injection from outside
     if category == "obfuscation":
         keys.append("owasp-aisvs-1.0:C2.1.2" if incoming else "owasp-aisvs-1.0:C7.3.4")
     if direction == "output" and category in {"system_prompt_leak", "unsafe_link", "pii", "secret", "data_exfiltration"}:
@@ -341,7 +356,7 @@ def detection_controls(detection: Mapping[str, Any], direction: str | None = Non
     if category in {"secret", "pii"} and incoming:
         keys.append("nist-csf-2.0:PR.DS-10")  # sensitive data redacted before the model used it
     if category in {"secret", "pii"}:
-        keys.append("iso-27001:A.8.11")  # data masking (redaction)
+        keys += ["iso-27001:A.8.11", "soc2-tsc:C1.1"]  # data masking (redaction); confidential data identified
     if category == "pii":
         keys.append("iso-27001:A.5.34")
     return _unique(keys)

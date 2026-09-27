@@ -24,6 +24,10 @@ All notable changes to this project are documented here. The format follows
   differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
   (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
   referenced with attribution; no control text is included.
+- **SOC 2 (AICPA Trust Services Criteria 2017) in the evidence export** (mapping version `2026.09.9`): CC7.2 on every
+  entry, CC7.3 on detections, CC6.1/CC6.3 for tool policy, CC6.6 for injections in outside content, CC6.7 for blocked
+  data movement, CC6.8 for blocked persistence, C1.1 for secrets and personal data. Criterion IDs checked against the
+  AICPA's 2022 revised edition; descriptions are GuardLayer's own.
 - **ISO/IEC 27001:2022 Annex A in the evidence export** (mapping version `2026.09.8`): A.8.15 Logging and A.8.16
   Monitoring activities on every entry, A.5.33 Protection of records when the log verifies, A.8.11 Data masking and
   A.5.34 for redacted PII, A.8.12 Data leakage prevention for blocked egress and output leaks, A.5.15 Access control for
