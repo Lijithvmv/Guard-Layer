@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-27
+
 ### Added
 - **Control-mapped compliance evidence** (`guardlayer.compliance`, `guardlayer evidence export | controls`). Verifies a hash-chained
   audit log, then maps every entry to the controls it evidences: OWASP Top 10 for LLM Applications 2026 (and 2025 IDs), OWASP Top 10
@@ -82,7 +84,14 @@ All notable changes to this project are documented here. The format follows
 - **Two more held-out datasets** in `benchmarks/public_eval.py`: Lakera's Gandalf injections (1,000, recall 0.57) and SPML
   (16,011 prompts: precision 1.00, recall 0.21, no false positives on 3,470 benign prompts). Downloads are now atomic, retry
   with back-off, and skip empty rows.
-- `benchmarks/agentdojo_eval.py`: GuardLayer as a defense on AgentDojo (ETH Zurich's third-party agent benchmark), with a local model.
+- `benchmarks/agentdojo_eval.py`: GuardLayer as a defense on AgentDojo (ETH Zurich's third-party agent benchmark), with a local model;
+  `guardlayer-untrusted` defense (every tool result untrusted), `--max-iters`, and the GuardLayer commit recorded with each result.
+  **Results** (qwen2.5-coder 7B, banking and Slack, 10 attacks each): attacks succeeded 7 → 6 (banking) and 4 → 3 (Slack) with 0.5.0,
+  and 0 / 10 in both after the detection rules below, **measured after seeing the attacks**. Benign utility drops by 2 of 10 tasks per
+  suite; in banking, legitimate payments to an IBAN were blocked as personal data leaving the machine (the tools are untagged).
+- **Detection rules from AgentDojo's attack families**: typo-tolerant "ignore previous instructions", content addressed to "the AI",
+  instructions posed as a precondition of the user's task, fake system markers in content. 4 of AgentDojo's 5 families detected
+  at text level (was 1); no false positives on 4,509 benign prompts and 1,006 benign AgentDojo environment texts.
 - **Agentic evaluation** (`benchmarks/agentic_eval.py`): 30 injection attacks (5 attacker goals x 3 injection styles) and 8
   benign tasks in a simulated workspace, run by a real model through Ollama or by a scripted worst-case agent that obeys every
   injection. Scores executed actions (hijacked / succeeded / utility / approvals asked), with and without GuardLayer, with

@@ -24,7 +24,8 @@ Read this before relying on it. GuardLayer lowers risk; it does not make prompt 
 - **Assumptions GuardLayer depends on:**
   1. The application actually calls the scan functions on every edge, and **passes a session** where taint tracking is wanted.
   2. Tools are tagged with correct capabilities. An untagged tool is assumed able to do anything, but a tool *mis-tagged as read-only*
-     skips rules that would otherwise apply.
+     skips rules that would otherwise apply. The reverse costs utility: on AgentDojo's untagged banking tools, legitimate payments
+     were blocked because the IBAN in them counted as personal data leaving the machine.
   3. Human approvers read REVIEW requests. Rubber-stamping defeats the control ("review fatigue"). Measured in the agentic
      evaluation: with every review approved, 4 of 30 attacks succeeded (destructive and persistence actions), against 0 with
      reviews denied. Exfiltration stayed at 0 either way, because secrets are redacted and fingerprinted before egress.
@@ -35,6 +36,7 @@ Read this before relying on it. GuardLayer lowers risk; it does not make prompt 
 | Gap | Why | Mitigation |
 |---|---|---|
 | **Paraphrased injections** | Signature and similarity layers catch known and near-known phrasing; held-out recall is ~0.23 rules-only, ~0.47 with the classifier | Architecture first: least-privilege tools, egress allow-list, REVIEW for consequential actions, decisions that don't read free text |
+| **Attack families seen only once** | AgentDojo's 0 / 10 attack success came *after* rules were added for its injection families; a new template can still get through (a plain TODO-style goal is undetectable by design) | Treat the post-fix numbers as a closed gap, not a detection rate; rely on the session rules and REVIEW for consequential actions |
 | **Encoded or split secrets** | `sensitive_data_egress` matches verbatim copies (including embedded ones), not base64 or split values | `trifecta` rule escalates untrusted + sensitive + outbound regardless of value matching |
 | **Semantic leaks** | Summarised or paraphrased sensitive *information* isn't fingerprintable | Keep secrets out of the context; restrict what the agent can read |
 | **Cross-process taint** | Session state is per store; separate processes need a shared `FileSessionStore` | Use the file store (or equivalent) when checks run in separate processes |

@@ -679,6 +679,49 @@ How to read it:
 Results: [`benchmarks/results/`](https://github.com/Lijithvmv/Guard-Layer/tree/main/benchmarks/results/). Run it against any Ollama model:
 `python benchmarks/agentic_eval.py --model qwen2.5-coder:7b --config benchmarks/configs/agentic-tagged.toml`.
 
+### AgentDojo
+
+[AgentDojo](https://github.com/ethz-spylab/agentdojo) (ETH Zurich, v1.2.2) is a third-party benchmark: its own simulated
+banking and Slack environments, user tasks, injection tasks, attack (`important_instructions`) and scoring. GuardLayer plugs in as
+a defense that wraps AgentDojo's tool executor ([`benchmarks/agentdojo_eval.py`](https://github.com/Lijithvmv/Guard-Layer/blob/main/benchmarks/agentdojo_eval.py)).
+Model: `qwen2.5-coder:7b` through Ollama with an 8k context, AgentDojo's prompt-based tool calling, temperature 0,
+10 tool-loop iterations. 10 user tasks and 10 attack pairs sampled per suite (seed 2026), so every figure is out of 10 and
+one task is 10 points: read these as a direction, not a precise rate.
+
+| Suite · defense | Benign tasks done | Attacks succeeded | Attacked tasks still done |
+|---|---|---|---|
+| Banking · no defense | 6 / 10 | 7 / 10 | 6 / 10 |
+| Banking · GuardLayer 0.5.0 | 4 / 10 | 6 / 10 | 5 / 10 |
+| Banking · GuardLayer, fixes below | 4 / 10 | **0 / 10** | 5 / 10 |
+| Slack · no defense | 8 / 10 | 4 / 10 | 0 / 10 |
+| Slack · GuardLayer 0.5.0 | 6 / 10 | 3 / 10 | 0 / 10 |
+| Slack · GuardLayer, fixes below | 6 / 10 | **0 / 10** | 0 / 10 |
+
+**The 0 / 10 rows were measured after seeing the attacks.** At text level, 0.5.0 detected one of the five attack
+families in AgentDojo. The misses were fixed as general rules, not strings: a typo-tolerant "ignore previous instructions", content
+addressed "to you, the AI", instructions posed as a precondition of the user's task, and fake system markers inside content
+(4 of 5 families now detected; a plain TODO-style goal stays undetectable by design). No false positives on 4,509 benign
+prompts from the public datasets or 1,006 benign AgentDojo environment texts. But the same attacks were then re-run. That shows the gap was closed, not how GuardLayer does on attacks it has never seen; the
+held-out public datasets above are the better guide for that. Marking every tool result untrusted (`untrusted_tools = ["*"]`, AgentDojo's
+threat model) gave the same numbers after the fixes; before them it stopped one more banking attack (5 / 10).
+
+What it costs:
+
+- **Benign utility drops by 2 tasks in each suite** (6 → 4 banking, 8 → 6 Slack). In benign banking runs every block was a
+  legitimate `send_money` call: the IBAN in the payment counts as personal data, and sending it through a network-capable tool
+  is `sensitive_data_egress`. AgentDojo's tools are untagged, so GuardLayer assumes any of them
+  can send data off the machine. Tagging the payment tool as `write` (it acts on the bank's own system) avoids this; there
+  is no per-data-type exemption yet. Nobody approves REVIEW requests in the benchmark, so every review also counts as a
+  refusal.
+- **The whole tool result is withheld when it carries an injection**, so the agent also loses the legitimate content. That is
+  why attacked tasks don't recover. Slack's attacked tasks fail with or without a defense for this model.
+- **One model, two of AgentDojo's four suites, 10 samples each.** Workspace and travel weren't run (the local 7B model is too
+  slow for their long contexts). The per-task logs are kept out of the repository; the summary rows, with the GuardLayer commit
+  each was measured at, are in [`benchmarks/results/`](https://github.com/Lijithvmv/Guard-Layer/tree/main/benchmarks/results/).
+
+Reproduce: `pip install agentdojo==0.1.35` in a separate environment, then
+`python benchmarks/agentdojo_eval.py --model <ollama model> --suites banking,slack --per-suite 10 --max-iters 10`.
+
 ### Your own data
 
 ```

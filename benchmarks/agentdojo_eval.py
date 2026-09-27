@@ -138,15 +138,17 @@ class GuardedToolsExecutor(ToolsExecutor):
         return query, runtime, env, [*messages, *refused, *results], extra_args
 
 
-def build_pipeline(model: str, host: str, defense: str, stats: dict[str, int], config: str | None) -> AgentPipeline:
+def build_pipeline(model: str, host: str, defense: str, stats: dict[str, int], config: str | None, max_iters: int) -> AgentPipeline:
     client = openai.OpenAI(base_url=host.rstrip("/") + "/v1", api_key="ollama")
     llm = LocalLLM(client, model, temperature=0.0)
-    if defense == "guardlayer":
+    if defense.startswith("guardlayer"):
         guard = build_guard(config)
+        if defense == "guardlayer-untrusted":  # AgentDojo's threat model: any tool result may carry third-party text
+            guard.session_policy.untrusted_tools = ["*"]
         executor: ToolsExecutor = GuardedToolsExecutor(guard, stats)
-        elements = [SystemMessage(SYSTEM_MESSAGE), InitQuery(), GuardSession(), llm, ToolsExecutionLoop([executor, llm])]
+        elements = [SystemMessage(SYSTEM_MESSAGE), InitQuery(), GuardSession(), llm, ToolsExecutionLoop([executor, llm], max_iters=max_iters)]
     else:
-        elements = [SystemMessage(SYSTEM_MESSAGE), InitQuery(), llm, ToolsExecutionLoop([ToolsExecutor(), llm])]
+        elements = [SystemMessage(SYSTEM_MESSAGE), InitQuery(), llm, ToolsExecutionLoop([ToolsExecutor(), llm], max_iters=max_iters)]
     pipeline = AgentPipeline(elements)
     pipeline.name = f"local-{model.replace(':', '-').replace('/', '-')}-{defense}"  # a valid path on Windows too
     return pipeline
@@ -161,6 +163,16 @@ def sample(suite, per_suite: int, seed: int) -> tuple[list[str], list[tuple[str,
     return sorted(rng.sample(users, min(per_suite, len(users)))), sorted(rng.sample(pairs, min(per_suite, len(pairs))))
 
 
+def _commit() -> str | None:
+    import subprocess
+
+    try:
+        root = Path(__file__).resolve().parents[1]
+        return subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model", default="qwen2.5-coder:7b")
@@ -168,9 +180,11 @@ def main() -> int:
     p.add_argument("--suites", default="workspace,travel,banking,slack")
     p.add_argument("--benchmark-version", default="v1.2.2")
     p.add_argument("--attack", default="important_instructions_no_model_name")
-    p.add_argument("--defenses", default="none,guardlayer")
+    p.add_argument("--defenses", default="none,guardlayer",
+                   help="none, guardlayer (defaults) and/or guardlayer-untrusted (defaults + every tool result untrusted)")
     p.add_argument("--per-suite", type=int, default=10, help="user tasks and attack pairs sampled per suite")
     p.add_argument("--seed", type=int, default=2026)
+    p.add_argument("--max-iters", type=int, default=15, help="tool-loop iterations per task (AgentDojo's default is 15)")
     p.add_argument("--config", help="GuardLayer config (default: built-in balanced)")
     p.add_argument("--logdir", default="benchmarks/results/agentdojo-logs")
     p.add_argument("--out", default="benchmarks/results/agentdojo.jsonl")
@@ -179,14 +193,14 @@ def main() -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     meta = {"model": args.model, "benchmark": f"agentdojo {args.benchmark_version}", "attack": args.attack,
-            "guardlayer": __version__, "seed": args.seed, "per_suite": args.per_suite, "date": time.strftime("%Y-%m-%d")}  # fmt: skip
+            "guardlayer": __version__, "guardlayer_commit": _commit(), "seed": args.seed, "per_suite": args.per_suite, "max_iters": args.max_iters, "date": time.strftime("%Y-%m-%d")}  # fmt: skip
     print(json.dumps(meta), flush=True)
     for suite_name in args.suites.split(","):
         suite = get_suite(args.benchmark_version, suite_name)
         users, pairs = sample(suite, args.per_suite, args.seed)
         for defense in args.defenses.split(","):
             stats = {"blocks": 0, "reviews": 0, "withheld": 0}
-            pipeline = build_pipeline(args.model, args.host, defense, stats, args.config)
+            pipeline = build_pipeline(args.model, args.host, defense, stats, args.config, args.max_iters)
             logdir = Path(args.logdir) / defense
             t0 = time.perf_counter()
             logger = OutputLogger(str(logdir))
