@@ -24,6 +24,9 @@ All notable changes to this project are documented here. The format follows
   differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
   (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
   referenced with attribution; no control text is included.
+- **FedRAMP 20x Key Security Indicators in the evidence export** (mapping version `2026.09.14`), from FedRAMP's
+  Consolidated Rules 2026.09.13.02: KSI-MLA-LET on every entry, KSI-IAM-ELP for tool policy, KSI-CNA-RNT for egress rules.
+  Process KSIs (reviews, SIEM operation, incident response) aren't claimed. Rev. 5 authorisations use the SP 800-53 evidence.
 - **CMMC 2.0 Level 2 in the evidence export** (mapping version `2026.09.13`), practice IDs and titles from the DoD CMMC
   Assessment Guide Level 2 v2.13: AU.L2-3.3.1 on every entry, AU.L2-3.3.8 when the log verifies, SI.L2-3.14.6 on
   detections, AC.L2-3.1.1/3.1.2/3.1.5 for tool policy, AC.L2-3.1.3 for session taint and data leaving, SC.L2-3.13.1 for

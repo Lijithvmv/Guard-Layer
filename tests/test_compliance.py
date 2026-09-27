@@ -451,3 +451,12 @@ def test_cmmc_level_2_mapping():
                                   "detections": [{"scanner": "tool_policy", "rule": "persistence", "category": "tool_misuse"}]}))
     assert "cmmc-l2:SI.L2-3.14.2" in persist
     assert len([c for c in CONTROLS.values() if c.framework == "cmmc-l2"]) == 10
+
+
+def test_fedramp_20x_ksi_mapping():
+    assert "fedramp-20x:KSI-MLA-LET" in entry_controls({"verdict": "allow", "detections": []})
+    tool = set(entry_controls({"verdict": "block", "direction": "output", "metadata": {"tool": "http_get"},
+                               "detections": [{"scanner": "tool_policy", "rule": "egress_exfil_service", "category": "egress"}]}))
+    assert {"fedramp-20x:KSI-IAM-ELP", "fedramp-20x:KSI-CNA-RNT"} <= tool
+    # IDs checked against FedRAMP/rules fedramp-consolidated-rules.json v2026.09.13.02 on 2026-09-27
+    assert {c.id for c in CONTROLS.values() if c.framework == "fedramp-20x"} == {"KSI-CNA-RNT", "KSI-IAM-ELP", "KSI-MLA-LET"}

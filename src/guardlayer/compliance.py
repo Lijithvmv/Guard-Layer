@@ -29,6 +29,7 @@ Frameworks mapped (see `CONTROLS`):
     gdpr                GDPR articles (where personal data is processed)
     pci-dss-4           PCI DSS v4.0.1 requirements (where cardholder data is in scope)
     cmmc-l2             CMMC 2.0 Level 2 practices (NIST SP 800-171 Rev. 2)
+    fedramp-20x         FedRAMP 20x Key Security Indicators
 
 **What a mapping means.** A mapped entry is evidence *relevant to* a control: it shows the
 control's runtime safeguard operating. It is not an attestation that the control, or the
@@ -53,7 +54,7 @@ from typing import Any
 
 from guardlayer.audit import AuditVerification, verify_audit_log
 
-MAPPING_VERSION = "2026.09.13"
+MAPPING_VERSION = "2026.09.14"
 
 DISCLAIMER = (
     "Control mappings identify runtime evidence relevant to each control. They do not certify compliance "
@@ -93,6 +94,7 @@ FRAMEWORKS: dict[str, str] = {
     "gdpr": "GDPR (Regulation (EU) 2016/679)",
     "pci-dss-4": "PCI DSS v4.0.1",
     "cmmc-l2": "CMMC 2.0 Level 2 (NIST SP 800-171 Rev. 2)",
+    "fedramp-20x": "FedRAMP 20x Key Security Indicators (Consolidated Rules 2026)",
 }
 
 _CATALOG: list[tuple[str, str, str]] = [
@@ -265,6 +267,11 @@ _CATALOG: list[tuple[str, str, str]] = [
     ("cmmc-l2", "SC.L2-3.13.6", "Network Communication by Exception"),
     ("cmmc-l2", "SI.L2-3.14.2", "Malicious Code Protection"),
     ("cmmc-l2", "SI.L2-3.14.6", "Monitor Communications for Attacks"),
+    # FedRAMP 20x KSIs, IDs and names from FedRAMP's Consolidated Rules (version 2026.09.13.02, status "stable"; public
+    # domain). For FedRAMP Rev. 5 authorisations, use the nist-sp-800-53 evidence directly.
+    ("fedramp-20x", "KSI-CNA-RNT", "Restricting Network Traffic"),
+    ("fedramp-20x", "KSI-IAM-ELP", "Ensuring Least Privilege"),
+    ("fedramp-20x", "KSI-MLA-LET", "Logging Event Types"),
 ]
 
 CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, cid, title in _CATALOG}
@@ -278,7 +285,7 @@ BASELINE: tuple[str, ...] = (
     "etsi-en-304-223:5.4.2-1", "nist-sp-800-53:AU-2", "nist-sp-800-53:AU-3", "nist-sp-800-53:AU-12",
     "nist-csf-2.0:PR.PS-04", "nist-csf-2.0:DE.CM-09", "iso-27001:A.8.15", "iso-27001:A.8.16",
     "soc2-tsc:CC7.2", "hipaa-security:164.312(b)", "pci-dss-4:10.2.1",
-    "cmmc-l2:AU.L2-3.3.1",
+    "cmmc-l2:AU.L2-3.3.1", "fedramp-20x:KSI-MLA-LET",
 )  # fmt: skip
 # By direction: what was monitored.
 ON_DIRECTION: dict[str, tuple[str, ...]] = {
@@ -313,7 +320,7 @@ SCANNER_CONTROLS: dict[str, tuple[str, ...]] = {
                     "etsi-en-304-223:5.1.2-6", "nist-sp-800-53:AC-3", "nist-sp-800-53:AC-6",
                     "nist-csf-2.0:PR.AA-05", "iso-27001:A.5.15", "soc2-tsc:CC6.1", "soc2-tsc:CC6.3",
                     "hipaa-security:164.312(a)(1)", "pci-dss-4:7.2.5",
-                    "cmmc-l2:AC.L2-3.1.1", "cmmc-l2:AC.L2-3.1.2", "cmmc-l2:AC.L2-3.1.5"),
+                    "cmmc-l2:AC.L2-3.1.1", "cmmc-l2:AC.L2-3.1.2", "cmmc-l2:AC.L2-3.1.5", "fedramp-20x:KSI-IAM-ELP"),
     "session": ("mitre-atlas-mitigations:AML.M0030", "owasp-aisvs-1.0:C9.3.5", "owasp-aisvs-1.0:C9.5.3",
                 "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12", "soc2-tsc:CC6.7",
                 "hipaa-security:164.312(e)(1)", "cmmc-l2:AC.L2-3.1.3"),
@@ -337,7 +344,7 @@ CATEGORY_CONTROLS: dict[str, tuple[str, ...]] = {
     "pii": _DISCLOSURE,
     "egress": (*_DISCLOSURE, "owasp-agentic-2026:ASI02", "csa-aicm:DSP-10", "nist-sp-800-53:SC-7", "nist-csf-2.0:PR.DS-02",
                "iso-27001:A.8.12", "iso-27001:A.8.23", "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)",
-               "cmmc-l2:SC.L2-3.13.1"),
+               "cmmc-l2:SC.L2-3.13.1", "fedramp-20x:KSI-CNA-RNT"),
     "unsafe_link": ("owasp-llm-2026:LLM10", "owasp-llm-2025:LLM05", *_DISCLOSURE, *_OUTPUT),
     "unsafe_command": (*_AGENCY, "owasp-agentic-2026:ASI05"),
     "tool_misuse": _AGENCY,

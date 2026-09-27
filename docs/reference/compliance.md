@@ -28,4 +28,5 @@ published Summary of Changes and practitioner references; descriptions are Guard
 log changes: run `guardlayer audit verify` on a schedule with alerting. 3.5.1 isn't claimed: the audit log's hash of the
 scanned text is unkeyed, and PCI DSS requires keyed hashes for card numbers at rest.
 CMMC 2.0 Level 2 practice IDs and titles are from the DoD's CMMC Assessment Guide Level 2 v2.13 (September 2024), which
-follows NIST SP 800-171 Rev. 2 (public domain).
+follows NIST SP 800-171 Rev. 2 (public domain). FedRAMP 20x Key Security Indicators are from FedRAMP's Consolidated Rules
+(version 2026.09.13.02); FedRAMP Rev. 5 authorisations use NIST SP 800-53 controls, so use the `nist-sp-800-53` evidence.
