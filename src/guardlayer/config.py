@@ -33,6 +33,7 @@ Example `guardlayer.toml`:
     actions = { trifecta = "review", after_injection = "review", sensitive_data_egress = "block" }
     trusted_tools = ["read_docs"]  # results never count as untrusted or hostile
     untrusted_tools = ["read_email"]
+    allow_egress = { send_money = ["iban"] }  # data types a tool may send out (exempt from egress/trifecta)
     store = "memory"               # or "file" with dir = "..." (one process per check, e.g. hooks)
 
     [audit]                        # tamper-evident JSONL audit log

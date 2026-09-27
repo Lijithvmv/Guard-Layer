@@ -217,6 +217,10 @@ What counts:
   `scan_context`. Add or remove tools with `untrusted_tools` and `trusted_tools`.
 - **Sensitive data:** secrets or personal data found in what the agent read or was given,
   and credential or `.env` files it opened.
+- **Data a tool is meant to send:** a payment tool sends IBANs, a CRM tool sends email addresses.
+  `allow_egress = { send_money = ["iban"] }` exempts those data types, for that tool only, from
+  `sensitive_data_egress` and `trifecta`; `after_injection` still applies. Keep it narrow: an injection
+  that isn't detected can then direct that tool to send that kind of data.
 
 Sensitive values are stored only as fingerprints (the length, a 16-bit prefix check and a
 truncated SHA-256), so session state is safe to persist. State lives in memory by default,

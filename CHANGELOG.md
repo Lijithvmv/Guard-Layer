@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`[session] allow_egress`**: tool-name glob -> data types that tool may send out (`{ send_money = ["iban"] }`). Those types,
+  for that tool only, no longer trigger `sensitive_data_egress`, nor `trifecta` when they are the only sensitive data in the
+  session; `after_injection` still applies. Fingerprints now carry the rule that found the value (`<len>:<prefix>:<sha>:<kind>`)
+  and sessions record `sensitive_kinds`; untyped fingerprints from older session files are never exempt. Found by AgentDojo:
+  legitimate payments to an IBAN from a bill were blocked.
+
 ## [0.6.0] - 2026-09-27
 
 ### Added

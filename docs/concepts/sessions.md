@@ -43,6 +43,14 @@ assert r.verdict is Verdict.REVIEW and {d.rule for d in r.detections} == {"trife
     `[session] untrusted_tools = ["read_file", "get_transactions"]`, or `["*"]` to treat every tool result as untrusted.
     The [AgentDojo evaluation](../evaluation.md#agentdojo) shows why this matters.
 
+!!! note "Tools whose job is to send sensitive data"
+    A payment tool sends IBANs; a CRM tool sends email addresses. By default that trips `sensitive_data_egress` when the
+    value was seen earlier in the session. Allow it for that tool and that data type only:
+    `[session] allow_egress = { send_money = ["iban"] }` (data types are detection rule names: `guardlayer rules`).
+    Those types are then exempt from `sensitive_data_egress` and `trifecta` for that tool; other sensitive data is not, and
+    `after_injection` still holds the call for review. The trade-off: an injection that isn't detected can direct that tool
+    to send that kind of data.
+
 ## Storage and privacy
 
 Sensitive values are stored only as **fingerprints** (length, a 16-bit prefix check and a truncated SHA-256), so session

@@ -35,6 +35,7 @@ rules = [{ name = "no_prod", pattern = "prod-db", action = "block" }]
 actions = { trifecta = "review", after_injection = "review", sensitive_data_egress = "block" }
 trusted_tools = ["read_docs"]           # results never count as untrusted or hostile
 untrusted_tools = ["read_email"]        # results always count as untrusted ("*" for every tool)
+allow_egress = { send_money = ["iban"] } # data types a tool may send out (exempt from egress and trifecta)
 store = "memory"                        # or "file", with dir = "...", for checks in separate processes
 ttl_seconds = 86400
 

@@ -1,0 +1,3 @@
+# AgentDojo banking suite: the payment tool may send IBANs (its job). Everything else is the default `balanced` guard.
+[session]
+allow_egress = { send_money = ["iban"], schedule_transaction = ["iban"], update_scheduled_transaction = ["iban"] }

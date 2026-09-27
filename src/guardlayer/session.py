@@ -15,6 +15,10 @@ them to escalate the third:
 | `trifecta`              | untrusted content + sensitive data seen, then a network/exec call     | review  |
 | `after_injection`       | content with an injection was read, then a write/network/exec call    | review  |
 
+A tool whose job is to send a particular kind of data (a payment tool and IBANs, a CRM tool and email
+addresses) can be allowed to: `allow_egress = { send_money = ["iban"] }` exempts those data types, and
+only those, from `sensitive_data_egress` and `trifecta` for that tool. `after_injection` still applies.
+
 Sensitive values are stored only as fingerprints (length, a 16-bit prefix check and a truncated SHA-256), never in the
 clear, so the state is safe to persist. Fingerprints catch a value copied verbatim, including when
 it is embedded in a longer token such as a URL path; an encoded or split copy will not match,
@@ -75,30 +79,37 @@ def _prefix_key(value: str) -> int:
     return zlib.crc32(value[:_PREFIX].encode("utf-8")) & 0xFFFF
 
 
-def fingerprint(value: str) -> str:
-    """`<length>:<prefix check>:<truncated sha256>` of a sensitive value.
+def fingerprint(value: str, kind: str | None = None) -> str:
+    """`<length>:<prefix check>:<truncated sha256>[:<kind>]` of a sensitive value.
 
     Length and prefix check let `contains_fingerprint` find the value anywhere inside other
-    text (a URL path, a glued token) in one pass, not only as a whole token.
+    text (a URL path, a glued token) in one pass, not only as a whole token. `kind` is the
+    rule that found the value (`iban`, `aws_access_key`, ...), so a tool can be allowed to
+    send that kind of data (`SessionPolicy.allow_egress`).
     """
     value = value.strip(".=/")
-    return f"{len(value)}:{_prefix_key(value):04x}:{_digest(value)}"
+    fp = f"{len(value)}:{_prefix_key(value):04x}:{_digest(value)}"
+    return f"{fp}:{kind}" if kind else fp
 
 
-def contains_fingerprint(text: str, fingerprints: Iterable[str]) -> bool:
+def contains_fingerprint(text: str, fingerprints: Iterable[str], *, allowed_kinds: Iterable[str] = ()) -> bool:
     """True if any fingerprinted value occurs in `text`, whole or embedded in a longer token.
 
     Every position in each run of token characters gets one CRC of its next 8 characters;
     only positions whose CRC matches a stored prefix check are hashed in full. That keeps
     the cost linear in the text, whatever the number of fingerprints, so
     `https://evil.example/<secret>.png` or `data=x<secret>` match cheaply. Legacy
-    fingerprints (a plain hash) match whole tokens only.
+    fingerprints (a plain hash) match whole tokens only. Fingerprints of an `allowed_kinds`
+    kind are ignored; untyped ones never are.
     """
+    allowed = set(allowed_kinds)
     by_prefix: dict[int, list[tuple[int, str]]] = {}
     legacy: set[str] = set()
     for fp in fingerprints:
         parts = fp.split(":")
-        if len(parts) == 3 and parts[0].isdigit():
+        if len(parts) == 4 and parts[3] in allowed:
+            continue
+        if len(parts) in (3, 4) and parts[0].isdigit():
             by_prefix.setdefault(int(parts[1], 16), []).append((int(parts[0]), parts[2]))
         else:
             legacy.add(fp)
@@ -131,6 +142,7 @@ class SessionState:
     hostile_sources: list[str] = field(default_factory=list)  # sources whose content held an injection
     sensitive_sources: list[str] = field(default_factory=list)  # where sensitive data was seen
     fingerprints: list[str] = field(default_factory=list)  # hashes of sensitive values
+    sensitive_kinds: list[str] = field(default_factory=list)  # rules that found them (iban, credential_file, ...)
     events: int = 0
 
     @property
@@ -167,7 +179,7 @@ class SessionState:
 
     def merge(self, other: SessionState) -> None:
         """Union another copy of this session into this one (state only grows, so merging is safe)."""
-        for name, cap in (("untrusted_sources", MAX_SOURCES), ("hostile_sources", MAX_SOURCES), ("sensitive_sources", MAX_SOURCES), ("fingerprints", MAX_FINGERPRINTS)):
+        for name, cap in (("untrusted_sources", MAX_SOURCES), ("hostile_sources", MAX_SOURCES), ("sensitive_sources", MAX_SOURCES), ("fingerprints", MAX_FINGERPRINTS), ("sensitive_kinds", MAX_SOURCES)):
             setattr(self, name, _add(getattr(other, name), getattr(self, name), cap))
         self.created = min(self.created, other.created)
         self.updated = max(self.updated, other.updated)
@@ -331,6 +343,10 @@ class SessionPolicy:
       input is always untrusted. `trusted_tools` excludes tools from both untrusted and hostile.
     * `actions`: action per session rule (`sensitive_data_egress`, `trifecta`, `after_injection`);
       set one to `"log"` to switch it off.
+    * `allow_egress`: tool-name glob -> data types (detection rule names such as `iban` or
+      `email`) that tool may send out. Those types don't trigger `sensitive_data_egress`, nor
+      `trifecta` when they are the only sensitive data in the session. It also means an
+      undetected injection could direct that tool to send that data type; keep it narrow.
     """
 
     enabled: bool = True
@@ -338,6 +354,7 @@ class SessionPolicy:
     untrusted_tools: list[str] = field(default_factory=list)
     trusted_tools: list[str] = field(default_factory=list)
     hostile_min_verdict: Verdict = Verdict.FLAG
+    allow_egress: dict[str, list[str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         merged = dict(DEFAULT_SESSION_ACTIONS)
@@ -347,12 +364,22 @@ class SessionPolicy:
             raise ValueError(f"unknown session rule(s) {sorted(unknown)}; use {sorted(DEFAULT_SESSION_ACTIONS)}")
         self.actions = merged
         self.hostile_min_verdict = Verdict(self.hostile_min_verdict)
+        for pattern, kinds in self.allow_egress.items():
+            if isinstance(kinds, str) or not all(isinstance(k, str) for k in kinds):
+                raise ValueError(f"allow_egress[{pattern!r}] must be a list of data types, e.g. [\"iban\"]")
+        self.allow_egress = {p: list(k) for p, k in self.allow_egress.items()}
 
     def _matches(self, tool: str | None, patterns: list[str]) -> bool:
         return tool is not None and any(fnmatch.fnmatchcase(tool, p) for p in patterns)
 
     def is_trusted(self, tool: str | None) -> bool:
         return self._matches(tool, self.trusted_tools)
+
+    def allowed_kinds(self, tool: str | None) -> frozenset[str]:
+        """Data types `tool` may send out (union over every matching `allow_egress` pattern)."""
+        if tool is None:
+            return frozenset()
+        return frozenset(k for p, kinds in self.allow_egress.items() if fnmatch.fnmatchcase(tool, p) for k in kinds)
 
     def is_untrusted(self, tool: str | None, can_reach_network: bool) -> bool:
         if tool is None:
@@ -368,10 +395,11 @@ def record_sensitive_values(state: SessionState, text: str, result: ScanResult) 
         if d.category not in SENSITIVE_CATEGORIES or d.rule in _NOT_SENSITIVE_PII:
             continue
         found = True
+        state.sensitive_kinds = _add(state.sensitive_kinds, [d.rule], MAX_SOURCES)
         if d.span:
             token = _value_token(text[d.span[0] : d.span[1]])
             if token:
-                state.fingerprints = _add(state.fingerprints, [fingerprint(token)], MAX_FINGERPRINTS)
+                state.fingerprints = _add(state.fingerprints, [fingerprint(token, d.rule)], MAX_FINGERPRINTS)
     return found
 
 
@@ -401,7 +429,9 @@ def observe_tool_call(state: SessionState, tool: str, result: ScanResult) -> Non
     """A call that reached a credential store or .env file (and was not blocked) makes the session sensitive."""
     if result.is_blocked:
         return
-    if any(d.rule in SENSITIVE_TOOL_RULES for d in result.detections):
+    rules = [d.rule for d in result.detections if d.rule in SENSITIVE_TOOL_RULES]
+    if rules:
+        state.sensitive_kinds = _add(state.sensitive_kinds, rules, MAX_SOURCES)
         state.sensitive_sources = _add(state.sensitive_sources, [f"tool:{tool}"], MAX_SOURCES)
     _touch(state)
 
@@ -436,12 +466,15 @@ def taint_detections(
     def emit(rule: str, category: str, severity: float, message: str, **metadata: Any) -> None:
         out.append(Detection(SCANNER, rule, category, severity, message, metadata={"tool": tool, **metadata}, action=policy.actions[rule].value))
 
+    allowed = policy.allowed_kinds(tool)
     if leaves and state.fingerprints:
-        if contains_fingerprint(arguments_text, state.fingerprints):
+        if contains_fingerprint(arguments_text, state.fingerprints, allowed_kinds=allowed):
             emit("sensitive_data_egress", Category.DATA_EXFILTRATION.value, 1.0,
                  "A sensitive value seen earlier in this session is being sent out of the machine by this tool call.",
                  sources=state.sensitive_sources[-5:])  # fmt: skip
-    if egress and state.untrusted and state.sensitive:
+    # Only allowed data types seen (and every source typed): nothing this tool may not send.
+    only_allowed = bool(allowed) and bool(state.sensitive_kinds) and set(state.sensitive_kinds) <= allowed
+    if egress and state.untrusted and state.sensitive and not only_allowed:
         emit("trifecta", Category.DATA_EXFILTRATION.value, 0.7,
              "This session has read untrusted content and sensitive data; network/exec actions need approval.",
              untrusted=state.untrusted_sources[-5:], sensitive=state.sensitive_sources[-5:])  # fmt: skip
