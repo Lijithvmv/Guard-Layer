@@ -20,6 +20,7 @@ Frameworks mapped (see `CONTROLS`):
     mitre-atlas-mitigations  MITRE ATLAS mitigations (v2026.09)
     owasp-aisvs-1.0     OWASP AI Security Verification Standard 1.0 requirements
     uk-ai-cop           UK Code of Practice for the Cyber Security of AI (2025) provisions
+    etsi-en-304-223     ETSI EN 304 223 V2.1.1 (supersedes TS 104 223) provision numbers
 
 **What a mapping means.** A mapped entry is evidence *relevant to* a control: it shows the
 control's runtime safeguard operating. It is not an attestation that the control, or the
@@ -44,7 +45,7 @@ from typing import Any
 
 from guardlayer.audit import AuditVerification, verify_audit_log
 
-MAPPING_VERSION = "2026.09.4"
+MAPPING_VERSION = "2026.09.5"
 
 DISCLAIMER = (
     "Control mappings identify runtime evidence relevant to each control. They do not certify compliance "
@@ -75,6 +76,7 @@ FRAMEWORKS: dict[str, str] = {
     "mitre-atlas-mitigations": "MITRE ATLAS mitigations (v2026.09)",
     "owasp-aisvs-1.0": "OWASP AI Security Verification Standard (AISVS) 1.0",
     "uk-ai-cop": "UK Code of Practice for the Cyber Security of AI (2025)",
+    "etsi-en-304-223": "ETSI EN 304 223 V2.1.1 (2025-12), baseline cyber security for AI",
 }
 
 _CATALOG: list[tuple[str, str, str]] = [
@@ -159,6 +161,16 @@ _CATALOG: list[tuple[str, str, str]] = [
     ("uk-ai-cop", "5.4.1", "Checks and sanitisation applied to data and inputs (shall)"),
     ("uk-ai-cop", "12.1", "System and user actions logged for security compliance and investigations (shall)"),
     ("uk-ai-cop", "12.2", "Behaviour analysed to detect breaches and unexpected behaviour (should)"),
+    # ETSI EN 304 223 V2.1.1 (2025-12), which supersedes TS 104 223 and builds on the UK Code; (c) ETSI, all rights
+    # reserved. Provision numbers only, checked against the official PDF; descriptions are GuardLayer's own.
+    ("etsi-en-304-223", "5.1.2-2", "AI system built to withstand adversarial attacks and unexpected input (shall)"),
+    ("etsi-en-304-223", "5.1.2-6", "AI system permissions on other systems limited to what's required (shall)"),
+    ("etsi-en-304-223", "5.1.4-1", "Capabilities that enable human oversight (should)"),
+    ("etsi-en-304-223", "5.1.4-3", "Technical measures where human oversight is a risk control (shall)"),
+    ("etsi-en-304-223", "5.2.1-4", "Sensitive data protected against unauthorised access (shall)"),
+    ("etsi-en-304-223", "5.2.1-4.1", "Checks and sanitisation applied to data and inputs (shall)"),
+    ("etsi-en-304-223", "5.4.2-1", "System and user actions logged for security compliance and investigations (shall)"),
+    ("etsi-en-304-223", "5.4.2-2", "Behaviour analysed to detect breaches and unexpected behaviour (should)"),
 ]
 
 CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, cid, title in _CATALOG}
@@ -169,6 +181,7 @@ BASELINE: tuple[str, ...] = (
     "nist-ai-rmf:MEASURE 2.4", "nist-ai-rmf:MANAGE 4.1",
     "eu-ai-act:Art. 12", "csa-aicm:LOG-09",
     "mitre-atlas-mitigations:AML.M0024", "owasp-aisvs-1.0:C12.1.2", "uk-ai-cop:12.1",
+    "etsi-en-304-223:5.4.2-1",
 )  # fmt: skip
 # By direction: what was monitored.
 ON_DIRECTION: dict[str, tuple[str, ...]] = {
@@ -181,22 +194,26 @@ ON_SANITIZED: tuple[str, ...] = ("csa-aicm:LOG-08",)
 # Any detection: a security safeguard acted (or, in observe mode, would have).
 ON_DETECTION: tuple[str, ...] = (
     "nist-ai-rmf:MEASURE 2.7", "eu-ai-act:Art. 15", "csa-aicm:TVM-13", "mitre-atlas-mitigations:AML.M0020",
-    "uk-ai-cop:12.2",
+    "uk-ai-cop:12.2", "etsi-en-304-223:5.4.2-2",
 )  # fmt: skip
 # REVIEW: a human decides before the action proceeds.
-ON_REVIEW: tuple[str, ...] = ("eu-ai-act:Art. 14", "csa-aicm:GRC-15", "uk-ai-cop:4.1", "uk-ai-cop:4.3")
+ON_REVIEW: tuple[str, ...] = ("eu-ai-act:Art. 14", "csa-aicm:GRC-15", "uk-ai-cop:4.1", "uk-ai-cop:4.3",
+    "etsi-en-304-223:5.1.4-1", "etsi-en-304-223:5.1.4-3",
+)
 # REVIEW of an agent's tool call specifically.
 ON_TOOL_REVIEW: tuple[str, ...] = ("mitre-atlas-mitigations:AML.M0029", "owasp-aisvs-1.0:C9.2.1")
 # A detection on a tool call or tool result: the agent's tool inputs/outputs are validated.
 ON_TOOL_DETECTION: tuple[str, ...] = ("mitre-atlas-mitigations:AML.M0033",)
 # By the component that decided.
 SCANNER_CONTROLS: dict[str, tuple[str, ...]] = {
-    "tool_policy": ("mitre-atlas-mitigations:AML.M0028", "owasp-aisvs-1.0:C9.5.1", "owasp-aisvs-1.0:C9.5.3", "uk-ai-cop:2.6"),
+    "tool_policy": ("mitre-atlas-mitigations:AML.M0028", "owasp-aisvs-1.0:C9.5.1", "owasp-aisvs-1.0:C9.5.3", "uk-ai-cop:2.6",
+                    "etsi-en-304-223:5.1.2-6"),
     "session": ("mitre-atlas-mitigations:AML.M0030", "owasp-aisvs-1.0:C9.3.5", "owasp-aisvs-1.0:C9.5.3"),
 }  # fmt: skip
 
 _INJECTION = ("owasp-llm-2026:LLM01", "owasp-llm-2025:LLM01", "mitre-atlas:AML.T0051")
-_DISCLOSURE = ("owasp-llm-2026:LLM02", "owasp-llm-2025:LLM02", "mitre-atlas:AML.T0057", "csa-aicm:DSP-17", "uk-ai-cop:5.4")
+_DISCLOSURE = ("owasp-llm-2026:LLM02", "owasp-llm-2025:LLM02", "mitre-atlas:AML.T0057", "csa-aicm:DSP-17", "uk-ai-cop:5.4",
+               "etsi-en-304-223:5.2.1-4")
 _AGENCY = ("owasp-llm-2026:LLM03", "owasp-llm-2025:LLM06", "owasp-agentic-2026:ASI02", "csa-aicm:AIS-11", "csa-aicm:IAM-18")
 _OUTPUT = ("csa-aicm:AIS-10",)
 
@@ -254,7 +271,8 @@ def detection_controls(detection: Mapping[str, Any], direction: str | None = Non
     injection = category in {"prompt_injection", "jailbreak", "goal_hijack", "known_attack", "obfuscation"}
     incoming = direction in {"input", "context"}
     if injection and incoming:
-        keys += ["csa-aicm:AIS-09", "owasp-aisvs-1.0:C2.1.3", "owasp-aisvs-1.0:C12.2.1", "uk-ai-cop:5.4.1"]  # input screened
+        keys += ["csa-aicm:AIS-09", "owasp-aisvs-1.0:C2.1.3", "owasp-aisvs-1.0:C12.2.1", "uk-ai-cop:5.4.1",
+                 "etsi-en-304-223:5.2.1-4.1", "etsi-en-304-223:5.1.2-2"]  # input screened, attack withstood
         if detection.get("scanner") == "heuristics":
             keys.append("owasp-aisvs-1.0:C12.2.3")  # custom detection rules
     if injection and direction == "context":

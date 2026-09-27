@@ -266,3 +266,27 @@ def test_uk_code_of_practice_mapping():
 def test_uk_code_provisions_exist():
     # Provision numbers checked against the gov.uk publication (January 2025) on 2026-09-27.
     assert {c.id for c in CONTROLS.values() if c.framework == "uk-ai-cop"} == {"2.6", "4.1", "4.3", "5.4", "5.4.1", "12.1", "12.2"}
+
+
+def test_etsi_en_304_223_mirrors_the_uk_code():
+    # EN 304 223 renumbers the UK Code's provisions; every UK mapping must have its EN counterpart.
+    pairs = {"12.1": "5.4.2-1", "12.2": "5.4.2-2", "4.1": "5.1.4-1", "4.3": "5.1.4-3", "2.6": "5.1.2-6",
+             "5.4": "5.2.1-4", "5.4.1": "5.2.1-4.1"}  # fmt: skip
+    entries = [
+        {"verdict": "allow", "detections": []},
+        {"verdict": "block", "direction": "context", "detections": [{"scanner": "heuristics", "rule": "r", "category": "prompt_injection"}]},
+        {"verdict": "review", "direction": "output", "metadata": {"tool": "bash"},
+         "detections": [{"scanner": "tool_policy", "rule": "risky_command", "category": "tool_misuse"}]},
+        {"verdict": "allow", "direction": "output", "detections": [{"rule": "email", "category": "pii"}]},
+    ]  # fmt: skip
+    for e in entries:
+        keys = set(entry_controls(e))
+        for uk, en in pairs.items():
+            assert (f"uk-ai-cop:{uk}" in keys) == (f"etsi-en-304-223:{en}" in keys), (e, uk, en)
+    assert "etsi-en-304-223:5.1.2-2" in entry_controls(entries[1])   # adversarial input withstood
+
+
+def test_etsi_provisions_exist():
+    # Provision numbers checked against ETSI EN 304 223 V2.1.1 (2025-12) PDF on 2026-09-27.
+    assert {c.id for c in CONTROLS.values() if c.framework == "etsi-en-304-223"} == {
+        "5.1.2-2", "5.1.2-6", "5.1.4-1", "5.1.4-3", "5.2.1-4", "5.2.1-4.1", "5.4.2-1", "5.4.2-2"}

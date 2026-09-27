@@ -24,6 +24,10 @@ All notable changes to this project are documented here. The format follows
   differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
   (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
   referenced with attribution; no control text is included.
+- **ETSI EN 304 223 V2.1.1 in the evidence export** (mapping version `2026.09.5`): the European Standard (2025-12) that
+  supersedes ETSI TS 104 223. It renumbers the UK Code's provisions (5.4.2-1/-2 logging and analysis, 5.1.4-1/-3 human
+  oversight, 5.1.2-6 permissions, 5.2.1-4 and 5.2.1-4.1 sensitive data and input checks) and adds 5.1.2-2 (withstanding
+  adversarial attacks), mapped to blocked injections and jailbreaks. Provision numbers only, checked against ETSI's PDF.
 - **UK Code of Practice for the Cyber Security of AI (2025) in the evidence export** (mapping version `2026.09.4`,
   Open Government Licence v3.0): 12.1 logging, 12.2 behaviour analysis, 4.1/4.3 human oversight, 2.6 least-privilege
   permissions for the AI system, 5.4 sensitive data, 5.4.1 input checks and sanitisation.

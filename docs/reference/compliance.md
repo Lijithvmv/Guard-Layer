@@ -11,4 +11,6 @@ spreadsheet on 2026-09-27. MITRE ATLAS mitigation names are from MITRE's atlas-d
 AISVS 1.0 (CC BY-SA 4.0, OWASP Foundation) requirements have no titles: the descriptions here are GuardLayer's own
 summaries; cite a requirement as `v1.0-C<id>`. The UK Code of Practice for the Cyber Security of AI (DSIT and NCSC, January 2025) is
 Crown copyright, used under the [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/);
-provision numbers as published on gov.uk, descriptions GuardLayer's own.
+provision numbers as published on gov.uk, descriptions GuardLayer's own. ETSI EN 304 223 V2.1.1 (2025-12), the European
+Standard that supersedes ETSI TS 104 223, is © ETSI with all rights reserved: GuardLayer references provision numbers only
+(checked against ETSI's official PDF), with its own descriptions.

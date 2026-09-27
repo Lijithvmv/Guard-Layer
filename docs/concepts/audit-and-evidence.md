@@ -52,6 +52,7 @@ guardlayer evidence export audit.jsonl --format jsonl --framework iso-42001   # 
 | MITRE ATLAS mitigations (v2026.09) | guardrails, telemetry logging, agent tool permissions, human in the loop, restricting tool calls on untrusted data, tool input/output validation, resource limits |
 | OWASP AISVS 1.0 | injection screening and detection, smuggling, input limits, output leakage, human approval of high-impact actions, runtime tool policy, secrets kept out of context, decision logging |
 | UK Code of Practice for the Cyber Security of AI (2025) | logging, behaviour analysis, human oversight, least-privilege permissions, sensitive-data protection, input checks |
+| ETSI EN 304 223 V2.1.1 (supersedes TS 104 223) | the UK Code's provisions under the European Standard's numbering, plus withstanding adversarial attacks and unexpected input |
 
 Every record carries the audit entry's `seq` and `entry_hash`, and the pack header carries the verification result, the
 source file's SHA-256 and the head hash, so an auditor can re-verify any row against the original log. The export
