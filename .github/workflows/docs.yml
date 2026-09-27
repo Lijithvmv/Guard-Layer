@@ -3,7 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch:     # publishing to GitHub Pages is manual: Actions -> Docs -> Run workflow
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,12 +19,12 @@ jobs:
       - run: pip install -e . -r docs/requirements.txt
       - run: mkdocs build --strict      # broken links, missing snippets or bad references fail the build
       - uses: actions/upload-pages-artifact@v3
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request'
         with:
           path: site
 
-  deploy:
-    if: github.event_name == 'workflow_dispatch'
+  deploy:                # every push to main publishes https://lijithvmv.github.io/Guard-Layer/
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     permissions:

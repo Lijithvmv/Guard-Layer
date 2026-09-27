@@ -16,6 +16,7 @@ Frameworks mapped (see `CONTROLS`):
     iso-42001           ISO/IEC 42001:2023 Annex A
     nist-ai-rmf         NIST AI RMF 1.0 subcategories
     eu-ai-act           EU AI Act articles (obligations for high-risk AI systems)
+    csa-aicm            CSA AI Controls Matrix (IDs as published for v1.0.x)
 
 **What a mapping means.** A mapped entry is evidence *relevant to* a control: it shows the
 control's runtime safeguard operating. It is not an attestation that the control, or the
@@ -40,7 +41,7 @@ from typing import Any
 
 from guardlayer.audit import AuditVerification, verify_audit_log
 
-MAPPING_VERSION = "2026.09"
+MAPPING_VERSION = "2026.09.1"
 
 DISCLAIMER = (
     "Control mappings identify runtime evidence relevant to each control. They do not certify compliance "
@@ -67,6 +68,7 @@ FRAMEWORKS: dict[str, str] = {
     "iso-42001": "ISO/IEC 42001:2023 Annex A",
     "nist-ai-rmf": "NIST AI RMF 1.0",
     "eu-ai-act": "EU AI Act (Regulation (EU) 2024/1689)",
+    "csa-aicm": "CSA AI Controls Matrix (v1.0.x control IDs)",
 }
 
 _CATALOG: list[tuple[str, str, str]] = [
@@ -99,6 +101,23 @@ _CATALOG: list[tuple[str, str, str]] = [
     ("eu-ai-act", "Art. 12", "Record-keeping (automatic logging of events)"),
     ("eu-ai-act", "Art. 14", "Human oversight"),
     ("eu-ai-act", "Art. 15", "Accuracy, robustness and cybersecurity"),
+    # CSA AICM: IDs and titles as published for v1.0.x; v1.1 (2026-07) may renumber some.
+    ("csa-aicm", "AIS-08", "Input Validation"),
+    ("csa-aicm", "AIS-09", "Output Validation"),
+    ("csa-aicm", "AIS-11", "Agents Security Boundaries"),
+    ("csa-aicm", "AIS-15", "Prompt Differentiation"),
+    ("csa-aicm", "DSP-10", "Sensitive Data Transfer"),
+    ("csa-aicm", "DSP-17", "Sensitive Data Protection"),
+    ("csa-aicm", "GRC-15", "Human Supervision"),
+    ("csa-aicm", "IAM-12", "Safeguard Logs Integrity"),
+    ("csa-aicm", "IAM-15", "Passwords and Secrets Management"),
+    ("csa-aicm", "IAM-19", "Agent Access Restriction"),
+    ("csa-aicm", "LOG-02", "Audit Logs Protection"),
+    ("csa-aicm", "LOG-11", "Transaction/Activity Logging"),
+    ("csa-aicm", "LOG-14", "Input Monitoring"),
+    ("csa-aicm", "LOG-15", "Output Monitoring"),
+    ("csa-aicm", "TVM-02", "Malware and Malicious Instructions Protection"),
+    ("csa-aicm", "TVM-11", "Guardrails"),
 ]
 
 CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, cid, title in _CATALOG}
@@ -107,16 +126,23 @@ CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, c
 BASELINE: tuple[str, ...] = (
     "iso-42001:A.6.2.6", "iso-42001:A.6.2.8",
     "nist-ai-rmf:MEASURE 2.4", "nist-ai-rmf:MANAGE 4.1",
-    "eu-ai-act:Art. 12",
+    "eu-ai-act:Art. 12", "csa-aicm:LOG-11",
 )  # fmt: skip
+# By direction: what was monitored.
+ON_DIRECTION: dict[str, tuple[str, ...]] = {
+    "input": ("csa-aicm:LOG-14",), "context": ("csa-aicm:LOG-14",), "output": ("csa-aicm:LOG-15",),
+}  # fmt: skip
+# Claimed only when the log's hash chain (and signatures, if checked) verified: the log itself is protected.
+ON_VERIFIED: tuple[str, ...] = ("csa-aicm:LOG-02", "csa-aicm:IAM-12")
 # Any detection: a security safeguard acted (or, in observe mode, would have).
-ON_DETECTION: tuple[str, ...] = ("nist-ai-rmf:MEASURE 2.7", "eu-ai-act:Art. 15")
+ON_DETECTION: tuple[str, ...] = ("nist-ai-rmf:MEASURE 2.7", "eu-ai-act:Art. 15", "csa-aicm:TVM-11")
 # REVIEW: a human decides before the action proceeds.
-ON_REVIEW: tuple[str, ...] = ("eu-ai-act:Art. 14",)
+ON_REVIEW: tuple[str, ...] = ("eu-ai-act:Art. 14", "csa-aicm:GRC-15")
 
-_INJECTION = ("owasp-llm-2026:LLM01", "owasp-llm-2025:LLM01", "mitre-atlas:AML.T0051")
-_DISCLOSURE = ("owasp-llm-2026:LLM02", "owasp-llm-2025:LLM02", "mitre-atlas:AML.T0057")
-_AGENCY = ("owasp-llm-2026:LLM03", "owasp-llm-2025:LLM06", "owasp-agentic-2026:ASI02")
+_INJECTION = ("owasp-llm-2026:LLM01", "owasp-llm-2025:LLM01", "mitre-atlas:AML.T0051", "csa-aicm:TVM-02")
+_DISCLOSURE = ("owasp-llm-2026:LLM02", "owasp-llm-2025:LLM02", "mitre-atlas:AML.T0057", "csa-aicm:DSP-17")
+_AGENCY = ("owasp-llm-2026:LLM03", "owasp-llm-2025:LLM06", "owasp-agentic-2026:ASI02", "csa-aicm:AIS-11", "csa-aicm:IAM-19")
+_OUTPUT = ("csa-aicm:AIS-09",)
 
 CATEGORY_CONTROLS: dict[str, tuple[str, ...]] = {
     "prompt_injection": (*_INJECTION, "owasp-agentic-2026:ASI01"),
@@ -124,12 +150,12 @@ CATEGORY_CONTROLS: dict[str, tuple[str, ...]] = {
     "goal_hijack": (*_INJECTION, "owasp-agentic-2026:ASI01"),
     "obfuscation": _INJECTION,
     "known_attack": _INJECTION,
-    "system_prompt_leak": ("owasp-llm-2026:LLM08", "owasp-llm-2025:LLM07", "mitre-atlas:AML.T0056"),
-    "data_exfiltration": (*_DISCLOSURE, "owasp-agentic-2026:ASI02"),
+    "system_prompt_leak": ("owasp-llm-2026:LLM08", "owasp-llm-2025:LLM07", "mitre-atlas:AML.T0056", *_OUTPUT),
+    "data_exfiltration": (*_DISCLOSURE, "owasp-agentic-2026:ASI02", "csa-aicm:DSP-10"),
     "secret": _DISCLOSURE,
     "pii": _DISCLOSURE,
-    "egress": (*_DISCLOSURE, "owasp-agentic-2026:ASI02"),
-    "unsafe_link": ("owasp-llm-2026:LLM10", "owasp-llm-2025:LLM05", *_DISCLOSURE),
+    "egress": (*_DISCLOSURE, "owasp-agentic-2026:ASI02", "csa-aicm:DSP-10"),
+    "unsafe_link": ("owasp-llm-2026:LLM10", "owasp-llm-2025:LLM05", *_DISCLOSURE, *_OUTPUT),
     "unsafe_command": (*_AGENCY, "owasp-agentic-2026:ASI05"),
     "tool_misuse": _AGENCY,
     "resource_abuse": ("owasp-llm-2026:LLM06", "owasp-llm-2025:LLM10"),
@@ -137,8 +163,8 @@ CATEGORY_CONTROLS: dict[str, tuple[str, ...]] = {
 }
 
 RULE_CONTROLS: dict[str, tuple[str, ...]] = {
-    "credential_file": ("owasp-agentic-2026:ASI03", *_DISCLOSURE),
-    "dotenv_file": ("owasp-agentic-2026:ASI03", *_DISCLOSURE),
+    "credential_file": ("owasp-agentic-2026:ASI03", *_DISCLOSURE, "csa-aicm:IAM-15"),
+    "dotenv_file": ("owasp-agentic-2026:ASI03", *_DISCLOSURE, "csa-aicm:IAM-15"),
     "destructive_command": ("owasp-agentic-2026:ASI05",),
     "persistence": ("owasp-agentic-2026:ASI05",),
     "risky_command": ("owasp-agentic-2026:ASI03", "owasp-agentic-2026:ASI05"),  # includes privilege escalation
@@ -163,14 +189,17 @@ def detection_controls(detection: Mapping[str, Any], direction: str | None = Non
     for prefix, extra in _RULE_PREFIX_CONTROLS.items():
         if rule.startswith(prefix):
             keys += extra
-    if direction == "context" and category in {"prompt_injection", "goal_hijack", "known_attack"}:
-        keys.append("owasp-agentic-2026:ASI06")  # indirect injection through RAG, web or tool results
+    injection = category in {"prompt_injection", "jailbreak", "goal_hijack", "known_attack", "obfuscation"}
+    if injection and direction in {"input", "context"}:
+        keys.append("csa-aicm:AIS-08")  # input validation
+    if injection and direction == "context":
+        keys += ["owasp-agentic-2026:ASI06", "csa-aicm:AIS-15"]  # indirect injection: data kept apart from instructions
     return _unique(keys)
 
 
 def entry_controls(entry: Mapping[str, Any]) -> list[str]:
     """Control keys one audit entry is evidence for."""
-    keys = list(BASELINE)
+    keys = [*BASELINE, *ON_DIRECTION.get(str(entry.get("direction")), ())]
     detections = entry.get("detections") or []
     if detections:
         keys += ON_DETECTION
@@ -331,7 +360,10 @@ def build_evidence(
             continue  # reported by verification
         if not isinstance(entry, dict):
             continue
-        controls = [k for k in entry_controls(entry) if CONTROLS[k].framework in selected]
+        keys = entry_controls(entry)
+        if verification.ok and entry.get("entry_hash"):
+            keys = _unique([*keys, *ON_VERIFIED])  # the log is protected, so this entry is evidence for that too
+        controls = [k for k in keys if CONTROLS[k].framework in selected]
         metadata = entry.get("metadata") or {}
         detections = entry.get("detections") or []
         pack.records.append({

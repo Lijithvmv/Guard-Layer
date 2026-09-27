@@ -11,6 +11,8 @@
 ![Status](https://img.shields.io/badge/status-beta-yellow)
 ![Dependencies](https://img.shields.io/badge/core%20dependencies-0-brightgreen)
 
+**Documentation: https://lijithvmv.github.io/Guard-Layer/**
+
 ## Why
 
 LLMs don't separate *instructions* from *data*, so any untrusted text (a user prompt, a web
@@ -377,6 +379,7 @@ $ guardlayer evidence controls                                            # the 
 | ISO/IEC 42001 Annex A | A.6.2.6 operation and monitoring, A.6.2.8 recording of event logs |
 | NIST AI RMF | MEASURE 2.4 production monitoring, MEASURE 2.7 security and resilience, MANAGE 4.1 post-deployment monitoring |
 | EU AI Act | Art. 12 record-keeping, Art. 14 human oversight (every REVIEW), Art. 15 robustness and cybersecurity |
+| CSA AI Controls Matrix (v1.0.x IDs) | input and output monitoring (LOG-14/15), activity logging (LOG-11), guardrails (TVM-11), malicious-instruction protection (TVM-02), input/output validation (AIS-08/09), prompt differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-19), sensitive data (DSP-10/17), human supervision (GRC-15); log protection (LOG-02, IAM-12) only when the log verifies |
 
 Every record carries the audit entry's `seq` and `entry_hash`, and the pack header carries the verification result, the
 source file's SHA-256 and the head hash, so an auditor can re-verify any row against the original log. The export refuses

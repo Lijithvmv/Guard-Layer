@@ -14,6 +14,7 @@ from guardlayer.compliance import (
     CONTROLS,
     DISCLAIMER,
     FRAMEWORKS,
+    ON_VERIFIED,
     RULE_CONTROLS,
     build_evidence,
     detection_controls,
@@ -90,7 +91,7 @@ def test_evidence_pack_from_real_audit_log(tmp_path):
 
     injection, benign, destructive, dotenv, metadata = pack.records
     assert injection["verdict"] == "block" and "owasp-llm-2026:LLM01" in injection["controls"]
-    assert benign["controls"] == list(BASELINE)
+    assert benign["controls"] == [*BASELINE, "csa-aicm:LOG-14", *ON_VERIFIED]   # logged, monitored, protected log
     assert destructive["tool"] == "bash" and "owasp-agentic-2026:ASI05" in destructive["controls"]
     assert "owasp-agentic-2026:ASI03" in dotenv["controls"]
     assert "owasp-agentic-2026:ASI03" in metadata["controls"]  # cloud metadata endpoint = credential theft
@@ -148,6 +149,7 @@ def test_tampered_log_is_reported(tmp_path):
     log.write_text("\n".join(lines) + "\n", encoding="utf-8")
     pack = build_evidence(log)
     assert not pack.verification.ok and pack.verification.line == 1
+    assert not any(k in r["controls"] for r in pack.records for k in ON_VERIFIED)   # no integrity claim on a broken log
     assert pack.header["verification"]["ok"] is False
     assert "NOT VERIFIED" in pack.summary()
 
@@ -174,3 +176,14 @@ def test_cli_controls(capsys):
     assert main(["evidence", "controls"]) == 0
     out = capsys.readouterr().out
     assert "owasp-agentic-2026" in out and "A.6.2.8" in out and "Hidden Context Exposure" in out
+
+
+def test_csa_aicm_mapping():
+    inj = entry_controls({"verdict": "block", "direction": "context",
+                          "detections": [{"rule": "ignore_previous_instructions", "category": "prompt_injection"}]})
+    assert {"csa-aicm:LOG-14", "csa-aicm:TVM-11", "csa-aicm:TVM-02", "csa-aicm:AIS-08", "csa-aicm:AIS-15"} <= set(inj)
+    out = entry_controls({"verdict": "block", "direction": "output", "detections": [{"rule": "x", "category": "unsafe_link"}]})
+    assert {"csa-aicm:LOG-15", "csa-aicm:AIS-09", "csa-aicm:DSP-17"} <= set(out) and "csa-aicm:LOG-14" not in out
+    agent = entry_controls({"verdict": "review", "direction": "output",
+                            "detections": [{"rule": "dotenv_file", "category": "tool_misuse"}]})
+    assert {"csa-aicm:AIS-11", "csa-aicm:IAM-19", "csa-aicm:IAM-15", "csa-aicm:GRC-15"} <= set(agent)

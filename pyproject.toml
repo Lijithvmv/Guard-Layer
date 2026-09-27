@@ -45,6 +45,7 @@ guardlayer = "guardlayer.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/Lijithvmv/Guard-Layer"
+Documentation = "https://lijithvmv.github.io/Guard-Layer/"
 Issues = "https://github.com/Lijithvmv/Guard-Layer/issues"
 Changelog = "https://github.com/Lijithvmv/Guard-Layer/blob/main/CHANGELOG.md"
 
