@@ -23,6 +23,7 @@ Frameworks mapped (see `CONTROLS`):
     etsi-en-304-223     ETSI EN 304 223 V2.1.1 (supersedes TS 104 223) provision numbers
     nist-sp-800-53      NIST SP 800-53 Rev. 5.2.0 controls
     nist-csf-2.0        NIST Cybersecurity Framework 2.0 subcategories
+    iso-27001           ISO/IEC 27001:2022 Annex A controls
 
 **What a mapping means.** A mapped entry is evidence *relevant to* a control: it shows the
 control's runtime safeguard operating. It is not an attestation that the control, or the
@@ -47,7 +48,7 @@ from typing import Any
 
 from guardlayer.audit import AuditVerification, verify_audit_log
 
-MAPPING_VERSION = "2026.09.7"
+MAPPING_VERSION = "2026.09.8"
 
 DISCLAIMER = (
     "Control mappings identify runtime evidence relevant to each control. They do not certify compliance "
@@ -81,6 +82,7 @@ FRAMEWORKS: dict[str, str] = {
     "etsi-en-304-223": "ETSI EN 304 223 V2.1.1 (2025-12), baseline cyber security for AI",
     "nist-sp-800-53": "NIST SP 800-53 Rev. 5.2.0",
     "nist-csf-2.0": "NIST Cybersecurity Framework (CSF) 2.0",
+    "iso-27001": "ISO/IEC 27001:2022 Annex A",
 }
 
 _CATALOG: list[tuple[str, str, str]] = [
@@ -200,6 +202,16 @@ _CATALOG: list[tuple[str, str, str]] = [
     ("nist-csf-2.0", "PR.DS-10", "The confidentiality, integrity, and availability of data-in-use are protected"),
     ("nist-csf-2.0", "PR.PS-04", "Log records are generated and made available for continuous monitoring"),
     ("nist-csf-2.0", "PR.PS-05", "Installation and execution of unauthorized software are prevented"),
+    # ISO/IEC 27001:2022 Annex A (c) ISO: control numbers and short titles referenced, as for ISO/IEC 42001.
+    ("iso-27001", "A.5.15", "Access control"),
+    ("iso-27001", "A.5.33", "Protection of records"),
+    ("iso-27001", "A.5.34", "Privacy and protection of PII"),
+    ("iso-27001", "A.8.3", "Information access restriction"),
+    ("iso-27001", "A.8.11", "Data masking"),
+    ("iso-27001", "A.8.12", "Data leakage prevention"),
+    ("iso-27001", "A.8.15", "Logging"),
+    ("iso-27001", "A.8.16", "Monitoring activities"),
+    ("iso-27001", "A.8.23", "Web filtering"),
 ]
 
 CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, cid, title in _CATALOG}
@@ -211,14 +223,16 @@ BASELINE: tuple[str, ...] = (
     "eu-ai-act:Art. 12", "csa-aicm:LOG-09",
     "mitre-atlas-mitigations:AML.M0024", "owasp-aisvs-1.0:C12.1.2", "uk-ai-cop:12.1",
     "etsi-en-304-223:5.4.2-1", "nist-sp-800-53:AU-2", "nist-sp-800-53:AU-3", "nist-sp-800-53:AU-12",
-    "nist-csf-2.0:PR.PS-04", "nist-csf-2.0:DE.CM-09",
+    "nist-csf-2.0:PR.PS-04", "nist-csf-2.0:DE.CM-09", "iso-27001:A.8.15", "iso-27001:A.8.16",
 )  # fmt: skip
 # By direction: what was monitored.
 ON_DIRECTION: dict[str, tuple[str, ...]] = {
     "input": ("csa-aicm:LOG-15",), "context": ("csa-aicm:LOG-15",), "output": ("csa-aicm:LOG-16",),
 }  # fmt: skip
 # Claimed only when the log's hash chain (and signatures, if checked) verified: the log itself is protected.
-ON_VERIFIED: tuple[str, ...] = ("csa-aicm:LOG-02", "nist-sp-800-53:AU-9", "nist-sp-800-53:AU-9(3)", "nist-csf-2.0:PR.DS-01")
+ON_VERIFIED: tuple[str, ...] = ("csa-aicm:LOG-02", "nist-sp-800-53:AU-9", "nist-sp-800-53:AU-9(3)", "nist-csf-2.0:PR.DS-01",
+    "iso-27001:A.5.33",
+)
 # Claimed only when every entry's Ed25519 signature verified: origin can't be repudiated.
 ON_SIGNED: tuple[str, ...] = ("nist-sp-800-53:AU-10",)
 # The entry holds hashes, not the scanned text: the log is sanitized by design.
@@ -241,9 +255,9 @@ ON_TOOL_DETECTION: tuple[str, ...] = ("mitre-atlas-mitigations:AML.M0033",)
 SCANNER_CONTROLS: dict[str, tuple[str, ...]] = {
     "tool_policy": ("mitre-atlas-mitigations:AML.M0028", "owasp-aisvs-1.0:C9.5.1", "owasp-aisvs-1.0:C9.5.3", "uk-ai-cop:2.6",
                     "etsi-en-304-223:5.1.2-6", "nist-sp-800-53:AC-3", "nist-sp-800-53:AC-6",
-                    "nist-csf-2.0:PR.AA-05"),
+                    "nist-csf-2.0:PR.AA-05", "iso-27001:A.5.15"),
     "session": ("mitre-atlas-mitigations:AML.M0030", "owasp-aisvs-1.0:C9.3.5", "owasp-aisvs-1.0:C9.5.3",
-                "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02"),
+                "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12"),
 }  # fmt: skip
 
 _INJECTION = ("owasp-llm-2026:LLM01", "owasp-llm-2025:LLM01", "mitre-atlas:AML.T0051")
@@ -262,7 +276,8 @@ CATEGORY_CONTROLS: dict[str, tuple[str, ...]] = {
     "data_exfiltration": (*_DISCLOSURE, "owasp-agentic-2026:ASI02", "csa-aicm:DSP-10"),
     "secret": _DISCLOSURE,
     "pii": _DISCLOSURE,
-    "egress": (*_DISCLOSURE, "owasp-agentic-2026:ASI02", "csa-aicm:DSP-10", "nist-sp-800-53:SC-7", "nist-csf-2.0:PR.DS-02"),
+    "egress": (*_DISCLOSURE, "owasp-agentic-2026:ASI02", "csa-aicm:DSP-10", "nist-sp-800-53:SC-7", "nist-csf-2.0:PR.DS-02",
+               "iso-27001:A.8.12", "iso-27001:A.8.23"),
     "unsafe_link": ("owasp-llm-2026:LLM10", "owasp-llm-2025:LLM05", *_DISCLOSURE, *_OUTPUT),
     "unsafe_command": (*_AGENCY, "owasp-agentic-2026:ASI05"),
     "tool_misuse": _AGENCY,
@@ -271,8 +286,8 @@ CATEGORY_CONTROLS: dict[str, tuple[str, ...]] = {
 }
 
 RULE_CONTROLS: dict[str, tuple[str, ...]] = {
-    "credential_file": ("owasp-agentic-2026:ASI03", *_DISCLOSURE, "csa-aicm:IAM-14"),
-    "dotenv_file": ("owasp-agentic-2026:ASI03", *_DISCLOSURE, "csa-aicm:IAM-14"),
+    "credential_file": ("owasp-agentic-2026:ASI03", *_DISCLOSURE, "csa-aicm:IAM-14", "iso-27001:A.8.3"),
+    "dotenv_file": ("owasp-agentic-2026:ASI03", *_DISCLOSURE, "csa-aicm:IAM-14", "iso-27001:A.8.3"),
     "destructive_command": ("owasp-agentic-2026:ASI05",),
     "persistence": ("owasp-agentic-2026:ASI05", "nist-csf-2.0:PR.PS-05"),  # e.g. a curl | sh line in ~/.bashrc
     "risky_command": ("owasp-agentic-2026:ASI03", "owasp-agentic-2026:ASI05"),  # includes privilege escalation
@@ -283,8 +298,8 @@ RULE_CONTROLS: dict[str, tuple[str, ...]] = {
     "after_injection": ("owasp-agentic-2026:ASI01", "owasp-agentic-2026:ASI06"),
     "trifecta": ("owasp-agentic-2026:ASI02",),
     "egress_not_allowed": ("nist-sp-800-53:SC-7(5)",),  # fires only when an egress allow-list is set
-    "sensitive_data_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02"),
-    "secret_in_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02"),
+    "sensitive_data_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12"),
+    "secret_in_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12"),
     "fake_special_tokens": ("owasp-aisvs-1.0:C2.1.7",),
     "many_shot_pattern": ("owasp-aisvs-1.0:C2.1.8",),
     "oversized_input": ("owasp-aisvs-1.0:C2.1.4",),
@@ -316,7 +331,7 @@ def detection_controls(detection: Mapping[str, Any], direction: str | None = Non
     if category == "obfuscation":
         keys.append("owasp-aisvs-1.0:C2.1.2" if incoming else "owasp-aisvs-1.0:C7.3.4")
     if direction == "output" and category in {"system_prompt_leak", "unsafe_link", "pii", "secret", "data_exfiltration"}:
-        keys.append("nist-sp-800-53:SI-15")  # output filtered before it left
+        keys += ["nist-sp-800-53:SI-15", "iso-27001:A.8.12"]  # output filtered before it left
     if category == "system_prompt_leak":
         keys.append("owasp-aisvs-1.0:C7.3.2" if direction == "output" else "owasp-aisvs-1.0:C12.2.3")
     if category == "unsafe_link" and direction == "output":
@@ -325,6 +340,10 @@ def detection_controls(detection: Mapping[str, Any], direction: str | None = Non
         keys.append("owasp-aisvs-1.0:C9.5.4")  # a secret in retrieved or tool content was redacted before the model
     if category in {"secret", "pii"} and incoming:
         keys.append("nist-csf-2.0:PR.DS-10")  # sensitive data redacted before the model used it
+    if category in {"secret", "pii"}:
+        keys.append("iso-27001:A.8.11")  # data masking (redaction)
+    if category == "pii":
+        keys.append("iso-27001:A.5.34")
     return _unique(keys)
 
 

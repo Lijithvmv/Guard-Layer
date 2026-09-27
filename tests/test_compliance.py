@@ -348,3 +348,18 @@ def test_nist_csf_ids():
     # Checked against NIST's CSF 2.0 reference export (csf_2_0_0) on 2026-09-27.
     assert {c.id for c in CONTROLS.values() if c.framework == "nist-csf-2.0"} == {
         "DE.AE-06", "DE.CM-09", "PR.AA-05", "PR.DS-01", "PR.DS-02", "PR.DS-10", "PR.PS-04", "PR.PS-05"}
+
+
+def test_iso_27001_mapping():
+    base = set(entry_controls({"verdict": "allow", "detections": []}))
+    assert {"iso-27001:A.8.15", "iso-27001:A.8.16"} <= base
+    pii = set(entry_controls({"verdict": "allow", "direction": "output", "detections": [{"rule": "email", "category": "pii"}]}))
+    assert {"iso-27001:A.8.11", "iso-27001:A.5.34", "iso-27001:A.8.12"} <= pii
+    egress = set(entry_controls({"verdict": "block", "direction": "output", "metadata": {"tool": "http_get"},
+                                 "detections": [{"scanner": "tool_policy", "rule": "egress_exfil_service", "category": "egress"}]}))
+    assert {"iso-27001:A.8.23", "iso-27001:A.8.12", "iso-27001:A.5.15"} <= egress
+    cred = set(entry_controls({"verdict": "block", "direction": "output", "metadata": {"tool": "read_file"},
+                               "detections": [{"scanner": "tool_policy", "rule": "credential_file", "category": "tool_misuse"}]}))
+    assert "iso-27001:A.8.3" in cred
+    assert {c.id for c in CONTROLS.values() if c.framework == "iso-27001"} == {
+        "A.5.15", "A.5.33", "A.5.34", "A.8.3", "A.8.11", "A.8.12", "A.8.15", "A.8.16", "A.8.23"}

@@ -55,6 +55,7 @@ guardlayer evidence export audit.jsonl --format jsonl --framework iso-42001   # 
 | ETSI EN 304 223 V2.1.1 (supersedes TS 104 223) | the UK Code's provisions under the European Standard's numbering, plus withstanding adversarial attacks and unexpected input |
 | NIST SP 800-53 Rev. 5.2.0 | audit logging and protection (non-repudiation only for verified signatures), monitoring, input validation, output filtering, access enforcement, least privilege, information flow, boundary protection |
 | NIST CSF 2.0 | log records, runtime monitoring, least privilege, data in transit and in use, log integrity, unauthorized execution prevented, escalation to authorized staff |
+| ISO/IEC 27001:2022 Annex A | logging, monitoring, protection of records, data masking, PII, data leakage prevention, access control, web filtering |
 
 Every record carries the audit entry's `seq` and `entry_hash`, and the pack header carries the verification result, the
 source file's SHA-256 and the head hash, so an auditor can re-verify any row against the original log. The export

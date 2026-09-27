@@ -24,6 +24,11 @@ All notable changes to this project are documented here. The format follows
   differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
   (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
   referenced with attribution; no control text is included.
+- **ISO/IEC 27001:2022 Annex A in the evidence export** (mapping version `2026.09.8`): A.8.15 Logging and A.8.16
+  Monitoring activities on every entry, A.5.33 Protection of records when the log verifies, A.8.11 Data masking and
+  A.5.34 for redacted PII, A.8.12 Data leakage prevention for blocked egress and output leaks, A.5.15 Access control for
+  tool policy, A.8.3 for credential files, A.8.23 Web filtering for egress rules. No input-validation or human-oversight
+  claim: the 2022 Annex A has no such control.
 - **NIST CSF 2.0 in the evidence export** (mapping version `2026.09.7`): PR.PS-04 and DE.CM-09 on every entry,
   PR.DS-01 when the log verifies, PR.AA-05 for tool policy, PR.DS-02 for data leaving (egress rules, session taint),
   PR.DS-10 for secrets and personal data redacted before the model, PR.PS-05 for blocked persistence, DE.AE-06 for
