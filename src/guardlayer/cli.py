@@ -10,6 +10,8 @@
     guardlayer presets                        # security postures and their residual risk
     guardlayer audit verify audit.jsonl       # check the audit hash chain (and signatures)
     guardlayer audit keygen audit             # write audit.key / audit.pub (Ed25519)
+    guardlayer evidence export audit.jsonl --format csv -o evidence.csv   # control-mapped evidence pack
+    guardlayer evidence controls              # frameworks and controls GuardLayer maps to
     guardlayer hook claude-code --print-config   # settings.json snippet for the Claude Code hook
     guardlayer serve --port 8000              # REST API (needs the `api` extra)
 
@@ -93,6 +95,18 @@ def main(argv: list[str] | None = None) -> int:
     keygen = audit_sub.add_parser("keygen", help="Generate an Ed25519 signing key pair: PREFIX.key and PREFIX.pub.")
     keygen.add_argument("prefix")
 
+    evidence = sub.add_parser("evidence", help="Control-mapped compliance evidence from an audit log.")
+    evidence_sub = evidence.add_subparsers(dest="evidence_command", required=True)
+    export = evidence_sub.add_parser("export", help="Verify an audit log and export it as a control-mapped evidence pack.")
+    export.add_argument("path")
+    export.add_argument("--format", choices=["summary", "jsonl", "csv"], default="summary")
+    export.add_argument("-o", "--output", help="Write to this file instead of stdout.")
+    export.add_argument("--framework", action="append", help="Limit to a framework (repeatable); see `evidence controls`.")
+    export.add_argument("--public-key", help="Ed25519 public key (PEM) to verify signatures with.")
+    export.add_argument("--expected-head", help="A head hash recorded earlier, to detect a truncated log.")
+    export.add_argument("--allow-unverified", action="store_true", help="Export even if the log fails verification (marked in the pack).")
+    evidence_sub.add_parser("controls", help="List the frameworks and controls GuardLayer maps evidence to.")
+
     hook = sub.add_parser("hook", help="Run as an agent hook (reads the event JSON on stdin).")
     hook_sub = hook.add_subparsers(dest="hook_target", required=True)
     cc = hook_sub.add_parser("claude-code", help="Claude Code PreToolUse / PostToolUse / UserPromptSubmit hook.")
@@ -132,6 +146,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "audit":
         return _audit(args)
+
+    if args.command == "evidence":
+        return _evidence(args)
 
     if args.command == "hook":
         from guardlayer.integrations import claude_code
@@ -225,6 +242,39 @@ def _audit(args: argparse.Namespace) -> int:
     report = verify_audit_log(args.path, public_key=args.public_key, expected_head=args.expected_head)
     print(report.summary())
     return 0 if report.ok else 1
+
+
+def _evidence(args: argparse.Namespace) -> int:
+    from guardlayer import compliance
+
+    if args.evidence_command == "controls":
+        for fw, title in compliance.FRAMEWORKS.items():
+            print(f"{fw}  ({title})")
+            for c in compliance.CONTROLS.values():
+                if c.framework == fw:
+                    print(f"  {c.id:<12} {c.title}")
+        print(f"\n{compliance.DISCLAIMER}")
+        return 0
+
+    try:
+        pack = compliance.build_evidence(
+            args.path, public_key=args.public_key, expected_head=args.expected_head, frameworks=args.framework
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if not pack.verification.ok:
+        print(f"audit log failed verification: {pack.verification.summary()}", file=sys.stderr)
+        if not args.allow_unverified:
+            print("refusing to export unverified evidence (use --allow-unverified to export it marked as such)", file=sys.stderr)
+            return 1
+    text = pack.render(args.format)
+    if args.output:
+        Path(args.output).write_text(text, encoding="utf-8", newline="")
+        print(f"wrote {args.output}: {len(pack.records)} entries, {len(pack.control_summary())} controls", file=sys.stderr)
+    else:
+        sys.stdout.write(text)
+    return 0
 
 
 if __name__ == "__main__":

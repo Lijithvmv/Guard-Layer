@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Control-mapped compliance evidence** (`guardlayer.compliance`, `guardlayer evidence export | controls`). Verifies a hash-chained
+  audit log, then maps every entry to the controls it evidences: OWASP Top 10 for LLM Applications 2026 (and 2025 IDs), OWASP Top 10
+  for Agentic Applications 2026, MITRE ATLAS, ISO/IEC 42001 Annex A (A.6.2.6, A.6.2.8), NIST AI RMF (MEASURE 2.4, 2.7, MANAGE 4.1)
+  and EU AI Act Art. 12, 14 and 15. Exports JSONL (header with verification result, source SHA-256 and head hash; one record per entry;
+  per-control summary), CSV (one row per entry x control) or a text summary. Refuses unverified logs unless `--allow-unverified`.
+  Mapping version `2026.09`. 13 tests in `tests/test_compliance.py`.
+
+### Changed
+- README threat-coverage table now uses the OWASP Top 10 for LLM Applications **2026** numbering, with 2025 IDs alongside.
+
 ## [0.5.0] - 2026-09-27
 
 First release published to PyPI (`pip install guardlayer`).

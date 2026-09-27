@@ -63,6 +63,7 @@ Around the scanners:
 - **Presets**: `observe`, `balanced`, `strict`, `airgap`. Each one lists its residual risk.
 - **Policy engine**: per-category and per-direction actions (`score`, `block`, `review`, `flag`, `redact`, `log`), noisy-or scoring, two thresholds, **fail-open or fail-closed** when a scanner errors.
 - **Tamper-evident audit log**: hash-chained JSONL that stores hashes, not raw text. Entries can be Ed25519-signed, and `guardlayer audit verify` points to the first edited, deleted or reordered line.
+- **Compliance evidence**: `guardlayer evidence export` verifies the audit log and maps every decision to the controls it evidences (OWASP Top 10 for LLM and for Agentic Applications, MITRE ATLAS, ISO/IEC 42001, NIST AI RMF, EU AI Act record-keeping and oversight), as JSONL, CSV or a summary a GRC team can file.
 - **Drop-in wrapper**: `@guard.protect` for any sync or async `fn(prompt) -> str`.
 - **Operations**: per-scanner timings, stable result IDs, hooks, async APIs, thread-safe stores.
 - **Interfaces**: Python library, CLI (CI-friendly exit codes), REST API with API-key auth, Docker image.
@@ -343,6 +344,49 @@ can't show that lines were cut from the *end*. To catch that, store the reported
 `head_hash` somewhere else and pass it back with `--expected-head`. The log stores hashes
 of the scanned text, never the text itself, unless you set `include_text=True`.
 
+### Compliance evidence
+
+The audit log already records every decision. `guardlayer evidence` turns it into evidence a GRC or audit team can
+use: each entry is mapped to the framework controls it is evidence for, and the source log is verified first.
+
+```bash
+$ guardlayer evidence export audit.jsonl --public-key audit.pub          # illustrative output, abridged
+GuardLayer evidence pack: audit.jsonl
+  source sha256 3f1c…
+  1284 entries; chain intact, head 8e52f749…, 1284 signatures valid
+OWASP Top 10 for Agentic Applications 2026
+  ASI01           41 entries (block 38, review 3, flag 0)    Agent Goal Hijack
+  ASI02           17 entries (block 9, review 8, flag 0)     Tool Misuse and Exploitation
+ISO/IEC 42001:2023 Annex A
+  A.6.2.8       1284 entries (block 52, review 11, flag 97)  AI system recording of event logs
+EU AI Act (Regulation (EU) 2024/1689)
+  Art. 14         11 entries (block 0, review 11, flag 0)    Human oversight
+…
+
+$ guardlayer evidence export audit.jsonl --format csv -o evidence.csv     # one row per entry × control
+$ guardlayer evidence export audit.jsonl --format jsonl --framework iso-42001 --framework nist-ai-rmf
+$ guardlayer evidence controls                                            # the full mapping catalog
+```
+
+| Framework | What GuardLayer decisions evidence |
+|---|---|
+| OWASP Top 10 for LLM Applications **2026** and 2025 | the risk each detection addresses (both numberings: 2026 moved Excessive Agency to LLM03 and renamed System Prompt Leakage to Hidden Context Exposure) |
+| OWASP Top 10 for Agentic Applications 2026 | goal hijack, tool misuse, identity and privilege abuse, unexpected code execution, memory and context poisoning |
+| MITRE ATLAS | prompt injection, jailbreak, system prompt extraction, data leakage |
+| ISO/IEC 42001 Annex A | A.6.2.6 operation and monitoring, A.6.2.8 recording of event logs |
+| NIST AI RMF | MEASURE 2.4 production monitoring, MEASURE 2.7 security and resilience, MANAGE 4.1 post-deployment monitoring |
+| EU AI Act | Art. 12 record-keeping, Art. 14 human oversight (every REVIEW), Art. 15 robustness and cybersecurity |
+
+Every record carries the audit entry's `seq` and `entry_hash`, and the pack header carries the verification result, the
+source file's SHA-256 and the head hash, so an auditor can re-verify any row against the original log. The export refuses
+a log that fails verification unless you pass `--allow-unverified`, and then the pack says so. The scanned text is never
+included. In Python: `build_evidence("audit.jsonl")` returns an `EvidencePack` with `.records`, `.control_summary()` and
+`.render("jsonl" | "csv" | "summary")`.
+
+A mapping means the entry is evidence *relevant to* a control: it shows the runtime safeguard operating. It doesn't certify
+compliance with any framework (that judgement belongs to you and your auditors), and EU AI Act obligations depend on your
+system's risk classification.
+
 ### Canary tokens
 
 ```python
@@ -449,6 +493,8 @@ guardlayer rules                       # content rules and tool-call rules
 guardlayer presets
 guardlayer audit keygen audit          # audit.key + audit.pub
 guardlayer audit verify audit.jsonl --public-key audit.pub
+guardlayer evidence export audit.jsonl --format csv -o evidence.csv
+guardlayer evidence controls
 guardlayer hook claude-code --print-config
 guardlayer --config guardlayer.toml serve --port 8000
 ```
@@ -537,16 +583,18 @@ $ guardlayer eval your_data.jsonl        # {"text": "...", "label": 1, "directio
 $ guardlayer eval                        # bundled 67-sample smoke test (also used during tuning)
 ```
 
-## Threat coverage (OWASP Top 10 for LLM Applications, 2025)
+## Threat coverage (OWASP Top 10 for LLM Applications 2026)
+
+2025 IDs in brackets. For the agentic list, ATLAS and management-system controls, see [Compliance evidence](#compliance-evidence).
 
 | Risk | GuardLayer |
 |---|---|
 | LLM01 Prompt Injection | heuristics, de-obfuscation, obfuscation, similarity, classifier/judge, `scan_context` for indirect injection |
 | LLM02 Sensitive Information Disclosure | secrets + PII redaction on both directions; credential-file and `.env` rules, egress control, and session `sensitive_data_egress` / `trifecta` on tool calls |
-| LLM05 Improper Output Handling | unsafe-command rules, link/exfiltration scanner, tool-call argument rules |
-| LLM06 Excessive Agency | tool-call policy: capabilities, allow/deny lists, `review` for human approval, destructive-command and egress rules, session taint (`after_injection`), `airgap`/`strict` presets |
-| LLM07 System Prompt Leakage | canary tokens, prompt-overlap scanner, extraction rules |
-| LLM10 Unbounded Consumption | limits scanner (size, flooding, many-shot) |
+| LLM03 [LLM06] Excessive Agency | tool-call policy: capabilities, allow/deny lists, `review` for human approval, destructive-command and egress rules, session taint (`after_injection`), `airgap`/`strict` presets |
+| LLM06 [LLM10] Unbounded Consumption | limits scanner (size, flooding, many-shot) |
+| LLM08 [LLM07] Hidden Context Exposure (was System Prompt Leakage) | canary tokens, prompt-overlap scanner, extraction rules |
+| LLM10 [LLM05] Improper Output Handling | unsafe-command rules, link/exfiltration scanner, tool-call argument rules |
 
 ## Limitations
 

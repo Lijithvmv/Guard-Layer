@@ -11,6 +11,7 @@ __version__ = "0.5.0"
 
 from guardlayer.audit import AuditLogger, AuditSigner, AuditVerification, verify_audit_log  # noqa: E402
 from guardlayer.canary import Canary, CanaryManager  # noqa: E402
+from guardlayer.compliance import EvidencePack, build_evidence  # noqa: E402
 from guardlayer.models import Action, Category, Detection, Direction, ScanContext, ScanResult, Verdict  # noqa: E402
 from guardlayer.pipeline import Guard, GuardBlocked, GuardLayer, Policy, default_scanners  # noqa: E402
 from guardlayer.presets import PRESETS, Preset  # noqa: E402
@@ -62,6 +63,8 @@ __all__ = [
     "AuditSigner",
     "AuditVerification",
     "verify_audit_log",
+    "EvidencePack",
+    "build_evidence",
     "ToolPolicy",
     "ToolRule",
     "infer_capabilities",
