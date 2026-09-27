@@ -14,6 +14,7 @@ from guardlayer.compliance import (
     CONTROLS,
     DISCLAIMER,
     FRAMEWORKS,
+    ON_SANITIZED,
     ON_VERIFIED,
     RULE_CONTROLS,
     build_evidence,
@@ -72,7 +73,7 @@ def test_rule_specific_controls():
 
 def test_entry_controls_baseline_detection_and_review():
     clean = entry_controls({"verdict": "allow", "detections": []})
-    assert clean == [*BASELINE, "csa-aicm:LOG-08"]  # a logged decision is still logging evidence; no raw text kept
+    assert clean == [*BASELINE, *ON_SANITIZED]  # a logged decision is still logging evidence; no raw text kept
     flagged = entry_controls({"verdict": "block", "detections": [{"rule": "x", "category": "jailbreak"}]})
     assert "eu-ai-act:Art. 15" in flagged and "mitre-atlas:AML.T0054" in flagged and "eu-ai-act:Art. 14" not in flagged
     held = entry_controls({"verdict": "review", "detections": [{"rule": "trifecta", "category": "data_exfiltration"}]})
@@ -92,7 +93,7 @@ def test_evidence_pack_from_real_audit_log(tmp_path):
     injection, benign, destructive, dotenv, metadata = pack.records
     assert injection["verdict"] == "block" and "owasp-llm-2026:LLM01" in injection["controls"]
     # logged, input monitored, sanitized (hashes only), and the log verified
-    assert benign["controls"] == [*BASELINE, "csa-aicm:LOG-15", "csa-aicm:LOG-08", *ON_VERIFIED]
+    assert benign["controls"] == [*BASELINE, "csa-aicm:LOG-15", *ON_SANITIZED, *ON_VERIFIED]
     assert destructive["tool"] == "bash" and "owasp-agentic-2026:ASI05" in destructive["controls"]
     assert "owasp-agentic-2026:ASI03" in dotenv["controls"]
     assert "owasp-agentic-2026:ASI03" in metadata["controls"]  # cloud metadata endpoint = credential theft
@@ -399,3 +400,15 @@ def test_hipaa_security_rule_mapping():
     assert "hipaa-security:164.312(e)(1)" in leak
     assert {c.id for c in CONTROLS.values() if c.framework == "hipaa-security"} == {
         "164.308(a)(1)(ii)(D)", "164.308(a)(5)(ii)(B)", "164.308(a)(6)(ii)", "164.312(a)(1)", "164.312(b)", "164.312(e)(1)"}
+
+
+def test_gdpr_mapping_only_where_personal_data_is_involved():
+    sanitized = set(entry_controls({"verdict": "allow", "detections": []}))
+    assert {"gdpr:Art. 5(1)(c)", "gdpr:Art. 25(2)"} <= sanitized   # hash-only log by default
+    kept_text = set(entry_controls({"verdict": "allow", "text": "raw", "detections": []}))
+    assert not any(k.startswith("gdpr:") for k in kept_text)       # include_text=True: no minimisation claim
+    pii = set(entry_controls({"verdict": "allow", "direction": "output", "detections": [{"rule": "email", "category": "pii"}]}))
+    assert {"gdpr:Art. 5(1)(f)", "gdpr:Art. 25(1)", "gdpr:Art. 32(1)(b)"} <= pii
+    inj = set(entry_controls({"verdict": "block", "direction": "input", "text": "x",
+                              "detections": [{"scanner": "heuristics", "rule": "r", "category": "prompt_injection"}]}))
+    assert not any(k.startswith("gdpr:") for k in inj)             # no personal data involved

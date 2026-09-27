@@ -24,6 +24,9 @@ All notable changes to this project are documented here. The format follows
   differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
   (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
   referenced with attribution; no control text is included.
+- **GDPR in the evidence export** (mapping version `2026.09.11`), only where personal data is involved: Art. 5(1)(f),
+  25(1) and 32(1)(b) for detected and redacted personal data; Art. 5(1)(c) and 25(2) for audit entries that keep hashes
+  rather than text (not claimed with `include_text=True`). Art. 32(1)(a) is not claimed: a hash isn't pseudonymisation.
 - **HIPAA Security Rule in the evidence export** (mapping version `2026.09.10`): 164.312(b) audit controls on every entry,
   164.312(a)(1) access control for tool policy (the rule covers software programs), 164.312(e)(1) transmission security
   for blocked data leaving, 164.308(a)(6)(ii) and 164.308(a)(1)(ii)(D) on detections, 164.308(a)(5)(ii)(B) for blocked

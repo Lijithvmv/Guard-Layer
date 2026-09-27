@@ -58,6 +58,7 @@ guardlayer evidence export audit.jsonl --format jsonl --framework iso-42001   # 
 | ISO/IEC 27001:2022 Annex A | logging, monitoring, protection of records, data masking, PII, data leakage prevention, access control, web filtering |
 | SOC 2 (AICPA Trust Services Criteria) | monitoring and event evaluation, logical access and least privilege, outside threats, information movement, malicious software, confidential information |
 | HIPAA Security Rule | audit controls, access control, transmission security, incident response, activity review, malicious software (only where the system handles ePHI) |
+| GDPR | integrity and confidentiality, protection by design, security of processing (for personal data detected); minimisation and protection by default (for hash-only logs) |
 
 Every record carries the audit entry's `seq` and `entry_hash`, and the pack header carries the verification result, the
 source file's SHA-256 and the head hash, so an auditor can re-verify any row against the original log. The export

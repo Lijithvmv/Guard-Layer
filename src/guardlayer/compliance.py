@@ -26,6 +26,7 @@ Frameworks mapped (see `CONTROLS`):
     iso-27001           ISO/IEC 27001:2022 Annex A controls
     soc2-tsc            SOC 2: AICPA Trust Services Criteria (2017) criteria
     hipaa-security      HIPAA Security Rule standards and implementation specifications
+    gdpr                GDPR articles (where personal data is processed)
 
 **What a mapping means.** A mapped entry is evidence *relevant to* a control: it shows the
 control's runtime safeguard operating. It is not an attestation that the control, or the
@@ -50,7 +51,7 @@ from typing import Any
 
 from guardlayer.audit import AuditVerification, verify_audit_log
 
-MAPPING_VERSION = "2026.09.10"
+MAPPING_VERSION = "2026.09.11"
 
 DISCLAIMER = (
     "Control mappings identify runtime evidence relevant to each control. They do not certify compliance "
@@ -87,6 +88,7 @@ FRAMEWORKS: dict[str, str] = {
     "iso-27001": "ISO/IEC 27001:2022 Annex A",
     "soc2-tsc": "SOC 2: AICPA Trust Services Criteria (2017, points of focus revised 2022)",
     "hipaa-security": "HIPAA Security Rule (45 CFR Part 164, Subpart C)",
+    "gdpr": "GDPR (Regulation (EU) 2016/679)",
 }
 
 _CATALOG: list[tuple[str, str, str]] = [
@@ -234,6 +236,12 @@ _CATALOG: list[tuple[str, str, str]] = [
     ("hipaa-security", "164.312(a)(1)", "Access control"),
     ("hipaa-security", "164.312(b)", "Audit controls"),
     ("hipaa-security", "164.312(e)(1)", "Transmission security"),
+    # GDPR (EU law; EUR-Lex reuse with attribution). Claimed only where personal data is involved.
+    ("gdpr", "Art. 5(1)(c)", "Data minimisation"),
+    ("gdpr", "Art. 5(1)(f)", "Integrity and confidentiality"),
+    ("gdpr", "Art. 25(1)", "Data protection by design"),
+    ("gdpr", "Art. 25(2)", "Data protection by default"),
+    ("gdpr", "Art. 32(1)(b)", "Security of processing: ongoing confidentiality and integrity"),
 ]
 
 CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, cid, title in _CATALOG}
@@ -259,7 +267,7 @@ ON_VERIFIED: tuple[str, ...] = ("csa-aicm:LOG-02", "nist-sp-800-53:AU-9", "nist-
 # Claimed only when every entry's Ed25519 signature verified: origin can't be repudiated.
 ON_SIGNED: tuple[str, ...] = ("nist-sp-800-53:AU-10",)
 # The entry holds hashes, not the scanned text: the log is sanitized by design.
-ON_SANITIZED: tuple[str, ...] = ("csa-aicm:LOG-08",)
+ON_SANITIZED: tuple[str, ...] = ("csa-aicm:LOG-08", "gdpr:Art. 5(1)(c)", "gdpr:Art. 25(2)")
 # Any detection: a security safeguard acted (or, in observe mode, would have).
 ON_DETECTION: tuple[str, ...] = (
     "nist-ai-rmf:MEASURE 2.7", "eu-ai-act:Art. 15", "csa-aicm:TVM-13", "mitre-atlas-mitigations:AML.M0020",
@@ -371,7 +379,7 @@ def detection_controls(detection: Mapping[str, Any], direction: str | None = Non
     if category in {"secret", "pii"}:
         keys += ["iso-27001:A.8.11", "soc2-tsc:C1.1"]  # data masking (redaction); confidential data identified
     if category == "pii":
-        keys.append("iso-27001:A.5.34")
+        keys += ["iso-27001:A.5.34", "gdpr:Art. 5(1)(f)", "gdpr:Art. 25(1)", "gdpr:Art. 32(1)(b)"]
     return _unique(keys)
 
 

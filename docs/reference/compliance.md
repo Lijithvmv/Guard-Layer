@@ -21,3 +21,5 @@ the 2022 revised edition; descriptions are GuardLayer's own.
 The HIPAA Security Rule (45 CFR Part 164 Subpart C) is US federal regulation; citations checked against the eCFR as of
 2026-09-24 (the rule in force; HHS's January 2025 proposed update is not final). It applies only where the AI system
 handles electronic protected health information, and GuardLayer detects common personal identifiers, not health data.
+GDPR (Regulation (EU) 2016/679) mappings apply only where personal data is involved; article numbers and titles per the
+official text on EUR-Lex. GuardLayer's personal-data detection covers common identifiers, not every category of personal data.
