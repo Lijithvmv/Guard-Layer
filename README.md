@@ -492,7 +492,7 @@ held-out `test` splits. A prediction counts as positive at FLAG or above. Add
 
 Dataset links: [deepset/prompt-injections](https://huggingface.co/datasets/deepset/prompt-injections) ·
 [jackhhao/jailbreak-classification](https://huggingface.co/datasets/jackhhao/jailbreak-classification).
-Classifier: [`protectai/deberta-v3-base-prompt-injection-v2`](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2), threshold 0.7, CPU.
+Classifier: [`protectai/deberta-v3-base-prompt-injection-v2`](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2) at the pinned revision `90c9989`, threshold 0.7, CPU.
 
 † **Not a fair test.** jailbreak-classification is part of that model's training data, so
 its classifier numbers are optimistic. deepset is not in its training data, and 0.47 is
@@ -520,7 +520,15 @@ Enable the classifier in config:
 [scanners.classifier]      # pip install "guardlayer[ml]"; first run downloads the model
 threshold = 0.7
 # device = 0               # GPU index; omit for CPU
+# model = "org/your-model" # a different Hugging Face classifier
+# revision = "<commit>"    # pin it to an exact commit
 ```
+
+**The default model is pinned.** Its upstream project was archived in July 2026 and is no longer
+maintained, so GuardLayer loads it at a fixed revision (`90c9989b1a342275dd0d1a95aad283c04e075671`,
+Apache-2.0) instead of whatever the repository serves today. A floating model reference can change
+under you. Each classifier detection records the model and revision in its metadata. If you use your
+own model, pass `revision` to pin it too.
 
 ### Your own data
 
@@ -542,7 +550,8 @@ $ guardlayer eval                        # bundled 67-sample smoke test (also us
 
 ## Limitations
 
-GuardLayer lowers risk. It does not make prompt injection impossible. Signature rules can be
+GuardLayer lowers risk. It does not make prompt injection impossible. The full picture (assets, assumptions, residual risk, attacks on GuardLayer itself) is in
+[THREAT_MODEL.md](THREAT_MODEL.md). Signature rules can be
 paraphrased around, and the default n-gram similarity catches near-copies rather than
 rewordings. Treat it as one layer of defense in depth: give agents least-privilege tools,
 require human approval for high-impact actions, and keep untrusted content out of the

@@ -15,6 +15,11 @@ from guardlayer.models import Category, Detection, ScanContext
 from guardlayer.scanners.base import BaseScanner
 
 DEFAULT_CLASSIFIER_MODEL = "protectai/deberta-v3-base-prompt-injection-v2"
+# The default model's upstream project was archived in July 2026 and is no longer maintained, so the
+# default is pinned to an exact revision (Apache-2.0). A pinned revision can't change under you; a
+# floating one could be replaced by anyone who controls the upstream repository.
+DEFAULT_CLASSIFIER_REVISION = "90c9989b1a342275dd0d1a95aad283c04e075671"
+_UNSET: Any = object()
 
 
 class ClassifierScanner(BaseScanner):
@@ -33,11 +38,16 @@ class ClassifierScanner(BaseScanner):
         chunk_chars: int = 1500,
         max_chunks: int = 16,
         device: int | str | None = None,
+        revision: str | None = _UNSET,
         pipeline: Callable[..., Any] | None = None,
         directions: Iterable[str] | None = None,
     ) -> None:
         super().__init__(directions)
         self.model = model
+        # Pin the default model automatically; a custom model uses the revision you pass (or none).
+        if revision is _UNSET:
+            revision = DEFAULT_CLASSIFIER_REVISION if model == DEFAULT_CLASSIFIER_MODEL else None
+        self.revision = revision
         self.threshold = threshold
         self.positive_labels = {label.lower() for label in positive_labels}
         self.max_length = max_length
@@ -52,7 +62,7 @@ class ClassifierScanner(BaseScanner):
                 from transformers import pipeline
             except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
                 raise ModuleNotFoundError("ClassifierScanner needs: pip install 'guardlayer[ml]'") from exc
-            self._pipeline = pipeline("text-classification", model=self.model, device=self.device)
+            self._pipeline = pipeline("text-classification", model=self.model, revision=self.revision, device=self.device)
         return self._pipeline
 
     def _chunks(self, text: str) -> list[str]:
@@ -78,7 +88,7 @@ class ClassifierScanner(BaseScanner):
             if label.lower() in self.positive_labels and score > best_score:
                 best_label, best_score = label, score
         if best_score >= self.threshold:
-            return [self.detection("injection_classifier", Category.PROMPT_INJECTION.value, best_score, f"Classifier labelled text {best_label} ({best_score:.2f}).", model=self.model)]
+            return [self.detection("injection_classifier", Category.PROMPT_INJECTION.value, best_score, f"Classifier labelled text {best_label} ({best_score:.2f}).", model=self.model, revision=self.revision)]
         return []
 
 

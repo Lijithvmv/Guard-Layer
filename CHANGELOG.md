@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-27
+
+First release published to PyPI (`pip install guardlayer`).
+
+### Security
+- **The default classifier model is pinned to an exact revision** (`90c9989b1a342275dd0d1a95aad283c04e075671`). Its upstream
+  project was archived in July 2026 and is no longer maintained; a floating reference could change verdicts silently. New
+  `ClassifierScanner(revision=...)` / `[scanners.classifier] revision` pins custom models too; `revision=None` opts out. Each classifier
+  detection records `model` and `revision` in its metadata. Tests in `tests/test_classifier_pinning.py`.
+
+### Added
+- `THREAT_MODEL.md`: assets, trust boundaries, assumptions, residual risk and attacks on GuardLayer itself. Linked from README and SECURITY.md.
+- Release workflow: tagged versions build and publish to PyPI through trusted publishing (no stored tokens).
+
 ## [0.4.1] - 2026-09-27
 
 Security fixes from a review of 0.4.0. Each bypass was reproduced first and has a regression test in `tests/test_remote_egress.py`.

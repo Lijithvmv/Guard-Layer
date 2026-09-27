@@ -21,6 +21,10 @@ Detection bypasses (a prompt that gets past the rules) are expected for any heur
 Please report them as regular issues or pull requests with the sample added to a dataset, so the
 fix can be measured.
 
+## Threat model
+
+What GuardLayer protects, what it assumes and what it can't stop: [THREAT_MODEL.md](THREAT_MODEL.md).
+
 ## Deployment guidance
 
 - GuardLayer is one layer of defense in depth. Keep agent tools least-privilege and require human
