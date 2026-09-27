@@ -31,6 +31,7 @@ Frameworks mapped (see `CONTROLS`):
     cmmc-l2             CMMC 2.0 Level 2 practices (NIST SP 800-171 Rev. 2)
     fedramp-20x         FedRAMP 20x Key Security Indicators
     nis2                NIS2 Directive Art. 21(2) and Implementing Regulation 2024/2690 annex
+    dora                DORA Art. 10 and the ICT risk-management RTS (2024/1774)
 
 **What a mapping means.** A mapped entry is evidence *relevant to* a control: it shows the
 control's runtime safeguard operating. It is not an attestation that the control, or the
@@ -55,7 +56,7 @@ from typing import Any
 
 from guardlayer.audit import AuditVerification, verify_audit_log
 
-MAPPING_VERSION = "2026.09.15"
+MAPPING_VERSION = "2026.09.16"
 
 DISCLAIMER = (
     "Control mappings identify runtime evidence relevant to each control. They do not certify compliance "
@@ -97,6 +98,7 @@ FRAMEWORKS: dict[str, str] = {
     "cmmc-l2": "CMMC 2.0 Level 2 (NIST SP 800-171 Rev. 2)",
     "fedramp-20x": "FedRAMP 20x Key Security Indicators (Consolidated Rules 2026)",
     "nis2": "NIS2: Directive (EU) 2022/2555 and Implementing Regulation (EU) 2024/2690",
+    "dora": "DORA: Regulation (EU) 2022/2554 and RTS Delegated Regulation (EU) 2024/1774",
 }
 
 _CATALOG: list[tuple[str, str, str]] = [
@@ -281,6 +283,14 @@ _CATALOG: list[tuple[str, str, str]] = [
     ("nis2", "CIR 2024/2690 3.2.1", "Activities monitored and logged to detect incidents"),
     ("nis2", "CIR 2024/2690 3.2.5", "Logs protected from unauthorised access or changes"),
     ("nis2", "CIR 2024/2690 11.1.1", "Access control policies implemented"),
+    # DORA (EU law, financial entities): Regulation Art. 10 and the ICT risk-management RTS (Delegated Regulation (EU)
+    # 2024/1774), articles checked against the adopted text published by the European Commission.
+    ("dora", "Art. 10(1)", "Anomalous activities promptly detected"),
+    ("dora", "RTS 2024/1774 Art. 11(2)(i)", "Data loss and leakage prevention"),
+    ("dora", "RTS 2024/1774 Art. 12(1)", "Logging procedures, protocols and tools implemented"),
+    ("dora", "RTS 2024/1774 Art. 12(2)(d)", "Logs protected against tampering, deletion and unauthorised access"),
+    ("dora", "RTS 2024/1774 Art. 21(a)", "Access rights on need-to-know, need-to-use and least privilege"),
+    ("dora", "RTS 2024/1774 Art. 21(d)", "Controls and tools to prevent unauthorised access"),
 ]
 
 CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, cid, title in _CATALOG}
@@ -295,6 +305,7 @@ BASELINE: tuple[str, ...] = (
     "nist-csf-2.0:PR.PS-04", "nist-csf-2.0:DE.CM-09", "iso-27001:A.8.15", "iso-27001:A.8.16",
     "soc2-tsc:CC7.2", "hipaa-security:164.312(b)", "pci-dss-4:10.2.1",
     "cmmc-l2:AU.L2-3.3.1", "fedramp-20x:KSI-MLA-LET", "nis2:CIR 2024/2690 3.2.1",
+    "dora:RTS 2024/1774 Art. 12(1)",
 )  # fmt: skip
 # By direction: what was monitored.
 ON_DIRECTION: dict[str, tuple[str, ...]] = {
@@ -303,7 +314,7 @@ ON_DIRECTION: dict[str, tuple[str, ...]] = {
 # Claimed only when the log's hash chain (and signatures, if checked) verified: the log itself is protected.
 ON_VERIFIED: tuple[str, ...] = ("csa-aicm:LOG-02", "nist-sp-800-53:AU-9", "nist-sp-800-53:AU-9(3)", "nist-csf-2.0:PR.DS-01",
     "iso-27001:A.5.33", "pci-dss-4:10.3.4", "cmmc-l2:AU.L2-3.3.8",
-    "nis2:CIR 2024/2690 3.2.5",
+    "nis2:CIR 2024/2690 3.2.5", "dora:RTS 2024/1774 Art. 12(2)(d)",
 )
 # Claimed only when every entry's Ed25519 signature verified: origin can't be repudiated.
 ON_SIGNED: tuple[str, ...] = ("nist-sp-800-53:AU-10",)
@@ -314,7 +325,7 @@ ON_DETECTION: tuple[str, ...] = (
     "nist-ai-rmf:MEASURE 2.7", "eu-ai-act:Art. 15", "csa-aicm:TVM-13", "mitre-atlas-mitigations:AML.M0020",
     "uk-ai-cop:12.2", "etsi-en-304-223:5.4.2-2", "nist-sp-800-53:SI-4", "soc2-tsc:CC7.3",
     "hipaa-security:164.308(a)(6)(ii)", "hipaa-security:164.308(a)(1)(ii)(D)", "cmmc-l2:SI.L2-3.14.6",
-    "nis2:Art. 21(2)(b)",
+    "nis2:Art. 21(2)(b)", "dora:Art. 10(1)",
 )  # fmt: skip
 # REVIEW: a human decides before the action proceeds.
 ON_REVIEW: tuple[str, ...] = ("eu-ai-act:Art. 14", "csa-aicm:GRC-15", "uk-ai-cop:4.1", "uk-ai-cop:4.3",
@@ -332,9 +343,10 @@ SCANNER_CONTROLS: dict[str, tuple[str, ...]] = {
                     "nist-csf-2.0:PR.AA-05", "iso-27001:A.5.15", "soc2-tsc:CC6.1", "soc2-tsc:CC6.3",
                     "hipaa-security:164.312(a)(1)", "pci-dss-4:7.2.5",
                     "cmmc-l2:AC.L2-3.1.1", "cmmc-l2:AC.L2-3.1.2", "cmmc-l2:AC.L2-3.1.5", "fedramp-20x:KSI-IAM-ELP",
-                    "nis2:Art. 21(2)(i)", "nis2:CIR 2024/2690 11.1.1"),
+                    "nis2:Art. 21(2)(i)", "nis2:CIR 2024/2690 11.1.1",
+                    "dora:RTS 2024/1774 Art. 21(a)", "dora:RTS 2024/1774 Art. 21(d)"),
     "session": ("mitre-atlas-mitigations:AML.M0030", "owasp-aisvs-1.0:C9.3.5", "owasp-aisvs-1.0:C9.5.3",
-                "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12", "soc2-tsc:CC6.7",
+                "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12", "dora:RTS 2024/1774 Art. 11(2)(i)", "soc2-tsc:CC6.7",
                 "hipaa-security:164.312(e)(1)", "cmmc-l2:AC.L2-3.1.3"),
 }  # fmt: skip
 
@@ -355,7 +367,7 @@ CATEGORY_CONTROLS: dict[str, tuple[str, ...]] = {
     "secret": _DISCLOSURE,
     "pii": _DISCLOSURE,
     "egress": (*_DISCLOSURE, "owasp-agentic-2026:ASI02", "csa-aicm:DSP-10", "nist-sp-800-53:SC-7", "nist-csf-2.0:PR.DS-02",
-               "iso-27001:A.8.12", "iso-27001:A.8.23", "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)",
+               "iso-27001:A.8.12", "dora:RTS 2024/1774 Art. 11(2)(i)", "iso-27001:A.8.23", "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)",
                "cmmc-l2:SC.L2-3.13.1", "fedramp-20x:KSI-CNA-RNT"),
     "unsafe_link": ("owasp-llm-2026:LLM10", "owasp-llm-2025:LLM05", *_DISCLOSURE, *_OUTPUT),
     "unsafe_command": (*_AGENCY, "owasp-agentic-2026:ASI05"),
@@ -378,9 +390,9 @@ RULE_CONTROLS: dict[str, tuple[str, ...]] = {
     "after_injection": ("owasp-agentic-2026:ASI01", "owasp-agentic-2026:ASI06"),
     "trifecta": ("owasp-agentic-2026:ASI02",),
     "egress_not_allowed": ("nist-sp-800-53:SC-7(5)", "pci-dss-4:1.3.2", "cmmc-l2:SC.L2-3.13.6"),  # fires only when an egress allow-list is set
-    "sensitive_data_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12",
+    "sensitive_data_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12", "dora:RTS 2024/1774 Art. 11(2)(i)",
                               "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)", "cmmc-l2:AC.L2-3.1.3"),
-    "secret_in_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12",
+    "secret_in_egress": ("owasp-agentic-2026:ASI02", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12", "dora:RTS 2024/1774 Art. 11(2)(i)",
                          "soc2-tsc:CC6.7", "hipaa-security:164.312(e)(1)", "cmmc-l2:AC.L2-3.1.3"),
     "fake_special_tokens": ("owasp-aisvs-1.0:C2.1.7",),
     "many_shot_pattern": ("owasp-aisvs-1.0:C2.1.8",),
@@ -413,7 +425,7 @@ def detection_controls(detection: Mapping[str, Any], direction: str | None = Non
     if category == "obfuscation":
         keys.append("owasp-aisvs-1.0:C2.1.2" if incoming else "owasp-aisvs-1.0:C7.3.4")
     if direction == "output" and category in {"system_prompt_leak", "unsafe_link", "pii", "secret", "data_exfiltration"}:
-        keys += ["nist-sp-800-53:SI-15", "iso-27001:A.8.12"]  # output filtered before it left
+        keys += ["nist-sp-800-53:SI-15", "iso-27001:A.8.12", "dora:RTS 2024/1774 Art. 11(2)(i)"]  # output filtered before it left
     if category == "system_prompt_leak":
         keys.append("owasp-aisvs-1.0:C7.3.2" if direction == "output" else "owasp-aisvs-1.0:C12.2.3")
     if category == "unsafe_link" and direction == "output":

@@ -24,6 +24,9 @@ All notable changes to this project are documented here. The format follows
   differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
   (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
   referenced with attribution; no control text is included.
+- **DORA in the evidence export** (mapping version `2026.09.16`), from the Commission's adopted RTS text: RTS 2024/1774
+  Art. 12(1) on every entry, Art. 12(2)(d) when the log verifies, DORA Art. 10(1) on detections, RTS Art. 21(a)/(d) for tool
+  policy, RTS Art. 11(2)(i) wherever data leaving is blocked.
 - **NIS2 in the evidence export** (mapping version `2026.09.15`): Implementing Regulation 2024/2690 annex 3.2.1 on every
   entry and 3.2.5 when the log verifies; Directive Art. 21(2)(b) on detections; Art. 21(2)(i) and annex 11.1.1 for tool
   policy. Numbers checked against ENISA's Technical Implementation Guidance.

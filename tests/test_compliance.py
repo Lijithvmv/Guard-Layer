@@ -473,3 +473,16 @@ def test_nis2_mapping(tmp_path):
     log = tmp_path / "audit.jsonl"
     _audited_run(log)
     assert all("nis2:CIR 2024/2690 3.2.5" in r["controls"] for r in build_evidence(log).records)
+
+
+def test_dora_mapping(tmp_path):
+    assert "dora:RTS 2024/1774 Art. 12(1)" in entry_controls({"verdict": "allow", "detections": []})
+    det = set(entry_controls({"verdict": "block", "direction": "input",
+                              "detections": [{"scanner": "heuristics", "rule": "r", "category": "prompt_injection"}]}))
+    assert "dora:Art. 10(1)" in det
+    tool = set(entry_controls({"verdict": "block", "direction": "output", "metadata": {"tool": "http_get"},
+                               "detections": [{"scanner": "tool_policy", "rule": "egress_exfil_service", "category": "egress"}]}))
+    assert {"dora:RTS 2024/1774 Art. 21(a)", "dora:RTS 2024/1774 Art. 21(d)", "dora:RTS 2024/1774 Art. 11(2)(i)"} <= tool
+    log = tmp_path / "audit.jsonl"
+    _audited_run(log)
+    assert all("dora:RTS 2024/1774 Art. 12(2)(d)" in r["controls"] for r in build_evidence(log).records)
