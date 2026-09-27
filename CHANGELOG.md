@@ -24,6 +24,9 @@ All notable changes to this project are documented here. The format follows
   differentiation (AIS-15), agent boundaries and access (AIS-11, IAM-18), sensitive data (DSP-10/17), credentials
   (IAM-14), human supervision (GRC-15); audit log protection (LOG-02) only when the log verifies. IDs and titles are
   referenced with attribution; no control text is included.
+- **NYDFS 23 NYCRR Part 500 in the evidence export** (mapping version `2026.09.17`), from DFS's published amended text:
+  500.6(a)(2) on every entry, 500.14(a)(2) for injections in content the agent reads (web, email, tool results),
+  500.14(a)(1) and 500.7(a)(1) for tool policy and session taint.
 - **DORA in the evidence export** (mapping version `2026.09.16`), from the Commission's adopted RTS text: RTS 2024/1774
   Art. 12(1) on every entry, Art. 12(2)(d) when the log verifies, DORA Art. 10(1) on detections, RTS Art. 21(a)/(d) for tool
   policy, RTS Art. 11(2)(i) wherever data leaving is blocked.

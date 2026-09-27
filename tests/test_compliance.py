@@ -486,3 +486,19 @@ def test_dora_mapping(tmp_path):
     log = tmp_path / "audit.jsonl"
     _audited_run(log)
     assert all("dora:RTS 2024/1774 Art. 12(2)(d)" in r["controls"] for r in build_evidence(log).records)
+
+
+def test_nydfs_part_500_mapping():
+    assert "nydfs-500:500.6(a)(2)" in entry_controls({"verdict": "allow", "detections": []})
+    web = set(entry_controls({"verdict": "block", "direction": "context",
+                              "detections": [{"scanner": "heuristics", "rule": "r", "category": "prompt_injection"}]}))
+    assert "nydfs-500:500.14(a)(2)" in web
+    typed = set(entry_controls({"verdict": "block", "direction": "input",
+                                "detections": [{"scanner": "heuristics", "rule": "r", "category": "prompt_injection"}]}))
+    assert "nydfs-500:500.14(a)(2)" not in typed                      # a user's own prompt isn't web or email content
+    tool = set(entry_controls({"verdict": "review", "direction": "output", "metadata": {"tool": "bash"},
+                               "detections": [{"scanner": "tool_policy", "rule": "risky_command", "category": "tool_misuse"}]}))
+    assert {"nydfs-500:500.7(a)(1)", "nydfs-500:500.14(a)(1)"} <= tool
+    taint = set(entry_controls({"verdict": "review", "direction": "output", "metadata": {"tool": "http_post"},
+                                "detections": [{"scanner": "session", "rule": "trifecta", "category": "data_exfiltration"}]}))
+    assert "nydfs-500:500.14(a)(1)" in taint

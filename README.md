@@ -395,6 +395,7 @@ $ guardlayer evidence controls                                            # the 
 | FedRAMP (20x KSIs; Rev. 5 via NIST SP 800-53) | logging event types (KSI-MLA-LET), least privilege for agent tools (KSI-IAM-ELP), restricting network traffic (KSI-CNA-RNT); for Rev. 5 authorisations use the SP 800-53 evidence |
 | NIS2 (Directive 2022/2555, Implementing Regulation 2024/2690) | monitoring and logging (annex 3.2.1), log protection when verified (3.2.5), incident handling (Art. 21(2)(b)), access control policies (Art. 21(2)(i), annex 11.1.1). The annex binds only the entity types it lists |
 | DORA (Regulation 2022/2554, RTS 2024/1774) | financial entities: logging (RTS Art. 12(1)), log protection when verified (Art. 12(2)(d)), detection of anomalous activities (DORA Art. 10(1)), least privilege and preventing unauthorised access (RTS Art. 21(a), 21(d)), data loss and leakage prevention (RTS Art. 11(2)(i)) |
+| NYDFS 23 NYCRR Part 500 | audit trails to detect and respond (500.6(a)(2)), least-privilege access (500.7(a)(1)), monitoring authorised activity and detecting unauthorised use (500.14(a)(1)), filtering web and email content to block malicious content, i.e. injections in what the agent reads (500.14(a)(2)) |
 
 Every record carries the audit entry's `seq` and `entry_hash`, and the pack header carries the verification result, the
 source file's SHA-256 and the head hash, so an auditor can re-verify any row against the original log. The export refuses

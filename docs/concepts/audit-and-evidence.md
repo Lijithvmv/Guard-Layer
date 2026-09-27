@@ -64,6 +64,7 @@ guardlayer evidence export audit.jsonl --format jsonl --framework iso-42001   # 
 | FedRAMP 20x KSIs (Rev. 5: see NIST SP 800-53) | logging event types, least privilege, restricting network traffic |
 | NIS2 | monitoring and logging, log protection, incident handling, access control policies |
 | DORA | logging, log protection, detection, least privilege, preventing unauthorised access, data leakage prevention (financial entities) |
+| NYDFS 23 NYCRR Part 500 | audit trails, least privilege, monitoring and detection of unauthorised use, filtering malicious web and email content |
 
 Every record carries the audit entry's `seq` and `entry_hash`, and the pack header carries the verification result, the
 source file's SHA-256 and the head hash, so an auditor can re-verify any row against the original log. The export

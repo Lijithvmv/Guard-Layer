@@ -32,6 +32,7 @@ Frameworks mapped (see `CONTROLS`):
     fedramp-20x         FedRAMP 20x Key Security Indicators
     nis2                NIS2 Directive Art. 21(2) and Implementing Regulation 2024/2690 annex
     dora                DORA Art. 10 and the ICT risk-management RTS (2024/1774)
+    nydfs-500           NYDFS 23 NYCRR Part 500 sections
 
 **What a mapping means.** A mapped entry is evidence *relevant to* a control: it shows the
 control's runtime safeguard operating. It is not an attestation that the control, or the
@@ -56,7 +57,7 @@ from typing import Any
 
 from guardlayer.audit import AuditVerification, verify_audit_log
 
-MAPPING_VERSION = "2026.09.16"
+MAPPING_VERSION = "2026.09.17"
 
 DISCLAIMER = (
     "Control mappings identify runtime evidence relevant to each control. They do not certify compliance "
@@ -99,6 +100,7 @@ FRAMEWORKS: dict[str, str] = {
     "fedramp-20x": "FedRAMP 20x Key Security Indicators (Consolidated Rules 2026)",
     "nis2": "NIS2: Directive (EU) 2022/2555 and Implementing Regulation (EU) 2024/2690",
     "dora": "DORA: Regulation (EU) 2022/2554 and RTS Delegated Regulation (EU) 2024/1774",
+    "nydfs-500": "NYDFS 23 NYCRR Part 500 (as amended November 2023)",
 }
 
 _CATALOG: list[tuple[str, str, str]] = [
@@ -291,6 +293,11 @@ _CATALOG: list[tuple[str, str, str]] = [
     ("dora", "RTS 2024/1774 Art. 12(2)(d)", "Logs protected against tampering, deletion and unauthorised access"),
     ("dora", "RTS 2024/1774 Art. 21(a)", "Access rights on need-to-know, need-to-use and least privilege"),
     ("dora", "RTS 2024/1774 Art. 21(d)", "Controls and tools to prevent unauthorised access"),
+    # NYDFS cybersecurity regulation, sections as in DFS's published text of the second amendment (2023-11-01).
+    ("nydfs-500", "500.6(a)(2)", "Audit trails designed to detect and respond to cybersecurity events"),
+    ("nydfs-500", "500.7(a)(1)", "Access privileges limited to what's necessary"),
+    ("nydfs-500", "500.14(a)(1)", "Authorised activity monitored; unauthorised access or use detected"),
+    ("nydfs-500", "500.14(a)(2)", "Web traffic and email monitored and filtered to block malicious content"),
 ]
 
 CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, cid, title in _CATALOG}
@@ -305,7 +312,7 @@ BASELINE: tuple[str, ...] = (
     "nist-csf-2.0:PR.PS-04", "nist-csf-2.0:DE.CM-09", "iso-27001:A.8.15", "iso-27001:A.8.16",
     "soc2-tsc:CC7.2", "hipaa-security:164.312(b)", "pci-dss-4:10.2.1",
     "cmmc-l2:AU.L2-3.3.1", "fedramp-20x:KSI-MLA-LET", "nis2:CIR 2024/2690 3.2.1",
-    "dora:RTS 2024/1774 Art. 12(1)",
+    "dora:RTS 2024/1774 Art. 12(1)", "nydfs-500:500.6(a)(2)",
 )  # fmt: skip
 # By direction: what was monitored.
 ON_DIRECTION: dict[str, tuple[str, ...]] = {
@@ -344,9 +351,10 @@ SCANNER_CONTROLS: dict[str, tuple[str, ...]] = {
                     "hipaa-security:164.312(a)(1)", "pci-dss-4:7.2.5",
                     "cmmc-l2:AC.L2-3.1.1", "cmmc-l2:AC.L2-3.1.2", "cmmc-l2:AC.L2-3.1.5", "fedramp-20x:KSI-IAM-ELP",
                     "nis2:Art. 21(2)(i)", "nis2:CIR 2024/2690 11.1.1",
-                    "dora:RTS 2024/1774 Art. 21(a)", "dora:RTS 2024/1774 Art. 21(d)"),
+                    "dora:RTS 2024/1774 Art. 21(a)", "dora:RTS 2024/1774 Art. 21(d)",
+                    "nydfs-500:500.7(a)(1)", "nydfs-500:500.14(a)(1)"),
     "session": ("mitre-atlas-mitigations:AML.M0030", "owasp-aisvs-1.0:C9.3.5", "owasp-aisvs-1.0:C9.5.3",
-                "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12", "dora:RTS 2024/1774 Art. 11(2)(i)", "soc2-tsc:CC6.7",
+                "nydfs-500:500.14(a)(1)", "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12", "dora:RTS 2024/1774 Art. 11(2)(i)", "soc2-tsc:CC6.7",
                 "hipaa-security:164.312(e)(1)", "cmmc-l2:AC.L2-3.1.3"),
 }  # fmt: skip
 
@@ -421,7 +429,8 @@ def detection_controls(detection: Mapping[str, Any], direction: str | None = Non
         if detection.get("scanner") == "heuristics":
             keys.append("owasp-aisvs-1.0:C12.2.3")  # custom detection rules
     if injection and direction == "context":
-        keys += ["owasp-agentic-2026:ASI06", "csa-aicm:AIS-15", "soc2-tsc:CC6.6"]  # indirect injection from outside
+        keys += ["owasp-agentic-2026:ASI06", "csa-aicm:AIS-15", "soc2-tsc:CC6.6",
+                 "nydfs-500:500.14(a)(2)"]  # indirect injection from outside: web, email, tool content filtered
     if category == "obfuscation":
         keys.append("owasp-aisvs-1.0:C2.1.2" if incoming else "owasp-aisvs-1.0:C7.3.4")
     if direction == "output" and category in {"system_prompt_leak", "unsafe_link", "pii", "secret", "data_exfiltration"}:

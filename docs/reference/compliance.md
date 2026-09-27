@@ -35,3 +35,5 @@ in ENISA's Technical Implementation Guidance v1.0); the annex binds only the ent
 data-centre and managed service providers).
 DORA (Regulation (EU) 2022/2554) Article 10 and the ICT risk-management RTS (Delegated Regulation (EU) 2024/1774): article
 numbers checked against the adopted text published by the European Commission. Applies to EU financial entities.
+NYDFS 23 NYCRR Part 500: sections as in the Department of Financial Services' published text of the second amendment
+(November 2023).
