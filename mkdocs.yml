@@ -1,0 +1,110 @@
+site_name: GuardLayer
+site_description: The maintained, embeddable security layer for LLM and agent apps, with compliance-grade evidence.
+site_url: https://lijithvmv.github.io/Guard-Layer/
+repo_url: https://github.com/Lijithvmv/Guard-Layer
+repo_name: Lijithvmv/Guard-Layer
+edit_uri: edit/main/docs/
+copyright: MIT licence
+
+theme:
+  name: material
+  font: false            # no Google Fonts: the site makes no third-party requests
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: indigo
+      toggle: {icon: material/weather-night, name: Dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: indigo
+      toggle: {icon: material/weather-sunny, name: Light mode}
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+            show_root_heading: true
+            show_signature_annotations: true
+            separate_signature: true
+            docstring_style: google
+            members_order: source
+            filters: ["!^_"]
+            merge_init_into_class: true
+
+hooks:
+  - docs/hooks.py
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets:
+      base_path: [!relative $config_dir]
+      check_paths: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Install: getting-started/install.md
+      - Quickstart: getting-started/quickstart.md
+  - Concepts:
+      - How a verdict is reached: concepts/how-it-works.md
+      - Guarding agent actions: concepts/agents.md
+      - Sessions and taint: concepts/sessions.md
+      - Presets and observe mode: concepts/presets.md
+      - Audit log and evidence: concepts/audit-and-evidence.md
+  - Integrations:
+      - Claude Code: integrations/claude-code.md
+      - LangGraph / LangChain: integrations/langgraph.md
+      - OpenAI Agents SDK: integrations/openai-agents.md
+      - Any framework: integrations/any-framework.md
+      - REST API: integrations/rest-api.md
+  - Recipes:
+      - Protect a RAG pipeline: recipes/rag.md
+      - Guard an email or browsing agent: recipes/browsing-agent.md
+      - Roll out without breaking anything: recipes/rollout.md
+      - Lock down egress: recipes/egress.md
+      - Add your own rules and scanners: recipes/custom-rules.md
+      - Produce an evidence pack for auditors: recipes/evidence-pack.md
+      - Gate prompts in CI: recipes/ci.md
+  - Operations:
+      - Configuration: operations/configuration.md
+      - Deployment and performance: operations/deployment.md
+  - Evaluation: evaluation.md
+  - Reference:
+      - Python API: reference/python-api.md
+      - CLI: reference/cli.md
+      - Built-in rules: reference/rules.md
+      - Compliance mappings: reference/compliance.md
+  - Security:
+      - Threat model: security/threat-model.md
+      - Reporting a vulnerability: security/policy.md
+  - Changelog: changelog.md

@@ -1,7 +1,7 @@
 # Deploying GuardLayer
 
 How to run GuardLayer in production: which shape to pick, how to size it, and the settings that matter.
-The numbers come from [`benchmarks/perf.py`](benchmarks/perf.py). Re-run it on your own hardware before you size anything
+The numbers come from [`benchmarks/perf.py`](https://github.com/Lijithvmv/Guard-Layer/blob/main/benchmarks/perf.py). Re-run it on your own hardware before you size anything
 ([Performance](#performance)).
 
 ## 1. Pick a shape
@@ -23,7 +23,7 @@ docker run -p 127.0.0.1:8000:8000 -e GUARDLAYER_API_KEY=change-me --read-only --
 ```
 
 The image runs as a non-root user (uid 10001), writes nothing outside `/tmp` and `/var/log/guardlayer`, and includes a healthcheck
-on `/health`. [`deploy/docker-compose.yml`](deploy/docker-compose.yml) adds a read-only root filesystem, dropped capabilities,
+on `/health`. [`deploy/docker-compose.yml`](https://github.com/Lijithvmv/Guard-Layer/blob/main/deploy/docker-compose.yml) adds a read-only root filesystem, dropped capabilities,
 `no-new-privileges`, a memory limit, a config file and a volume for the audit log. It uses inline `configs`, which need
 Docker Compose 2.23 or later.
 
@@ -31,12 +31,12 @@ Docker Compose 2.23 or later.
 |---|---|
 | `GUARDLAYER_API_KEY` | Required outside localhost. Every `/v1` call must send `X-API-Key` (compared in constant time) |
 | `GUARDLAYER_CONFIG` | Path to the TOML/JSON config |
-| `GUARDLAYER_PRESET`, `GUARDLAYER_MODE`, `GUARDLAYER_FAIL_CLOSED`, ... | Override the config file (see [Configuration](README.md#configuration)) |
+| `GUARDLAYER_PRESET`, `GUARDLAYER_MODE`, `GUARDLAYER_FAIL_CLOSED`, ... | Override the config file (see [Configuration](https://github.com/Lijithvmv/Guard-Layer/blob/main/README.md#configuration)) |
 | `WEB_CONCURRENCY` | uvicorn worker processes (default 1) |
 
 ## 3. Kubernetes
 
-[`deploy/kubernetes/guardlayer.yaml`](deploy/kubernetes/guardlayer.yaml) (with a `kustomization.yaml`) contains a ConfigMap,
+[`deploy/kubernetes/guardlayer.yaml`](https://github.com/Lijithvmv/Guard-Layer/blob/main/deploy/kubernetes/guardlayer.yaml) (with a `kustomization.yaml`) contains a ConfigMap,
 Deployment, Service, NetworkPolicy, HorizontalPodAutoscaler and PodDisruptionBudget.
 
 ```bash
@@ -85,7 +85,7 @@ different pods.
 - **Sign it.** Mount an Ed25519 key from a Secret and set `signing_key` (needs the `signing` extra). Keep the public key with
   your auditors.
 - **Export it.** `guardlayer evidence export <file> --format csv` produces the control-mapped evidence pack per file
-  (see [Compliance evidence](README.md#compliance-evidence)).
+  (see [Compliance evidence](https://github.com/Lijithvmv/Guard-Layer/blob/main/README.md#compliance-evidence)).
 
 ## 6. Rollout
 
@@ -97,7 +97,7 @@ different pods.
 ## Performance
 
 Measured on 2026-09-27 on a laptop (Intel Core i5-9300H, 4 cores / 8 threads, Windows 11, Python 3.13), default `balanced`
-configuration, no classifier. Raw results: [`benchmarks/results/`](benchmarks/results/). Reproduce with
+configuration, no classifier. Raw results: [`benchmarks/results/`](https://github.com/Lijithvmv/Guard-Layer/tree/main/benchmarks/results/). Reproduce with
 `python benchmarks/perf.py`. Laptop numbers vary by about 15% between runs (turbo and thermals); expect a server core to be
 faster.
 
@@ -140,5 +140,5 @@ at ~52 MB resident, an API worker at ~55 MB. Import takes ~0.16 s and building t
 - **Against an LLM call** (typically 0.5–10 s), a 1,000-character guard check adds well under 3% to the round trip.
 - **To go faster:** scan retrieved content at chunk size (1–2 KB) rather than whole documents; lower
   `[scanners.similarity] max_windows` (default 256) to trade coverage of very long texts for speed; run one process per core.
-- **The classifier is the expensive option:** ~150 ms per short prompt on CPU (see [Evaluation](README.md#evaluation)). Use a
+- **The classifier is the expensive option:** ~150 ms per short prompt on CPU (see [Evaluation](https://github.com/Lijithvmv/Guard-Layer/blob/main/README.md#evaluation)). Use a
   GPU or reserve it for high-risk routes.

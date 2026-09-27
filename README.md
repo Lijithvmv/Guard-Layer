@@ -4,7 +4,7 @@
 > applications: prompt injection, jailbreaks, system-prompt leakage, secrets, PII, data
 > exfiltration and unsafe agent actions. It checks what an agent *reads* and what it is
 > about to *do*. Pure-Python core, zero dependencies: ~1.4 ms for a typical chat turn, ~0.2 ms for a tool call
-> ([measured](DEPLOYMENT.md#performance)).
+> ([measured](https://github.com/Lijithvmv/Guard-Layer/blob/main/DEPLOYMENT.md#performance)).
 
 ![Python](https://img.shields.io/badge/python-3.10–3.13-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -187,7 +187,7 @@ We tested the defaults on 31 attack commands and 23 everyday dev commands (`pyte
 `npm install`, `rm -rf ./build`, `git push origin main`, `curl` to localhost). All 31 attacks
 were caught, and none of the dev commands were flagged.
 
-See [`examples/agent_tools.py`](examples/agent_tools.py) and [`examples/chat_app.py`](examples/chat_app.py).
+See [`examples/agent_tools.py`](https://github.com/Lijithvmv/Guard-Layer/blob/main/examples/agent_tools.py) and [`examples/chat_app.py`](https://github.com/Lijithvmv/Guard-Layer/blob/main/examples/chat_app.py).
 
 ### Sessions: judge an action by what came before it
 
@@ -507,7 +507,7 @@ docker build -t guardlayer . && docker run -p 127.0.0.1:8000:8000 -e GUARDLAYER_
 ```
 
 For production (hardened Compose, Kubernetes manifests with NetworkPolicy/HPA/PDB, sizing, sessions across replicas,
-audit-log storage), see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+audit-log storage), see **[DEPLOYMENT.md](https://github.com/Lijithvmv/Guard-Layer/blob/main/DEPLOYMENT.md)**.
 
 | Method | Path | Body |
 |---|---|---|
@@ -526,6 +526,8 @@ audit-log storage), see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 Every `/v1` route requires `X-API-Key` when `GUARDLAYER_API_KEY` is set. Interactive docs are served at `/docs`.
 
 ## Evaluation
+
+<!-- --8<-- [start:evaluation] -->
 
 ### Public datasets
 
@@ -595,7 +597,7 @@ own model, pass `revision` to pin it too.
 
 ### Agentic evaluation
 
-Prompt-injection datasets score text. Agents fail by *acting*. [`benchmarks/agentic_eval.py`](benchmarks/agentic_eval.py)
+Prompt-injection datasets score text. Agents fail by *acting*. [`benchmarks/agentic_eval.py`](https://github.com/Lijithvmv/Guard-Layer/blob/main/benchmarks/agentic_eval.py)
 runs a tool-using agent through 38 scenarios in a simulated workspace (inbox, files with a planted API key and database
 password, web pages; nothing real is contacted):
 
@@ -612,7 +614,7 @@ achieved (for exfiltration, the secret actually reached the attacker). Each run 
 
 **Worst-case agent.** `--model scripted` is an agent that obeys every instruction it reads, so the numbers measure GuardLayer
 itself rather than how easily a particular model is fooled. It is deterministic and runs in CI
-([`tests/test_agentic_scripted.py`](tests/test_agentic_scripted.py)).
+([`tests/test_agentic_scripted.py`](https://github.com/Lijithvmv/Guard-Layer/blob/main/tests/test_agentic_scripted.py)).
 
 | Scripted agent, 30 attacks + 8 benign tasks | Hijacked | Succeeded | Attacked tasks still done | Benign tasks done | Approvals asked on benign |
 |---|---|---|---|---|---|
@@ -622,7 +624,7 @@ itself rather than how easily a particular model is fooled. It is deterministic 
 | `strict`, reviews denied | 1 / 30 | 0 / 30 | 10 / 30 | 5 / 8 | 2 |
 
 **A real model.** `qwen2.5-coder:7b` (Q4_K_M, Ollama, temperature 0, seed 7) with the tools tagged explicitly
-([`benchmarks/configs/agentic-tagged.toml`](benchmarks/configs/agentic-tagged.toml)). In 24 of 30 attacks the agent read the
+([`benchmarks/configs/agentic-tagged.toml`](https://github.com/Lijithvmv/Guard-Layer/blob/main/benchmarks/configs/agentic-tagged.toml)). In 24 of 30 attacks the agent read the
 injected content; in the other 6 it finished without opening it.
 
 | qwen2.5-coder:7b, 30 attacks + 8 benign tasks | Hijacked | Succeeded | Attacked tasks still done | Benign tasks done | Approvals asked on benign |
@@ -649,7 +651,7 @@ How to read it:
   ran (carrying only a refusal message, because reading `.env` had been blocked). Only `tools.egress_allowlist` closes that path.
 - **Benign cost:** one approval request, for reading `.env` in a task that legitimately asked for it.
 
-Results: [`benchmarks/results/`](benchmarks/results/). Run it against any Ollama model:
+Results: [`benchmarks/results/`](https://github.com/Lijithvmv/Guard-Layer/tree/main/benchmarks/results/). Run it against any Ollama model:
 `python benchmarks/agentic_eval.py --model qwen2.5-coder:7b --config benchmarks/configs/agentic-tagged.toml`.
 
 ### Your own data
@@ -658,6 +660,8 @@ Results: [`benchmarks/results/`](benchmarks/results/). Run it against any Ollama
 $ guardlayer eval your_data.jsonl        # {"text": "...", "label": 1, "direction": "input"}
 $ guardlayer eval                        # bundled 67-sample smoke test (also used during tuning)
 ```
+
+<!-- --8<-- [end:evaluation] -->
 
 ## Threat coverage (OWASP Top 10 for LLM Applications 2026)
 
@@ -674,8 +678,8 @@ $ guardlayer eval                        # bundled 67-sample smoke test (also us
 
 ## Performance
 
-Measured with [`benchmarks/perf.py`](benchmarks/perf.py) on a laptop CPU (i5-9300H, Python 3.13, default config, no classifier).
-Full tables, API throughput and memory: [DEPLOYMENT.md](DEPLOYMENT.md#performance).
+Measured with [`benchmarks/perf.py`](https://github.com/Lijithvmv/Guard-Layer/blob/main/benchmarks/perf.py) on a laptop CPU (i5-9300H, Python 3.13, default config, no classifier).
+Full tables, API throughput and memory: [DEPLOYMENT.md](https://github.com/Lijithvmv/Guard-Layer/blob/main/DEPLOYMENT.md#performance).
 
 | Call | p50 | p95 |
 |---|---|---|
@@ -691,7 +695,7 @@ Cost grows with text length (roughly 10–13 ms per 1,000 characters of input or
 ## Limitations
 
 GuardLayer lowers risk. It does not make prompt injection impossible. The full picture (assets, assumptions, residual risk, attacks on GuardLayer itself) is in
-[THREAT_MODEL.md](THREAT_MODEL.md). Signature rules can be
+[THREAT_MODEL.md](https://github.com/Lijithvmv/Guard-Layer/blob/main/THREAT_MODEL.md). Signature rules can be
 paraphrased around, and the default n-gram similarity catches near-copies rather than
 rewordings. Treat it as one layer of defense in depth: give agents least-privilege tools,
 require human approval for high-impact actions, and keep untrusted content out of the
@@ -728,7 +732,7 @@ ruff check src tests
 guardlayer eval
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](https://github.com/Lijithvmv/Guard-Layer/blob/main/CONTRIBUTING.md) and [SECURITY.md](https://github.com/Lijithvmv/Guard-Layer/blob/main/SECURITY.md).
 
 ## Acknowledgements
 
@@ -737,4 +741,4 @@ Grounded in the open LLM-security community's work on prompt injection, in parti
 
 ## License
 
-[MIT](LICENSE) © Lijith V M
+[MIT](https://github.com/Lijithvmv/Guard-Layer/blob/main/LICENSE) © Lijith V M

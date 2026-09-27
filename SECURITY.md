@@ -23,7 +23,7 @@ fix can be measured.
 
 ## Threat model
 
-What GuardLayer protects, what it assumes and what it can't stop: [THREAT_MODEL.md](THREAT_MODEL.md).
+What GuardLayer protects, what it assumes and what it can't stop: [THREAT_MODEL.md](https://github.com/Lijithvmv/Guard-Layer/blob/main/THREAT_MODEL.md).
 
 ## Deployment guidance
 

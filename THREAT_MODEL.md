@@ -59,5 +59,5 @@ Each preset states its own residual risk: `guardlayer presets`.
 
 ## 5. Reporting
 
-See [SECURITY.md](SECURITY.md). Detection bypasses are expected for heuristic layers; report them as issues with the sample added
+See [SECURITY.md](https://github.com/Lijithvmv/Guard-Layer/blob/main/SECURITY.md). Detection bypasses are expected for heuristic layers; report them as issues with the sample added
 to a dataset so the fix can be measured. Crashes, ReDoS, authentication bypasses and data leaks are security reports.

@@ -1,0 +1,38 @@
+name: Docs
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:     # publishing to GitHub Pages is manual: Actions -> Docs -> Run workflow
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e . -r docs/requirements.txt
+      - run: mkdocs build --strict      # broken links, missing snippets or bad references fail the build
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
