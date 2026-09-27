@@ -30,6 +30,7 @@ Frameworks mapped (see `CONTROLS`):
     pci-dss-4           PCI DSS v4.0.1 requirements (where cardholder data is in scope)
     cmmc-l2             CMMC 2.0 Level 2 practices (NIST SP 800-171 Rev. 2)
     fedramp-20x         FedRAMP 20x Key Security Indicators
+    nis2                NIS2 Directive Art. 21(2) and Implementing Regulation 2024/2690 annex
 
 **What a mapping means.** A mapped entry is evidence *relevant to* a control: it shows the
 control's runtime safeguard operating. It is not an attestation that the control, or the
@@ -54,7 +55,7 @@ from typing import Any
 
 from guardlayer.audit import AuditVerification, verify_audit_log
 
-MAPPING_VERSION = "2026.09.14"
+MAPPING_VERSION = "2026.09.15"
 
 DISCLAIMER = (
     "Control mappings identify runtime evidence relevant to each control. They do not certify compliance "
@@ -95,6 +96,7 @@ FRAMEWORKS: dict[str, str] = {
     "pci-dss-4": "PCI DSS v4.0.1",
     "cmmc-l2": "CMMC 2.0 Level 2 (NIST SP 800-171 Rev. 2)",
     "fedramp-20x": "FedRAMP 20x Key Security Indicators (Consolidated Rules 2026)",
+    "nis2": "NIS2: Directive (EU) 2022/2555 and Implementing Regulation (EU) 2024/2690",
 }
 
 _CATALOG: list[tuple[str, str, str]] = [
@@ -272,6 +274,13 @@ _CATALOG: list[tuple[str, str, str]] = [
     ("fedramp-20x", "KSI-CNA-RNT", "Restricting Network Traffic"),
     ("fedramp-20x", "KSI-IAM-ELP", "Ensuring Least Privilege"),
     ("fedramp-20x", "KSI-MLA-LET", "Logging Event Types"),
+    # NIS2 (EU law): Directive Art. 21(2) measures, and annex requirements of Implementing Regulation (EU) 2024/2690
+    # (binding for the entity types it lists), numbers as in ENISA's Technical Implementation Guidance v1.0.
+    ("nis2", "Art. 21(2)(b)", "Incident handling"),
+    ("nis2", "Art. 21(2)(i)", "Access control policies"),
+    ("nis2", "CIR 2024/2690 3.2.1", "Activities monitored and logged to detect incidents"),
+    ("nis2", "CIR 2024/2690 3.2.5", "Logs protected from unauthorised access or changes"),
+    ("nis2", "CIR 2024/2690 11.1.1", "Access control policies implemented"),
 ]
 
 CONTROLS: dict[str, Control] = {f"{fw}:{cid}": Control(fw, cid, title) for fw, cid, title in _CATALOG}
@@ -285,7 +294,7 @@ BASELINE: tuple[str, ...] = (
     "etsi-en-304-223:5.4.2-1", "nist-sp-800-53:AU-2", "nist-sp-800-53:AU-3", "nist-sp-800-53:AU-12",
     "nist-csf-2.0:PR.PS-04", "nist-csf-2.0:DE.CM-09", "iso-27001:A.8.15", "iso-27001:A.8.16",
     "soc2-tsc:CC7.2", "hipaa-security:164.312(b)", "pci-dss-4:10.2.1",
-    "cmmc-l2:AU.L2-3.3.1", "fedramp-20x:KSI-MLA-LET",
+    "cmmc-l2:AU.L2-3.3.1", "fedramp-20x:KSI-MLA-LET", "nis2:CIR 2024/2690 3.2.1",
 )  # fmt: skip
 # By direction: what was monitored.
 ON_DIRECTION: dict[str, tuple[str, ...]] = {
@@ -294,6 +303,7 @@ ON_DIRECTION: dict[str, tuple[str, ...]] = {
 # Claimed only when the log's hash chain (and signatures, if checked) verified: the log itself is protected.
 ON_VERIFIED: tuple[str, ...] = ("csa-aicm:LOG-02", "nist-sp-800-53:AU-9", "nist-sp-800-53:AU-9(3)", "nist-csf-2.0:PR.DS-01",
     "iso-27001:A.5.33", "pci-dss-4:10.3.4", "cmmc-l2:AU.L2-3.3.8",
+    "nis2:CIR 2024/2690 3.2.5",
 )
 # Claimed only when every entry's Ed25519 signature verified: origin can't be repudiated.
 ON_SIGNED: tuple[str, ...] = ("nist-sp-800-53:AU-10",)
@@ -304,6 +314,7 @@ ON_DETECTION: tuple[str, ...] = (
     "nist-ai-rmf:MEASURE 2.7", "eu-ai-act:Art. 15", "csa-aicm:TVM-13", "mitre-atlas-mitigations:AML.M0020",
     "uk-ai-cop:12.2", "etsi-en-304-223:5.4.2-2", "nist-sp-800-53:SI-4", "soc2-tsc:CC7.3",
     "hipaa-security:164.308(a)(6)(ii)", "hipaa-security:164.308(a)(1)(ii)(D)", "cmmc-l2:SI.L2-3.14.6",
+    "nis2:Art. 21(2)(b)",
 )  # fmt: skip
 # REVIEW: a human decides before the action proceeds.
 ON_REVIEW: tuple[str, ...] = ("eu-ai-act:Art. 14", "csa-aicm:GRC-15", "uk-ai-cop:4.1", "uk-ai-cop:4.3",
@@ -320,7 +331,8 @@ SCANNER_CONTROLS: dict[str, tuple[str, ...]] = {
                     "etsi-en-304-223:5.1.2-6", "nist-sp-800-53:AC-3", "nist-sp-800-53:AC-6",
                     "nist-csf-2.0:PR.AA-05", "iso-27001:A.5.15", "soc2-tsc:CC6.1", "soc2-tsc:CC6.3",
                     "hipaa-security:164.312(a)(1)", "pci-dss-4:7.2.5",
-                    "cmmc-l2:AC.L2-3.1.1", "cmmc-l2:AC.L2-3.1.2", "cmmc-l2:AC.L2-3.1.5", "fedramp-20x:KSI-IAM-ELP"),
+                    "cmmc-l2:AC.L2-3.1.1", "cmmc-l2:AC.L2-3.1.2", "cmmc-l2:AC.L2-3.1.5", "fedramp-20x:KSI-IAM-ELP",
+                    "nis2:Art. 21(2)(i)", "nis2:CIR 2024/2690 11.1.1"),
     "session": ("mitre-atlas-mitigations:AML.M0030", "owasp-aisvs-1.0:C9.3.5", "owasp-aisvs-1.0:C9.5.3",
                 "nist-sp-800-53:AC-4", "nist-csf-2.0:PR.DS-02", "iso-27001:A.8.12", "soc2-tsc:CC6.7",
                 "hipaa-security:164.312(e)(1)", "cmmc-l2:AC.L2-3.1.3"),

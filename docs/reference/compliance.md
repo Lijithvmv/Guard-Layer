@@ -30,3 +30,6 @@ scanned text is unkeyed, and PCI DSS requires keyed hashes for card numbers at r
 CMMC 2.0 Level 2 practice IDs and titles are from the DoD's CMMC Assessment Guide Level 2 v2.13 (September 2024), which
 follows NIST SP 800-171 Rev. 2 (public domain). FedRAMP 20x Key Security Indicators are from FedRAMP's Consolidated Rules
 (version 2026.09.13.02); FedRAMP Rev. 5 authorisations use NIST SP 800-53 controls, so use the `nist-sp-800-53` evidence.
+NIS2: Directive (EU) 2022/2555 Article 21(2) and the annex of Commission Implementing Regulation (EU) 2024/2690 (numbers as
+in ENISA's Technical Implementation Guidance v1.0); the annex binds only the entity types it lists (for example cloud,
+data-centre and managed service providers).

@@ -460,3 +460,16 @@ def test_fedramp_20x_ksi_mapping():
     assert {"fedramp-20x:KSI-IAM-ELP", "fedramp-20x:KSI-CNA-RNT"} <= tool
     # IDs checked against FedRAMP/rules fedramp-consolidated-rules.json v2026.09.13.02 on 2026-09-27
     assert {c.id for c in CONTROLS.values() if c.framework == "fedramp-20x"} == {"KSI-CNA-RNT", "KSI-IAM-ELP", "KSI-MLA-LET"}
+
+
+def test_nis2_mapping(tmp_path):
+    assert "nis2:CIR 2024/2690 3.2.1" in entry_controls({"verdict": "allow", "detections": []})
+    det = set(entry_controls({"verdict": "block", "direction": "input",
+                              "detections": [{"scanner": "heuristics", "rule": "r", "category": "prompt_injection"}]}))
+    assert "nis2:Art. 21(2)(b)" in det
+    tool = set(entry_controls({"verdict": "block", "direction": "output", "metadata": {"tool": "bash"},
+                               "detections": [{"scanner": "tool_policy", "rule": "destructive_command", "category": "tool_misuse"}]}))
+    assert {"nis2:Art. 21(2)(i)", "nis2:CIR 2024/2690 11.1.1"} <= tool
+    log = tmp_path / "audit.jsonl"
+    _audited_run(log)
+    assert all("nis2:CIR 2024/2690 3.2.5" in r["controls"] for r in build_evidence(log).records)
