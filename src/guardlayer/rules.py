@@ -93,7 +93,7 @@ DEFAULT_RULES: list[Rule] = [
     # --- Instruction override / prompt injection -------------------------------------------
     Rule(
         "ignore_previous_instructions",
-        r"\b(ignore|disregard|forget|skip|override|overrule|bypass)\b[^.\n]{0,40}?\b(previous|preceding|above|prior|earlier|all|any|your|the|these|those|initial|original)\b[^.\n]{0,30}?\b(instructions?|prompts?|rules|directives?|guidelines|commands?|programming|context|orders|tasks|assignments|information)\b",
+        r"\b(ignore|disregard|forget|skip|override|overrule|bypass)\b[^.\n]{0,40}?\b(previous|preceding|above|prior|earlier|all|any|your|the|these|those|initial|original)\b[^.\n]{0,30}?\b(instructions?|prompts?|rules|directives?|guidelines|commands?|programming|context|orders|tasks|assignments|information|\w{0,3}instr\w*|\w*structions?)\b",
         PI, 0.9, "Attempt to override prior instructions.",
     ),
     Rule(
@@ -145,6 +145,23 @@ DEFAULT_RULES: list[Rule] = [
         "ai_must_instruction",
         r"\b(ai|assistant|agent|llm|model|chatbot)s?\b[^.\n]{0,25}\b(must|should|are required to|need to|has to)\b[^.\n]{0,30}\b(ignore|instead|immediately|now|disregard|forget)\b",
         PI, 0.65, "Embedded directive aimed at an AI (indirect injection).", _CTX,
+    ),
+    Rule(
+        "addressed_to_ai",
+        r"\b(to|for)\s+you,?\s+(the|an?|our|my)\s+(ai|a\.i\.|llm|language model|ai (language )?model|assistant|ai assistant|agent|chatbot)\b",
+        PI, 0.6, "Data speaks to the AI reading it (indirect injection).", _CTX,
+    ),
+    Rule(
+        "task_precondition_instruction",
+        r"\bbefore\s+(you\s+)?(can\s+|could\s+|are able to\s+)?(solve|complete|answer|finish|continue|proceed( with)?|do|start|respond to|reply to|handle)\b"
+        r"[^\n]{0,80}?\b(please\s+)?(first\s+)?(do|perform|complete|execute|follow|carry out)\s+(the following|this|these|the steps?)\b"
+        r"|\bplease\s+do\s+the\s+following\s+first\b",
+        PI, 0.75, "Data inserts a task the AI must do first (indirect injection).", _CTX,
+    ),
+    Rule(
+        "fake_system_marker",
+        r"\(\s*system[_ ](message|prompt|instructions?)\s*\)|#{2,}\s*\(?\s*system[_ ](message|prompt)\b",
+        PI, 0.7, "Forged system-message marker inside content.", _CTX,
     ),
     Rule(
         "hidden_html_instruction",
