@@ -529,7 +529,7 @@ Every `/v1` route requires `X-API-Key` when `GUARDLAYER_API_KEY` is set. Interac
 
 ### Public datasets
 
-`python benchmarks/public_eval.py` downloads two Apache-2.0 datasets (about 2 MB) and scores
+`python benchmarks/public_eval.py` downloads four public datasets (about 12 MB) and scores
 GuardLayer on them. The rules were tuned only on the `train` splits; the table reports the
 held-out `test` splits. A prediction counts as positive at FLAG or above. Add
 `--classifier` to include the transformer classifier, or use `--classifier-only` to run it alone.
@@ -548,10 +548,23 @@ Classifier: [`protectai/deberta-v3-base-prompt-injection-v2`](https://huggingfac
 its classifier numbers are optimistic. deepset is not in its training data, and 0.47 is
 the number to trust.
 
+**Two more held-out sets** (added September 2026, never used to tune the rules, MIT licence):
+
+| Configuration | Lakera/gandalf_ignore_instructions (n=1,000, all attacks) | SPML chatbot prompt injection (n=16,011: 12,541 attacks, 3,470 benign) |
+|---|---|---|
+| **Default** (rules + zero-dependency layers) | R **0.57** | P **1.00** · R 0.21 · FPR **0.00** |
+| Default + classifier | *R 1.00 ‡* | not run yet (about an hour on CPU) |
+
+‡ **Probably not a fair test.** The classifier's model card names 7 training datasets and says 8 more MIT-licensed
+ones were used without naming them; Lakera's Gandalf data is MIT-licensed and a near-perfect score suggests it was among them.
+The rules-only numbers are clean: GuardLayer's rules have never seen either set. Gandalf's real attempts are short, direct
+extraction attacks, which signatures catch well; SPML's attacks are often written as ordinary requests to a role-playing
+chatbot, which is where signatures alone fall short (compare deepset, 0.23).
+
 How to read this:
 
 - **The defaults favour precision.** Across all 1,968 prompts, none of the benign ones were
-  flagged. That makes the defaults safe to put in front of real traffic.
+  flagged, and none of SPML's 3,470 benign prompts either. That makes the defaults safe to put in front of real traffic.
 - **The classifier roughly doubles recall on unseen data**, from 0.23 to 0.47 on deepset. It
   costs about 150 ms per short prompt on CPU and about 750 MB of model weights. It also adds
   a few false positives: 1.2% on deepset-train, mostly **German** prompts, since the model

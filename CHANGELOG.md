@@ -18,6 +18,10 @@ All notable changes to this project are documented here. The format follows
   with non-root/read-only/no-capabilities, Service, deny-egress NetworkPolicy, HPA, PodDisruptionBudget; strict-validated against
   Kubernetes 1.31), sizing, sessions across replicas, audit-log storage, rollout, and measured performance.
 - `[audit] path` accepts `{hostname}` and `{pid}`, so each worker or pod owns its own hash-chained file.
+- **Two more held-out datasets** in `benchmarks/public_eval.py`: Lakera's Gandalf injections (1,000, recall 0.57) and SPML
+  (16,011 prompts: precision 1.00, recall 0.21, no false positives on 3,470 benign prompts). Downloads are now atomic, retry
+  with back-off, and skip empty rows.
+- `benchmarks/agentdojo_eval.py`: GuardLayer as a defense on AgentDojo (ETH Zurich's third-party agent benchmark), with a local model.
 - **Agentic evaluation** (`benchmarks/agentic_eval.py`): 30 injection attacks (5 attacker goals x 3 injection styles) and 8
   benign tasks in a simulated workspace, run by a real model through Ollama or by a scripted worst-case agent that obeys every
   injection. Scores executed actions (hijacked / succeeded / utility / approvals asked), with and without GuardLayer, with
@@ -32,7 +36,7 @@ All notable changes to this project are documented here. The format follows
 - **`read_email`-style tools were inferred as network-capable**, so reading a mailbox after PII had entered the session raised a
   false `trifecta` review (5 approval requests on 8 benign tasks in the agentic evaluation, down to 1). Read verbs on messaging
   nouns (email, mail, inbox, slack, sms, message) now infer `read` only; their results still count as untrusted. URL, web and API
-  tools keep `network`.
+  tools keep `network`, and `webpage`/`website`/`uri` names now infer `network` too (`get_webpage(url)` can carry data out).
 - **Similarity scanner coverage of long texts.** Its window budget stopped at the first 64 windows (about 4,000 characters), so
   a known attack in the middle or at the end of a long page or document was never compared. Windows are now spread across the
   whole text (overlapping by one sentence), and the default budget is 256. On known attacks inserted at five positions in

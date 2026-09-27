@@ -39,6 +39,7 @@ def rules(detections):
         ("reply_email", {"network"}),
         ("get_url", {"network", "read"}),  # a URL argument can carry data out
         ("search_web", {"network", "read"}),
+        ("get_webpage", {"network", "read"}),
         ("write_file", {"write"}),
         ("read_file", {"read"}),
         ("calculator", set()),

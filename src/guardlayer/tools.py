@@ -43,7 +43,7 @@ _NAME_HINTS: dict[str, frozenset[str]] = {
         "shell bash sh zsh fish terminal exec execute command cmd powershell pwsh subprocess interpreter eval repl".split()
     ),
     "network": frozenset(
-        "http https fetch request requests curl wget url web browse browser download upload api webhook email mail send post slack sms".split()
+        "http https fetch request requests curl wget url uri web webpage website browse browser download upload api webhook email mail send post slack sms".split()
     ),
     "write": frozenset(
         "write save create delete remove rm edit update move rename put patch insert drop append mkdir commit push deploy".split()

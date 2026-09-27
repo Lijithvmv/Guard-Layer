@@ -1,6 +1,6 @@
 """Benchmark GuardLayer on public prompt-injection / jailbreak datasets.
 
-Downloads two Apache-2.0 datasets from the Hugging Face datasets-server API (≈2 MB total)
+Downloads public datasets from the Hugging Face datasets-server API (about 12 MB in total)
 into ./benchmarks/data/, converts them to GuardLayer's JSONL format, and prints
 precision / recall / false-positive rate / latency per split.
 
@@ -11,9 +11,12 @@ precision / recall / false-positive rate / latency per split.
 
 Datasets:
   * deepset/prompt-injections        — 662 prompts, injection vs benign (English, German, a few others)
-  * jackhhao/jailbreak-classification — 1,306 prompts, jailbreak vs benign
+  * jackhhao/jailbreak-classification — 1,306 prompts, jailbreak vs benign (Apache-2.0)
+  * Lakera/gandalf_ignore_instructions — 1,000 real injection attempts from the Gandalf game, all positive (MIT)
+  * reshabhs/SPML_Chatbot_Prompt_Injection — 16,012 chatbot prompts, injection vs benign (MIT)
 
-Tune only against the `train` splits; report the `test` splits.
+Tune only against the deepset and jailbreak `train` splits; report their `test` splits. gandalf and spml were never
+used for tuning, so every split of them is held out.
 """
 
 from __future__ import annotations
@@ -32,6 +35,9 @@ API = "https://datasets-server.huggingface.co/rows?dataset={ds}&config=default&s
 DATASETS = {
     "deepset": ("deepset/prompt-injections", ("train", "test"), lambda r: (r["text"], int(r["label"]))),
     "jailbreak": ("jackhhao/jailbreak-classification", ("train", "test"), lambda r: (r["prompt"], int(r["type"] == "jailbreak"))),
+    # Added 2026-09-27 as extra held-out sets: never used to tune GuardLayer's rules (MIT licence, both).
+    "gandalf": ("Lakera/gandalf_ignore_instructions", ("train", "validation", "test"), lambda r: (r["text"], 1)),
+    "spml": ("reshabhs/SPML_Chatbot_Prompt_Injection", ("train",), lambda r: (r["User Prompt"], int(str(r["Prompt injection"]) == "1"))),
 }
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -40,13 +46,13 @@ def fetch(dataset: str, split: str) -> list[dict]:
     rows, offset = [], 0
     while True:
         url = API.format(ds=dataset, split=split, offset=offset)
-        for attempt in range(4):
+        for attempt in range(8):  # the API rate-limits long downloads: back off up to ~2 minutes
             try:
                 with urllib.request.urlopen(url, timeout=30) as resp:
                     page = json.load(resp)
                 break
             except OSError:
-                time.sleep(2 * (attempt + 1))
+                time.sleep(min(120, 2 ** (attempt + 1)))
         else:
             raise SystemExit(f"could not fetch {url}")
         rows += [item["row"] for item in page["rows"]]
@@ -60,10 +66,15 @@ def ensure(name: str, split: str) -> Path:
     if not path.exists():
         dataset, _, convert = DATASETS[name]
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as fh:
-            for row in fetch(dataset, split):
+        rows = fetch(dataset, split)  # fetch everything first: a failed download must not leave a partial file
+        tmp = path.with_suffix(".part")
+        with tmp.open("w", encoding="utf-8") as fh:
+            for row in rows:
                 text, label = convert(row)
+                if not isinstance(text, str) or not text.strip():
+                    continue  # a few rows have no prompt
                 fh.write(json.dumps({"text": text, "label": label}, ensure_ascii=False) + "\n")
+        tmp.replace(path)
     return path
 
 
@@ -92,7 +103,7 @@ def main() -> None:
     else:
         guard = build_guard(args.config)
 
-    print(f"{'split':<18}{'positive':<10}{'n':>6}{'precision':>11}{'recall':>8}{'f1':>7}{'fpr':>7}{'p50 ms':>8}{'p95 ms':>8}")
+    print(f"{'split':<20}{'positive':<10}{'n':>6}{'precision':>11}{'recall':>8}{'f1':>7}{'fpr':>7}{'p50 ms':>8}{'p95 ms':>8}")
     for name, (_, splits, _) in DATASETS.items():
         for split in splits:
             if args.splits and f"{name}/{split}" not in args.splits:
@@ -102,7 +113,7 @@ def main() -> None:
             for positive in (Verdict.FLAG, Verdict.BLOCK):
                 r = evaluate(cached, samples, positive=positive).to_dict()
                 print(
-                    f"{name + '/' + split:<18}{'>=' + positive.value:<10}{r['samples']:>6}{r['precision']:>11.3f}{r['recall']:>8.3f}"
+                    f"{name + '/' + split:<20}{'>=' + positive.value:<10}{r['samples']:>6}{r['precision']:>11.3f}{r['recall']:>8.3f}"
                     f"{r['f1']:>7.3f}{r['false_positive_rate']:>7.3f}{r['latency_ms']['p50']:>8.2f}{r['latency_ms']['p95']:>8.2f}"
                 )
 

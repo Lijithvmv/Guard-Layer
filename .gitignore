@@ -34,3 +34,6 @@ Thumbs.db
 
 # Downloaded benchmark datasets
 benchmarks/data/
+.venv-*/
+benchmarks/results/agentdojo-logs/
+benchmarks/results/agentdojo-logs*/
