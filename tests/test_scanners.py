@@ -232,3 +232,25 @@ def test_judge_helpers():
     assert parse_judge_score("0.83 - it tries to override") == 0.83
     assert parse_judge_score("1\nclearly an attack") == 1.0
     assert parse_judge_score("no idea") == 0.0
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["DB_PASSWORD=Tr0ub4dor-prod-2291", 'POSTGRES_PASSWORD="s3cr3tPassw0rd!"', "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYz",
+     "jwt.secret=9f8a7b6c5d4e3f2a1b0c", "GITHUB_TOKEN=q8Zr2mXv7Lp4Tn9Wc3Hs"],
+)
+def test_prefixed_env_secrets_are_redacted(line):
+    # Regression: the generic rule required a word boundary before the name, so DB_PASSWORD= was missed.
+    r = SecretsScanner().scan(line, ScanContext(direction="output"))
+    assert [d.rule for d in r] == ["generic_secret"]
+
+
+@pytest.mark.parametrize("line", ["max_tokens=4096", "token_count=12345678", "password_min_length=12", "next_page_token=CAoQAA"])
+def test_prefixed_benign_settings_are_not_secrets(line):
+    assert SecretsScanner().scan(line, ScanContext(direction="output")) == []
+
+
+def test_redaction_marker_is_not_a_new_secret():
+    # Regression: re-scanning redacted text flagged "[REDACTED:GENERIC_SECRET]" itself, raising needless egress reviews.
+    text = "OPENAI_API_KEY=[REDACTED:OPENAI_API_KEY]\nDB_PASSWORD=[REDACTED:GENERIC_SECRET]"
+    assert SecretsScanner().scan(text, ScanContext(direction="output")) == []

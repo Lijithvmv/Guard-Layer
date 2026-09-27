@@ -25,7 +25,9 @@ Read this before relying on it. GuardLayer lowers risk; it does not make prompt 
   1. The application actually calls the scan functions on every edge, and **passes a session** where taint tracking is wanted.
   2. Tools are tagged with correct capabilities. An untagged tool is assumed able to do anything, but a tool *mis-tagged as read-only*
      skips rules that would otherwise apply.
-  3. Human approvers read REVIEW requests. Rubber-stamping defeats the control ("review fatigue").
+  3. Human approvers read REVIEW requests. Rubber-stamping defeats the control ("review fatigue"). Measured in the agentic
+     evaluation: with every review approved, 4 of 30 attacks succeeded (destructive and persistence actions), against 0 with
+     reviews denied. Exfiltration stayed at 0 either way, because secrets are redacted and fingerprinted before egress.
   4. The configuration file and the process environment are not attacker-writable.
 
 ## 3. What GuardLayer can't stop (residual risk)

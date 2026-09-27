@@ -40,8 +40,10 @@ _SECRET_PATTERNS: list[tuple[str, str, float, int]] = [
     ("bearer_token", r"(?i)\bauthorization\s*:\s*bearer\s+([A-Za-z0-9._~+/-]{16,}=*)", 0.85, 1),
 ]  # fmt: skip
 
+# The name may carry a prefix (DB_PASSWORD, POSTGRES_PASSWORD, JWT_SECRET, GITHUB_TOKEN): the usual .env form.
 _GENERIC_ASSIGNMENT = re.compile(
-    r"(?i)\b(api[_-]?key|apikey|secret(?:[_-]?key)?|access[_-]?token|auth[_-]?token|token|passw(?:or)?d|pwd|client[_-]?secret|private[_-]?key)\b"
+    r"(?i)(?<![a-z0-9])((?:[a-z0-9]+[_.-])*"
+    r"(?:api[_-]?key|apikey|secret(?:[_-]?access)?(?:[_-]?key)?|access[_-]?token|auth[_-]?token|token|passw(?:or)?d|pwd|client[_-]?secret|private[_-]?key))\b"
     r"[\"']?\s*[:=]\s*[\"']?([^\s\"',;]{8,})"
 )
 
@@ -86,7 +88,8 @@ class SecretsScanner(BaseScanner):
         return found
 
 
-_PLACEHOLDER_RE = re.compile(r"(?i)^(<[^>]*>|\$\{?[\w.]+\}?|\{\{.*\}\}|x{4,}|\*{4,}|(your|my|the|example|dummy|changeme|placeholder|redacted)[\w-]*|os\.environ.*|process\.env.*)$")
+# Includes GuardLayer's own redaction marker ("[REDACTED:RULE]"), so redacted text isn't flagged again.
+_PLACEHOLDER_RE = re.compile(r"(?i)^(\[redacted[^\]]*\]|<[^>]*>|\$\{?[\w.]+\}?|\{\{.*\}\}|x{4,}|\*{4,}|(your|my|the|example|dummy|changeme|placeholder|redacted)[\w-]*|os\.environ.*|process\.env.*)$")
 
 
 def _is_placeholder(value: str) -> bool:

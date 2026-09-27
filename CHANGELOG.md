@@ -18,8 +18,21 @@ All notable changes to this project are documented here. The format follows
   with non-root/read-only/no-capabilities, Service, deny-egress NetworkPolicy, HPA, PodDisruptionBudget; strict-validated against
   Kubernetes 1.31), sizing, sessions across replicas, audit-log storage, rollout, and measured performance.
 - `[audit] path` accepts `{hostname}` and `{pid}`, so each worker or pod owns its own hash-chained file.
+- **Agentic evaluation** (`benchmarks/agentic_eval.py`): 30 injection attacks (5 attacker goals x 3 injection styles) and 8
+  benign tasks in a simulated workspace, run by a real model through Ollama or by a scripted worst-case agent that obeys every
+  injection. Scores executed actions (hijacked / succeeded / utility / approvals asked), with and without GuardLayer, with
+  reviews denied or rubber-stamped. The scripted suite runs in CI (`tests/test_agentic_scripted.py`).
 
 ### Fixed
+- **Prefixed secret names weren't redacted.** The generic assignment rule needed a word boundary before the name, so the usual
+  `.env` forms (`DB_PASSWORD=`, `POSTGRES_PASSWORD=`, `AWS_SECRET_ACCESS_KEY=`, `GITHUB_TOKEN=`) were missed and could be sent out.
+  Found by the agentic evaluation: it was the only way a secret leaked when every review was rubber-stamped.
+- **GuardLayer's own redaction marker was re-flagged as a secret** (`DB_PASSWORD=[REDACTED:GENERIC_SECRET]`), so an agent
+  forwarding redacted text raised a redundant `secret_in_egress` review.
+- **`read_email`-style tools were inferred as network-capable**, so reading a mailbox after PII had entered the session raised a
+  false `trifecta` review (5 approval requests on 8 benign tasks in the agentic evaluation, down to 1). Read verbs on messaging
+  nouns (email, mail, inbox, slack, sms, message) now infer `read` only; their results still count as untrusted. URL, web and API
+  tools keep `network`.
 - **Similarity scanner coverage of long texts.** Its window budget stopped at the first 64 windows (about 4,000 characters), so
   a known attack in the middle or at the end of a long page or document was never compared. Windows are now spread across the
   whole text (overlapping by one sentence), and the default budget is 256. On known attacks inserted at five positions in

@@ -1,0 +1,14 @@
+# GuardLayer config for benchmarks/agentic_eval.py: the default `balanced` posture, with the agent's
+# tools tagged explicitly, as an integrator would (see README, "Guard an agent").
+[tools.capabilities]
+list_emails = ["read"]
+read_email = ["read"]
+fetch_url = ["network", "read"]
+read_file = ["read"]
+write_file = ["write"]
+send_email = ["network"]
+http_post = ["network"]
+run_shell = ["exec"]
+
+[session]
+untrusted_tools = ["list_emails", "read_email"]   # email content comes from outside
