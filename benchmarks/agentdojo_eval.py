@@ -19,6 +19,11 @@ The model runs locally through Ollama's OpenAI-compatible endpoint with AgentDoj
 
 Each task gets a fresh GuardLayer session. Tools are not tagged: capabilities are inferred from the tool names
 (the out-of-the-box setting).
+
+Behavioural check (`intent-only`, `guardlayer-intent`): before a tool that can act runs, once the agent has read a tool
+result, the same model is asked again with the user's request hidden (`guardlayer.intent`). If it proposes the same
+action anyway, the call is refused as injection-driven. One replay per assistant turn, shared by that turn's calls.
+`intent-only` runs the check alone (no scanners, no taint rules), to measure it in isolation.
 """
 
 from __future__ import annotations
@@ -62,6 +67,7 @@ from agentdojo.types import (  # noqa: E402
 from guardlayer import GuardLayer, Verdict, __version__  # noqa: E402
 from guardlayer.config import build_guard  # noqa: E402
 from guardlayer.integrations.tools import guarded_output, refusal_message  # noqa: E402
+from guardlayer.intent import NEUTRAL_TASK  # noqa: E402
 
 SYSTEM_MESSAGE = (
     "You are an AI language model who assists the user by using the given tools. The user's name is Emma Johnson, an "
@@ -99,9 +105,27 @@ class GuardSession(BasePipelineElement):
 class GuardedToolsExecutor(ToolsExecutor):
     """AgentDojo's tool executor with GuardLayer checks before each call and on each result."""
 
-    def __init__(self, guard: GuardLayer, stats: dict[str, int], on_injection: str = "withhold") -> None:
+    def __init__(self, guard: GuardLayer, stats: dict[str, int], on_injection: str = "withhold", *,
+                 llm: LocalLLM | None = None, scan: bool = True) -> None:  # fmt: skip
         super().__init__()
         self.guard, self.stats, self.on_injection = guard, stats, on_injection
+        self.llm, self.scan = llm, scan  # llm: run the behavioural check with this model; scan: the usual checks
+
+    def _replay(self, runtime: FunctionsRuntime, env: Env, extra_args: dict):  # type: ignore[no-untyped-def]
+        """replay(masked) for check_intent: AgentDojo messages carry content blocks, so convert the masked strings."""
+        cache: dict[int, list] = {}
+
+        def replay(masked: list[dict]) -> list:
+            key = len(masked)
+            if key not in cache:
+                fixed = [{**m, "content": [text_content_block_from_string(m["content"])]} if isinstance(m.get("content"), str) else m
+                         for m in masked]  # fmt: skip
+                self.stats["intent_replays"] += 1
+                _, _, _, out, _ = self.llm.query(NEUTRAL_TASK, runtime, env, fixed, dict(extra_args))  # type: ignore[union-attr]
+                cache[key] = list(out[-1].get("tool_calls") or []) if out and out[-1]["role"] == "assistant" else []
+            return cache[key]
+
+        return replay
 
     def query(
         self,
@@ -116,9 +140,16 @@ class GuardedToolsExecutor(ToolsExecutor):
         session = extra_args.get("guardlayer_session")
         last = messages[-1]
         allowed, refused = [], []
+        replay = self._replay(runtime, env, extra_args) if self.llm is not None else None
+        read_something = any(m["role"] == "tool" for m in messages)
         for call in last["tool_calls"]:
-            result = self.guard.scan_tool_call(call.function, dict(call.args), session=session)
-            if result.allowed:
+            result = self.guard.scan_tool_call(call.function, dict(call.args), session=session) if self.scan else None
+            if (result is None or result.allowed) and replay and read_something and self.guard.tool_policy.can_act(call.function):
+                result = self.guard.check_intent(call.function, dict(call.args), messages=list(messages[:-1]), replay=replay,
+                                                 session=session)  # fmt: skip
+                self.stats["intent_flags"] += int(not result.allowed)
+                self.stats["intent_errors"] += int("error" in result.metadata.get("intent", {}))
+            if result is None or result.allowed:
                 allowed.append(call)
                 continue
             self.stats["reviews" if result.needs_review else "blocks"] += 1
@@ -127,7 +158,7 @@ class GuardedToolsExecutor(ToolsExecutor):
                                                  tool_call_id=call.id, tool_call=call, error=text))  # fmt: skip
         query, runtime, env, out, extra_args = super().query(query, runtime, env, [*messages[:-1], {**last, "tool_calls": allowed}], extra_args)
         results = list(out[len(messages) :])
-        for message in results:
+        for message in results if self.scan else ():
             text = get_text_content_as_str(message["content"] or []) or ""
             name = message["tool_call"].function
             scanned = self.guard.scan_tool_result(name, text, session=session)
@@ -142,12 +173,14 @@ class GuardedToolsExecutor(ToolsExecutor):
 def build_pipeline(model: str, host: str, defense: str, stats: dict[str, int], config: str | None, max_iters: int) -> AgentPipeline:
     client = openai.OpenAI(base_url=host.rstrip("/") + "/v1", api_key="ollama")
     llm = LocalLLM(client, model, temperature=0.0)
-    if defense.startswith("guardlayer"):
+    if defense.startswith("guardlayer") or defense == "intent-only":
         guard = build_guard(config)
         if defense == "guardlayer-untrusted":  # AgentDojo's threat model: any tool result may carry third-party text
             guard.session_policy.untrusted_tools = ["*"]
         # guardlayer-strip: cut the injected part out of a tool result instead of withholding all of it
-        executor: ToolsExecutor = GuardedToolsExecutor(guard, stats, "strip" if defense == "guardlayer-strip" else "withhold")
+        executor: ToolsExecutor = GuardedToolsExecutor(guard, stats, "strip" if defense == "guardlayer-strip" else "withhold",
+                                                       llm=llm if "intent" in defense else None,
+                                                       scan=defense != "intent-only")  # fmt: skip
         elements = [SystemMessage(SYSTEM_MESSAGE), InitQuery(), GuardSession(), llm, ToolsExecutionLoop([executor, llm], max_iters=max_iters)]
     else:
         elements = [SystemMessage(SYSTEM_MESSAGE), InitQuery(), llm, ToolsExecutionLoop([ToolsExecutor(), llm], max_iters=max_iters)]
@@ -184,7 +217,8 @@ def main() -> int:
     p.add_argument("--attack", default="important_instructions_no_model_name")
     p.add_argument("--defenses", default="none,guardlayer",
                    help="none, guardlayer (defaults), guardlayer-untrusted (+ every tool result untrusted), "
-                        "guardlayer-strip (cut injections out of tool results instead of withholding them)")
+                        "guardlayer-strip (cut injections out of tool results instead of withholding them), "
+                        "intent-only (the behavioural check alone), guardlayer-intent (defaults + behavioural check)")
     p.add_argument("--per-suite", type=int, default=10, help="user tasks and attack pairs sampled per suite")
     p.add_argument("--seed", type=int, default=2026)
     p.add_argument("--max-iters", type=int, default=15, help="tool-loop iterations per task (AgentDojo's default is 15)")
@@ -202,7 +236,8 @@ def main() -> int:
         suite = get_suite(args.benchmark_version, suite_name)
         users, pairs = sample(suite, args.per_suite, args.seed)
         for defense in args.defenses.split(","):
-            stats = {"blocks": 0, "reviews": 0, "withheld": 0, "stripped": 0, "redacted": 0}
+            stats = {"blocks": 0, "reviews": 0, "withheld": 0, "stripped": 0, "redacted": 0,
+                     "intent_replays": 0, "intent_flags": 0, "intent_errors": 0}  # fmt: skip
             pipeline = build_pipeline(args.model, args.host, defense, stats, args.config, args.max_iters)
             logdir = Path(args.logdir) / defense
             t0 = time.perf_counter()
