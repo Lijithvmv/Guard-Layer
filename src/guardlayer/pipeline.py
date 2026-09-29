@@ -23,6 +23,7 @@ import functools
 import inspect
 import json
 import logging
+import re
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -565,7 +566,22 @@ class GuardLayer:
         return Verdict.ALLOW
 
     def _redact(self, text: str, detections: Sequence[Detection]) -> str:
-        spans = sorted(((d.span, d) for d in detections if d.span and d.span[0] < d.span[1]), key=lambda pair: pair[0])
+        located = [(d.span, d) for d in detections if d.span and d.span[0] < d.span[1]]
+        # Every copy of a detected value goes, not only the matched one: a key glued to other text ("0AKIA...") doesn't
+        # match the pattern but is the same secret (found by the property tests). One pass over the text, looking up
+        # each position's first 8 characters, keeps this linear however many values there are.
+        by_prefix: dict[str, list[tuple[str, Detection]]] = {}
+        for (start, end), d in located:
+            tokens = re.findall(r"[A-Za-z0-9_\-+/.@]{8,}", text[start:end])
+            for value in {text[start:end], *([max(tokens, key=len)] if tokens else [])}:  # the match and its value token
+                if len(value) >= 8 and all(v != value for v, _ in by_prefix.get(value[:8], ())):
+                    by_prefix.setdefault(value[:8], []).append((value, d))
+        if by_prefix:
+            for i in range(len(text) - 7):
+                for value, d in by_prefix.get(text[i : i + 8], ()):
+                    if text.startswith(value, i):
+                        located.append(((i, i + len(value)), d))
+        spans = sorted(located, key=lambda pair: pair[0])
         merged: list[tuple[int, int, Detection]] = []
         for (start, end), d in spans:
             if merged and start < merged[-1][1]:

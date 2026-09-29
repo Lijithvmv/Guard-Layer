@@ -23,7 +23,7 @@ print(run_shell(cmd="rm -rf ~"))             # returns a refusal; the function n
 | `approve` | none | `approve(result) -> bool` for `review` verdicts. With no approver, `review` is treated like `block`. |
 | `on_block` | `"message"` | return a refusal string the model can read, or `"raise"` to raise `ToolBlocked` |
 | `withhold_at` | `block` | results at or above this verdict are replaced by a notice |
-| `on_injection` | `"withhold"` | `"strip"` cuts the injected part out of a string result and keeps the rest, so the agent can still finish its task. Needs a `session` (the next side-effecting action then goes to review); falls back to withholding when the cut would be most of the text, a detection has no location (the classifier), or the remainder still looks hostile. Also on `guard_tools` (LangGraph) and `guardrails` (OpenAI Agents SDK). |
+| `on_injection` | `"withhold"` | `"strip"` cuts the injected part out of a string result and keeps the rest, so the agent can still finish its task. Needs a `session` (the next side-effecting action then goes to review); falls back to withholding when the cut would be most of the text, a detection has no location (the classifier), or the remainder still looks hostile. **It improves usability, it doesn't clean the content**: on held-out LLMail-Inject attacks that were stripped rather than withheld, the attacker's target address was still in the remainder 117 times out of 269. Its safety comes from the session, which holds the agent's next side-effecting action for review; that's why it needs one. Also on `guard_tools` (LangGraph) and `guardrails` (OpenAI Agents SDK). |
 | `name` | the function name | the tool name used for capabilities and rules |
 
 ```py

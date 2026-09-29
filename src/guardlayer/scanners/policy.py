@@ -9,7 +9,8 @@ from collections.abc import Iterable
 from guardlayer.models import Category, Detection, ScanContext
 from guardlayer.scanners.base import BaseScanner
 
-_TURN_RE = re.compile(r"^\s*(user|human|assistant|ai|bot|q|a|question|answer)\s*:", re.IGNORECASE | re.MULTILINE)
+# [ \t], not \s: under MULTILINE, \s* spans newlines and backtracks quadratically on blank-line runs (ReDoS).
+_TURN_RE = re.compile(r"^[ \t]*(user|human|assistant|ai|bot|q|a|question|answer)[ \t]*:", re.IGNORECASE | re.MULTILINE)
 _WORD_RE = re.compile(r"\w+")
 _CHAR_RUN_RE = re.compile(r"(.)\1{199,}", re.DOTALL)
 

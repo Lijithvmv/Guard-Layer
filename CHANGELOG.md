@@ -5,12 +5,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **Fixed five ReDoS (catastrophic backtracking) paths** that let a single crafted input up to the 50,000-character limit
+  cost minutes of CPU: rules `fake_role_header` (blank-line runs) and `fake_system_marker` (runs of `#`), the `limits`
+  scanner's dialogue-turn counter (blank-line runs), the `secrets` scanner's generic `NAME_PASSWORD=` pattern and URL-credential
+  pattern (`a-a-a-...` runs), and the `pii` scanner's email pattern (long runs without `@`). All now linear: the worst of 40
+  adversarial 50,000-character inputs takes 1.5 s through the whole guard (seven previously exceeded two minutes). Detection
+  is unchanged except that email local parts over 64 characters (invalid per RFC 5321) no longer match. New
+  `tests/test_redos.py` times every rule and the whole guard at two input sizes and fails on super-linear growth.
+- **Redaction now removes every copy of a detected secret or personal-data value**, not only the matched span. A key
+  glued to other text (`0AKIA...`) didn't match its pattern and survived next to a redacted copy of the same key (found by
+  the new property tests). Linear single pass; variable names such as `DB_PASSWORD` stay readable.
+- `tests/test_properties.py`: property-based tests (Hypothesis) run random and attack-fragment inputs through every scan
+  method, tool calls, tool results and strip mode, checking no crash, valid scores and spans, serialisable results, and that
+  redacted secrets don't survive.
+
 ### Added
 - **`on_injection="strip"`** for `guard_tool`, LangGraph `guard_tools` and the OpenAI Agents SDK `guardrails`: cut the injected
   part out of a tool result instead of withholding all of it (`strip_injections`: from the first to the last flagged line,
   widened to an enclosing tag pair such as `<INFORMATION>...</INFORMATION>`). Only with a session, only for string results, and only
   when the cut is under 80% of the text, every detection has a location and the remainder scans clean; otherwise withheld as before.
-  Default unchanged (`"withhold"`). AgentDojo harness: `guardlayer-strip` defense.
+  Default unchanged (`"withhold"`). AgentDojo harness: `guardlayer-strip` defense. **Not a sanitizer:** on 765 detected held-out
+  LLMail-Inject attacks, 496 were still withheld and 269 stripped, and in 117 of those 269 the attacker's target address survived
+  the cut (`llmail_eval.py --strip-check`); the session's review of the next action is what keeps strip safe.
 - **Detection-rule referee** (`benchmarks/referee.py`): a candidate rule pack ships only if it (1) detects more held-out
   LLMail-Inject attacks, (2) adds no hits on any benign set (4,509 public prompts, AgentDojo environment texts, LLMail benign
   emails), (3) fires on the dev attacks it was written from, and (4) names nothing specific to the challenge's goal. Every

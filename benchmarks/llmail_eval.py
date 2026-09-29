@@ -10,6 +10,7 @@ Download (about 263 MB, not committed) from https://huggingface.co/datasets/micr
 `raw_submissions_phase2.jsonl`, `emails_for_fp_tests.json`, `scenarios.json`, into one directory, then
 
     python benchmarks/llmail_eval.py --data <dir>
+    python benchmarks/llmail_eval.py --data <dir> --strip-check   # what on_injection="strip" leaves behind (held out)
     python benchmarks/llmail_eval.py --data <dir> --classifier --hijacked-only   # + the classifier (`ml` extra), on the
                                                                                   # attacks that worked (CPU-friendly)
 """
@@ -75,6 +76,31 @@ def _scan(text: str) -> tuple[bool, bool]:
     return r.verdict >= Verdict.FLAG, r.is_blocked
 
 
+def strip_check(attacks: dict[str, dict[str, bool]], config: dict) -> int:
+    """on_injection="strip" is for utility, not cleaning: measure what survives the cut."""
+    from guardlayer.integrations.tools import strip_injections
+
+    guard = build_guard(config)
+    held = [t for t, f in attacks.items() if f["hijacked"] and f["heldout"]]
+    counts = {"heldout_hijacked": len(held), "detected": 0, "withheld_cut_too_large_or_unlocated": 0,
+              "withheld_remainder_still_hostile": 0, "stripped": 0, "stripped_target_still_present": 0}  # fmt: skip
+    for text in held:
+        result = guard.scan_context(text)
+        if result.verdict < Verdict.FLAG:
+            continue
+        counts["detected"] += 1
+        out = strip_injections(text, result)
+        if out is None:
+            counts["withheld_cut_too_large_or_unlocated"] += 1
+        elif guard.scan_context(out).verdict >= Verdict.FLAG:
+            counts["withheld_remainder_still_hostile"] += 1
+        else:
+            counts["stripped"] += 1
+            counts["stripped_target_still_present"] += "contact@contact.com" in out.lower()  # the challenge's goal address
+    print(json.dumps(counts))
+    return 0
+
+
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     if n == 0:
         return (0.0, 0.0)
@@ -90,12 +116,17 @@ def main() -> int:
     p.add_argument("--data", required=True, type=Path)
     p.add_argument("--classifier", action="store_true")
     p.add_argument("--hijacked-only", action="store_true", help="scan only attacks that hijacked the model, plus benign emails")
+    p.add_argument("--strip-check", action="store_true",
+                   help="for detected held-out attacks, report how often strip_injections cuts vs withholds, and how often "
+                        "the attacker's target address survives the cut")  # fmt: skip
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--out", default="benchmarks/results/llmail-inject-phase2.jsonl")
     args = p.parse_args()
     config: dict = {"scanners": {"classifier": {}}} if args.classifier else {}
 
     attacks, benign = load(args.data)
+    if args.strip_check:
+        return strip_check(attacks, config)
     if args.hijacked_only:
         attacks = {t: f for t, f in attacks.items() if f["hijacked"]}
     texts = list(attacks) + benign

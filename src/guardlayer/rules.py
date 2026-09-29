@@ -133,7 +133,8 @@ DEFAULT_RULES: list[Rule] = [
     ),
     Rule(
         "fake_role_header",
-        r"^\s*(#{1,3}\s*)?(system|developer)\s*(message|prompt|instructions?)?\s*:",
+        # [ \t], not \s: under MULTILINE, \s* would span newlines and backtrack quadratically on blank-line runs (ReDoS).
+        r"^[ \t]*(#{1,3}[ \t]*)?(system|developer)[ \t]*(message|prompt|instructions?)?[ \t]*:",
         PI, 0.5, "Forged system/developer role header.", _IN, True, True,
     ),
     Rule(
@@ -160,7 +161,9 @@ DEFAULT_RULES: list[Rule] = [
     ),
     Rule(
         "fake_system_marker",
-        r"\(\s*system[_ ](message|prompt|instructions?)\s*\)|#{2,}\s*\(?\s*system[_ ](message|prompt)\b",
+        # (?<!#): start only at the beginning of a run of #, and one \s* on each side of the optional "(", so long runs of
+        # "#" or spaces can't backtrack quadratically (ReDoS).
+        r"\(\s*system[_ ](message|prompt|instructions?)\s*\)|(?<!#)#{2,}\s*(?:\(\s*)?system[_ ](message|prompt)\b",
         PI, 0.7, "Forged system-message marker inside content.", _CTX,
     ),
     # --- Accepted by the referee on 2026-09-29 (benchmarks/referee.py; written from LLMail-Inject dev-team misses,

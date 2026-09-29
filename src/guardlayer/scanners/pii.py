@@ -84,7 +84,9 @@ _ENTITIES: dict[str, tuple[str, float, Callable[[str], bool] | None]] = {
     "aadhaar": (r"(?<!\d)[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}(?!\d)", 0.7, lambda s: verhoeff_valid(_digits(s))),
     "us_ssn": (r"(?<!\d)(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?!\d)", 0.8, None),
     "iban": (r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,4})?\b", 0.6, iban_valid),
-    "email": (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", 0.3, None),
+    # Starts only where a run of local-part characters starts, with RFC 5321 length caps: an unanchored `[...]+@` retried
+    # every position of a long run without "@" (quadratic, ReDoS).
+    "email": (r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}\b", 0.3, None),
     "phone": (r"(?<![\w+])(?:\+\d{1,3}[ .-]?)?(?:\(\d{2,4}\)[ .-]?|\d{2,5}[ .-])\d{3,5}(?:[ .-]?\d{3,5})?(?![\w])|(?<![\w+])\+\d{10,14}(?!\w)", 0.3, _valid_phone),
     "indian_pan": (r"\b[A-Z]{3}[ABCFGHLJPT][A-Z]\d{4}[A-Z]\b", 0.5, None),
     "ip_address": (r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b", 0.2, _valid_ip),

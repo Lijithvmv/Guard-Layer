@@ -36,13 +36,16 @@ _SECRET_PATTERNS: list[tuple[str, str, float, int]] = [
     ("npm_token", r"\bnpm_[A-Za-z0-9]{36}\b", 0.9, 0),
     ("azure_storage_key", r"(?i)\bAccountKey=([A-Za-z0-9+/=]{40,})", 0.95, 1),
     ("jwt", r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", 0.7, 0),
-    ("url_credentials", r"\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]+:([^\s@/]{3,})@[^\s/]+", 0.85, 1),
+    # Scheme capped at 32 chars: unbounded, it re-scanned long "a-a-a-..." runs from every word boundary (ReDoS).
+    ("url_credentials", r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,31}://[^\s:/@]+:([^\s@/]{3,})@[^\s/]+", 0.85, 1),
     ("bearer_token", r"(?i)\bauthorization\s*:\s*bearer\s+([A-Za-z0-9._~+/-]{16,}=*)", 0.85, 1),
 ]  # fmt: skip
 
 # The name may carry a prefix (DB_PASSWORD, POSTGRES_PASSWORD, JWT_SECRET, GITHUB_TOKEN): the usual .env form.
 _GENERIC_ASSIGNMENT = re.compile(
-    r"(?i)(?<![a-z0-9])((?:[a-z0-9]+[_.-])*"
+    # At most 8 name segments before the keyword (POSTGRES_DB_PASSWORD has 2); longer names still match from a later
+    # segment. Unbounded, `(?:[a-z0-9]+[_.-])*` re-scanned "a-a-a-..." runs from every segment (quadratic, ReDoS).
+    r"(?i)(?<![a-z0-9])((?:[a-z0-9]{1,64}[_.-]){0,8}"
     r"(?:api[_-]?key|apikey|secret(?:[_-]?access)?(?:[_-]?key)?|access[_-]?token|auth[_-]?token|token|passw(?:or)?d|pwd|client[_-]?secret|private[_-]?key))\b"
     r"[\"']?\s*[:=]\s*[\"']?([^\s\"',;]{8,})"
 )
