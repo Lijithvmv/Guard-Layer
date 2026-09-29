@@ -44,6 +44,8 @@ from guardlayer.scanners.policy import LimitsScanner
 from guardlayer.scanners.secrets import SecretsScanner
 from guardlayer.scanners.similarity import SimilarityScanner
 from guardlayer.session import (
+    HOSTILE_CATEGORIES,
+    SEAM_CHARS,
     GuardSession,
     MemorySessionStore,
     SessionPolicy,
@@ -313,17 +315,52 @@ class GuardLayer:
         state = self._load_session(session)
         if state is not None:
             metadata["session_id"] = state.id
-        result = self.scan(content, "context", metadata=metadata, **context_fields)
+        # Results of remote tools (network/exec, untagged, or matching `remote_tools` such as
+        # MCP or search tools) are untrusted: someone outside this machine could have written them.
+        reaches_network = True if tool is None else self.tool_policy.is_remote(tool)
+        untrusted = state is not None and self.session_policy.enabled and self.session_policy.is_untrusted(tool, reaches_network)
+        ctx = ScanContext(direction="context", metadata=metadata, **context_fields)
+        extra = self._seam_detections(state.seam, content, ctx) if untrusted and state is not None and state.seam else []
+        result = self._run(content, ctx, extra=extra)
         if state is not None:
-            # Results of remote tools (network/exec, untagged, or matching `remote_tools` such as
-            # MCP or search tools) are untrusted: someone outside this machine could have written them.
-            reaches_network = True if tool is None else self.tool_policy.is_remote(tool)
             observe_content(
                 self.session_policy, state, content, result,
                 source=source or "context", tool=tool, can_reach_network=reaches_network,
             )  # fmt: skip
+            if untrusted:
+                state.seam = result.text[-SEAM_CHARS:]  # redacted text, so no secret is kept in the session
             self.sessions.put(state)
         return result
+
+    def _seam_detections(self, seam: str, content: str, ctx: ScanContext) -> list[Detection]:
+        """An injection split across the previous untrusted content and this one.
+
+        Scans the end of the previous content joined to the start of this one. Only findings that neither piece has on
+        its own count (each piece is scanned separately anyway), reported as one `split_injection` detection.
+        """
+        head = content[: 2 * SEAM_CHARS]
+        joined, alone = seam + "\n" + head, head
+        found: dict[str, Detection] = {}
+        for scanner in self.scanners:
+            if "context" not in getattr(scanner, "directions", DIRECTIONS):
+                continue
+            try:
+                joined_dets = [d for d in scanner.scan(joined, ctx) if d.category in HOSTILE_CATEGORIES]
+                if not joined_dets:
+                    continue
+                known = {d.rule for d in scanner.scan(alone, ctx)} | {d.rule for d in scanner.scan(seam, ctx)}
+            except Exception:  # the main scan reports scanner errors
+                continue
+            for d in joined_dets:
+                if d.rule not in known:
+                    found.setdefault(d.rule, d)
+        if not found:
+            return []
+        worst = max(found.values(), key=lambda d: d.severity)
+        return [Detection("session", "split_injection", worst.category, worst.severity,
+                          "An injection is split across this content and the previous untrusted content "
+                          f"({', '.join(sorted(found))} only matches when the two are read together).",
+                          metadata={"rules": sorted(found)})]  # fmt: skip
 
     def scan_batch(self, texts: Iterable[str], direction: Direction = "input", **context_fields: Any) -> list[ScanResult]:
         return [self.scan(t, direction, **context_fields) for t in texts]

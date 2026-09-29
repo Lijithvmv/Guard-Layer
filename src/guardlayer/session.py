@@ -69,6 +69,7 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9_\-+/.@]{8,}")
 MAX_SOURCES = 50
 MAX_FINGERPRINTS = 1000
 MAX_SCAN_CHARS = 65_536  # bound on argument text searched for fingerprints
+SEAM_CHARS = 500  # how much of the previous untrusted content is kept to scan across the boundary with the next one
 _PREFIX = 8  # every fingerprinted value is at least this long (see _TOKEN_RE)
 
 
@@ -208,6 +209,7 @@ class SessionState:
     task_tools: list[str] | None = None  # tools still allowed; None = no task set
     task_version: int = 0  # bumped on every task change; the newest wins when copies of a session merge
     task_log: list[str] = field(default_factory=list)
+    seam: str = ""  # the (redacted) last SEAM_CHARS of the latest untrusted content, to catch instructions split across two
     events: int = 0
 
     @property
