@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-29
+
+First release published to PyPI (0.5.0 and 0.6.0 were tagged on GitHub only; their publish step failed before trusted publishing was set up).
+
 ### Security
 - **Hardened the project's own build pipeline:** every GitHub Action pinned to a full commit SHA; read-only default token
   in all workflows; `persist-credentials: false` on checkouts; release tooling pinned (`build`, `twine`); the third-party

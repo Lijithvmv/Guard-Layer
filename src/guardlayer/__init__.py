@@ -7,7 +7,7 @@ Quick start:
     <Verdict.BLOCK: 'block'>
 """
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 from guardlayer.audit import AuditLogger, AuditSigner, AuditVerification, verify_audit_log  # noqa: E402
 from guardlayer.canary import Canary, CanaryManager  # noqa: E402
