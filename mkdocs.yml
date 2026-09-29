@@ -81,6 +81,7 @@ nav:
       - Guarding agent actions: concepts/agents.md
       - Sessions and taint: concepts/sessions.md
       - Labels and information flow: concepts/labels.md
+      - "Behavioural check: who asked?": concepts/intent.md
       - Presets and observe mode: concepts/presets.md
       - Audit log and evidence: concepts/audit-and-evidence.md
   - Integrations:

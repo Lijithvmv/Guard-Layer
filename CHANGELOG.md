@@ -13,6 +13,12 @@ All notable changes to this project are documented here. The format follows
   (`benchmarks/indic_benign_texts.py`, CC BY-SA text fetched on demand, not committed), nor on 4,913 other benign texts.
   The referee's false-positive gate now includes the Indian-language set.
 - Task profiles, split-instruction detection and non-text extraction (0.8 steps 1–3; see the design notes).
+- **Behavioural check** (`check_intent`, `acheck_intent`, `needs_intent_check`, also on sessions): replays the
+  conversation with the user's request hidden, through a `replay` function you supply (your own model). If the model
+  still proposes the same action (same tool and destination), it is driven by content the agent read:
+  `injection_driven_action` (review). Independent of the injection's language or wording. One extra model call per
+  checked action; `needs_intent_check` limits it to tools that can act, after untrusted content. Based on MELON
+  (masked re-execution). See *Concepts → Behavioural check*.
 
 ### Fixed
 - **Zero-width false positives on Indian-language, Persian and emoji text.** The zero-width joiner and non-joiner are part

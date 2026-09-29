@@ -6,7 +6,7 @@ Generated from the source docstrings. Everything here is importable from `guardl
 
 ::: guardlayer.GuardLayer
     options:
-      members: [scan_input, scan_output, scan_context, scan_tool_call, scan_tool_result, scan, scan_batch, session, protect, add_canary, add_hook, from_preset, from_config]
+      members: [scan_input, scan_output, scan_context, scan_tool_call, scan_tool_result, needs_intent_check, check_intent, acheck_intent, scan, scan_batch, session, protect, add_canary, add_hook, from_preset, from_config]
 
 ::: guardlayer.GuardBlocked
 

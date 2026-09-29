@@ -33,6 +33,9 @@ from typing import Any, Literal, TypeVar
 from guardlayer.canary import Canary, CanaryManager
 from guardlayer.extract import DEFAULT_EXTRACTORS, Extractor, extract, media_parts
 from guardlayer.filelabels import FileLabelStore, written_paths
+from guardlayer.intent import NEUTRAL_TASK, IntentCheck, Replay
+from guardlayer.intent import acheck as _intent_acheck
+from guardlayer.intent import check as _intent_check
 from guardlayer.labels import BOTTOM as _BOTTOM_LABEL
 from guardlayer.labels import Integrity, Label
 from guardlayer.models import DIRECTIONS, Action, Category, Detection, Direction, ScanContext, ScanResult, Verdict
@@ -453,6 +456,74 @@ class GuardLayer:
                 self.file_labels.record(written_paths(arguments), state.label)
             self.sessions.put(state)
         return result
+
+    # ------------------------------------------------------------------ behavioural check
+    def needs_intent_check(self, tool_name: str, *, session: str | GuardSession | None = None) -> bool:
+        """Is `check_intent` worth a model call for this tool call?
+
+        Only for tools that can act (network, exec, write, or untagged), and, with a session, only once the session has
+        read untrusted content: before that, nothing but the user can be driving the agent.
+        """
+        if not self.tool_policy.can_act(tool_name):
+            return False
+        state = self._load_session(session)
+        return state is None or state.untrusted or state.hostile
+
+    def check_intent(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, Any] | str | None,
+        *,
+        messages: Sequence[Mapping[str, Any]],
+        replay: Replay,
+        session: str | GuardSession | None = None,
+        task: str = NEUTRAL_TASK,
+        **context_fields: Any,
+    ) -> ScanResult:
+        """Behavioural hijack check (see `guardlayer.intent`): replay the conversation with the user's request hidden.
+
+        `replay(masked_messages)` calls your model and returns the tool calls it proposes. If it proposes this same
+        action anyway, the action is driven by content the agent read: `injection_driven_action` (review by default).
+        Language- and wording-independent; one extra model call, so use `needs_intent_check` to pick risky calls.
+        """
+        outcome = _intent_check(tool_name, arguments, messages, replay, task=task)
+        return self._intent_result(tool_name, arguments, outcome, session, context_fields)
+
+    async def acheck_intent(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, Any] | str | None,
+        *,
+        messages: Sequence[Mapping[str, Any]],
+        replay: Callable[..., Any],
+        session: str | GuardSession | None = None,
+        task: str = NEUTRAL_TASK,
+        **context_fields: Any,
+    ) -> ScanResult:
+        """`check_intent` with an async `replay`."""
+        outcome = await _intent_acheck(tool_name, arguments, messages, replay, task=task)
+        return self._intent_result(tool_name, arguments, outcome, session, context_fields)
+
+    def _intent_result(self, tool_name: str, arguments: Any, outcome: IntentCheck, session: Any, context_fields: dict) -> ScanResult:
+        actions = self.session_policy.actions
+        info = {"driven_by_content": outcome.driven_by_content, "replayed": [name for name, _ in outcome.replayed][:20]}
+        detections = []
+        if outcome.error:
+            info["error"] = outcome.error
+            detections.append(Detection("session", "intent_check_failed", Category.POLICY.value, 0.0,
+                                        f"Couldn't run the behavioural check for {tool_name!r}: {outcome.error}",
+                                        metadata={"tool": tool_name}, action=actions["intent_check_failed"].value))  # fmt: skip
+        elif outcome.driven_by_content:
+            detections.append(Detection("session", "injection_driven_action", Category.PROMPT_INJECTION.value, 0.9,
+                                        f"With the user's request hidden, the model still proposes {tool_name!r} with the same "
+                                        "destination: the action is driven by content the agent read.",
+                                        metadata={"tool": tool_name}, action=actions["injection_driven_action"].value))  # fmt: skip
+        metadata = {**dict(context_fields.pop("metadata", {}) or {}), "tool": tool_name, "intent": info}
+        state = self._load_session(session)
+        if state is not None:
+            metadata["session_id"] = state.id
+        payload = arguments if isinstance(arguments, str) else json.dumps(arguments or {}, ensure_ascii=False, default=str)
+        return self._run(payload, ScanContext(direction="output", metadata=metadata, **context_fields), extra=detections, content=False)
 
     def _secrets_in_egress(self, tool_name: str, arguments_text: str) -> list[Detection]:
         """A secret in the arguments of a call that leaves the machine needs a human.

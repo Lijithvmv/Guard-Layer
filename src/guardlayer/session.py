@@ -420,6 +420,9 @@ DEFAULT_SESSION_ACTIONS: dict[str, Action] = {
     # Task profiles (0.8): actions outside the task the session was given.
     "out_of_task": Action.REVIEW,
     "task_argument_not_allowed": Action.REVIEW,
+    # Behavioural check (0.8): the model proposes the same action with the user's request hidden.
+    "injection_driven_action": Action.REVIEW,
+    "intent_check_failed": Action.LOG,
 }
 _SOURCE_KEYS = {"integrity", "confidentiality"}
 _SINK_KEYS = {"accepts_untrusted", "max_confidentiality"}
@@ -811,6 +814,15 @@ class GuardSession:
 
     def scan_tool_result(self, tool_name: str, result: Any, **kwargs: Any) -> ScanResult:
         return self.guard.scan_tool_result(tool_name, result, session=self.id, **kwargs)
+
+    def needs_intent_check(self, tool_name: str) -> bool:
+        return self.guard.needs_intent_check(tool_name, session=self.id)
+
+    def check_intent(self, tool_name: str, arguments: Any = None, **kwargs: Any) -> ScanResult:
+        return self.guard.check_intent(tool_name, arguments, session=self.id, **kwargs)
+
+    async def acheck_intent(self, tool_name: str, arguments: Any = None, **kwargs: Any) -> ScanResult:
+        return await self.guard.acheck_intent(tool_name, arguments, session=self.id, **kwargs)
 
     def reset(self) -> None:
         self.guard.sessions.delete(self.id)
