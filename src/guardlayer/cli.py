@@ -113,6 +113,14 @@ def main(argv: list[str] | None = None) -> int:
     export.add_argument("--allow-unverified", action="store_true", help="Export even if the log fails verification (marked in the pack).")
     evidence_sub.add_parser("controls", help="List the frameworks and controls GuardLayer maps evidence to.")
 
+    policy = sub.add_parser("policy", help="Check a configuration: what GuardLayer assumes about each tool, and gaps.")
+    policy_sub = policy.add_subparsers(dest="policy_command", required=True)
+    pcheck = policy_sub.add_parser("check", help="Per-tool capabilities, labels, sink limits and egress, with warnings.")
+    pcheck.add_argument("--tools", nargs="*", help="Tool names to check (default: every tool named in the config).")
+    pcheck.add_argument("--claude-code", action="store_true", help="Include Claude Code's built-in tools, as the hook sees them.")
+    pcheck.add_argument("--strict", action="store_true", help="Exit 1 if there are warnings (for CI).")
+    pcheck.add_argument("--json", action="store_true", help="Machine-readable output.")
+
     hook = sub.add_parser("hook", help="Run as an agent hook (reads the event JSON on stdin).")
     hook_sub = hook.add_subparsers(dest="hook_target", required=True)
     cc = hook_sub.add_parser("claude-code", help="Claude Code PreToolUse / PostToolUse / UserPromptSubmit hook.")
@@ -155,6 +163,26 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "evidence":
         return _evidence(args)
+
+    if args.command == "policy":
+        from guardlayer.policycheck import check_policy, configured_tools, format_report, to_json
+
+        guard = build_guard(args.config)
+        tools = list(args.tools or [])
+        if args.claude_code:
+            from guardlayer.integrations import claude_code
+
+            claude_code.configure_guard(guard)
+            tools += [t for t in claude_code.CLAUDE_CODE_CAPABILITIES if t not in tools]
+        if not tools:
+            tools = configured_tools(guard)
+        if not tools:
+            print("No tools to check: pass --tools NAME ..., or --claude-code, or name tools in the config.", file=sys.stderr)
+            return 2
+        reports, global_warnings = check_policy(guard, tools)
+        print(json.dumps(to_json(reports, global_warnings), indent=2) if args.json else format_report(reports, global_warnings))
+        warned = any(rep.warnings for rep in reports) or bool(global_warnings)
+        return 1 if args.strict and warned else 0
 
     if args.command == "hook":
         from guardlayer.integrations import claude_code
