@@ -42,7 +42,12 @@ def _toml_blocks():
 @pytest.mark.parametrize("block", list(_toml_blocks()))
 def test_docs_toml_examples_parse_and_load(block, tmp_path):
     """Every TOML example parses, and its session / labels / tools sections load (sample files aside)."""
-    import tomllib
+    import sys
+
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:  # Python 3.10: tomli is in the dev extra
+        import tomli as tomllib
 
     from guardlayer.config import build_guard
 
