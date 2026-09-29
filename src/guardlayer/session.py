@@ -348,6 +348,8 @@ DEFAULT_SESSION_ACTIONS: dict[str, Action] = {
     # Label rules (0.7): only fire for tools declared as sinks in `sinks`.
     "untrusted_to_protected_sink": Action.REVIEW,
     "confidentiality_exceeds_sink": Action.REVIEW,
+    # File labels (0.7): running a file that untrusted content could have written.
+    "untrusted_file_executed": Action.REVIEW,
 }
 _SOURCE_KEYS = {"integrity", "confidentiality"}
 _SINK_KEYS = {"accepts_untrusted", "max_confidentiality"}
@@ -521,6 +523,34 @@ def observe_content(
         elif declared.confidentiality is Confidentiality.PRIVATE:
             state.private_sources = _add(state.private_sources, [source], MAX_SOURCES)
     _touch(state)
+
+
+def observe_label(state: SessionState, label: Label, source: str) -> None:
+    """Raise the session's label to `label` (e.g. from a labelled file the call mentions)."""
+    if label.integrity is Integrity.HOSTILE:
+        state.hostile_sources = _add(state.hostile_sources, [source], MAX_SOURCES)
+    if label.integrity >= Integrity.UNTRUSTED:
+        state.untrusted_sources = _add(state.untrusted_sources, [source], MAX_SOURCES)
+    if label.confidentiality is Confidentiality.RESTRICTED:
+        state.sensitive_sources = _add(state.sensitive_sources, [source], MAX_SOURCES)
+    elif label.confidentiality is Confidentiality.PRIVATE:
+        state.private_sources = _add(state.private_sources, [source], MAX_SOURCES)
+
+
+def file_label_detections(
+    policy: SessionPolicy, tool: str, caps: frozenset[str], tagged: bool, refs: list[tuple[str, Label]]
+) -> list[Detection]:
+    """`untrusted_file_executed` when an exec-capable call mentions a file written in an untrusted context."""
+    if not policy.enabled or policy.is_trusted(tool) or (tagged and "exec" not in caps):
+        return []
+    risky = [(path, label) for path, label in refs if label.integrity >= Integrity.UNTRUSTED]
+    if not risky:
+        return []
+    path, label = max(risky, key=lambda r: r[1].integrity)
+    return [Detection(SCANNER, "untrusted_file_executed", Category.TOOL_MISUSE.value, 0.8,
+                      f"This command uses {Path(path).name}, which was written while the session held {label.integrity.value} content.",
+                      metadata={"tool": tool, "files": [p for p, _ in risky][:5], "label": label.to_dict()},
+                      action=policy.actions["untrusted_file_executed"].value)]  # fmt: skip
 
 
 def observe_input(state: SessionState, text: str, result: ScanResult) -> None:

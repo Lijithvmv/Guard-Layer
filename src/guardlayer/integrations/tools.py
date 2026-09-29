@@ -163,7 +163,9 @@ class _Guarded:
             return session, refusal_message(self.name, result)
         return session, None
 
-    def after(self, session: Any, output: Any) -> Any:
+    def after(self, session: Any, output: Any, arguments: dict[str, Any] | None = None) -> Any:
+        if session is not None:
+            self.guard.record_written(self.name, arguments, session=session)
         result = self.guard.scan_tool_result(self.name, output, session=session)
         return guarded_output(self.guard, self.name, output, result, withhold_at=self.withhold_at,
                               on_injection=self.on_injection, session=session)  # fmt: skip
@@ -193,20 +195,22 @@ def guard_tool(
 
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                sess, refusal = g.before(_call_arguments(func, args, kwargs))
+                call_args = _call_arguments(func, args, kwargs)
+                sess, refusal = g.before(call_args)
                 if refusal is not None:
                     return refusal
-                return g.after(sess, await func(*args, **kwargs))
+                return g.after(sess, await func(*args, **kwargs), call_args)
 
             async_wrapper.__guardlayer__ = g  # type: ignore[attr-defined]
             return async_wrapper  # type: ignore[return-value]
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            sess, refusal = g.before(_call_arguments(func, args, kwargs))
+            call_args = _call_arguments(func, args, kwargs)
+            sess, refusal = g.before(call_args)
             if refusal is not None:
                 return refusal
-            return g.after(sess, func(*args, **kwargs))
+            return g.after(sess, func(*args, **kwargs), call_args)
 
         wrapper.__guardlayer__ = g  # type: ignore[attr-defined]
         return wrapper  # type: ignore[return-value]

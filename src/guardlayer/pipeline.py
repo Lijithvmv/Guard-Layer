@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 from guardlayer.canary import Canary, CanaryManager
+from guardlayer.filelabels import FileLabelStore, written_paths
+from guardlayer.labels import BOTTOM as _BOTTOM_LABEL
 from guardlayer.models import DIRECTIONS, Action, Category, Detection, Direction, ScanContext, ScanResult, Verdict
 from guardlayer.scanners.base import Scanner
 from guardlayer.scanners.heuristics import HeuristicScanner
@@ -47,8 +49,10 @@ from guardlayer.session import (
     SessionPolicy,
     SessionState,
     SessionStore,
+    file_label_detections,
     observe_content,
     observe_input,
+    observe_label,
     observe_tool_call,
     taint_detections,
 )
@@ -170,6 +174,8 @@ class GuardLayer:
             self.tool_policy.allowlist = set(tool_allowlist)
         self.session_policy = session_policy or SessionPolicy()
         self.sessions: SessionStore = sessions if sessions is not None else MemorySessionStore()
+        self._file_labels: FileLabelStore | None = None
+        self._file_labels_for: object | None = None
         self.preset: str | None = None  # set by `from_preset` / a config with `preset = ...`
         self.hooks: list[Callable[[ScanResult], None]] = list(hooks)
 
@@ -316,6 +322,30 @@ class GuardLayer:
         return [self.scan(t, direction, **context_fields) for t in texts]
 
     # ------------------------------------------------------------------ agents
+    @property
+    def file_labels(self) -> FileLabelStore:
+        """Labels of files written in an untrusted or sensitive context (see `guardlayer.filelabels`).
+
+        Stored next to the session state: a JSON file when sessions are on disk (shared across processes, as with the
+        Claude Code hook), in memory otherwise.
+        """
+        if self._file_labels is None or self._file_labels_for is not self.sessions:
+            directory = getattr(self.sessions, "dir", None)
+            self._file_labels = FileLabelStore(Path(directory) / "file-labels.json" if directory else None)
+            self._file_labels_for = self.sessions
+        return self._file_labels
+
+    def record_written(self, tool_name: str, arguments: Mapping[str, Any] | str | None, *, session: str | GuardSession | None) -> None:
+        """After a write tool actually ran: label the files it wrote with the session's label.
+
+        Integrations call this post-execution (the Claude Code hook's PostToolUse, `guard_tool`), which also covers
+        writes a human approved after a REVIEW.
+        """
+        state = self._load_session(session)
+        caps, tagged = self.tool_policy.resolve(tool_name)
+        if state is not None and (not tagged or "write" in caps) and state.label != _BOTTOM_LABEL:
+            self.file_labels.record(written_paths(arguments), state.label)
+
     def scan_tool_call(
         self,
         tool_name: str,
@@ -349,6 +379,10 @@ class GuardLayer:
         state = self._load_session(session)
         if state is not None:
             metadata["session_id"] = state.id
+            refs = self.file_labels.referenced(arguments, arguments_text)
+            for path, label in refs:  # a labelled file the call mentions: the session has now, in effect, read it
+                observe_label(state, label, f"file:{path}")
+            extra += file_label_detections(self.session_policy, tool_name, caps, tagged, refs)
             metadata["session"] = {"untrusted": state.untrusted, "hostile": state.hostile, "sensitive": state.sensitive,
                                    "label": state.label.to_dict()}  # fmt: skip
             extra += taint_detections(self.session_policy, state, tool_name, caps, tagged, arguments_text, remote=remote,
@@ -359,6 +393,10 @@ class GuardLayer:
         result = self._run(payload, ctx, extra=extra, content=scan_content)
         if state is not None:
             observe_tool_call(state, tool_name, result)
+            # Record only what runs without a human in between; a reviewed write is recorded after it ran
+            # (`record_written`), because a refused one never happened.
+            if result.verdict < Verdict.REVIEW and (not tagged or "write" in caps) and state.label != _BOTTOM_LABEL:
+                self.file_labels.record(written_paths(arguments), state.label)
             self.sessions.put(state)
         return result
 

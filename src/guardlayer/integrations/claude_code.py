@@ -112,6 +112,7 @@ def handle_event(event: Mapping[str, Any], guard: GuardLayer, *, block_prompts: 
         return None
 
     if kind == "PostToolUse":
+        guard.record_written(tool, event.get("tool_input"), session=session)  # label files a write actually produced
         if not _scan_output_of(guard, tool):
             return None
         text = flatten_arguments(event.get("tool_response"))
