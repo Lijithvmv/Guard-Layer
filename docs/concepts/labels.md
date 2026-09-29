@@ -106,6 +106,17 @@ secret as-is, with separators removed (`s k - p r o j ...`), and in base64, base
 those blocks the call (`sensitive_data_egress`), even when nothing untrusted was read. Paraphrased or summarised
 *information* can't be fingerprinted; confidentiality labels cover that case instead.
 
+## Images, PDFs and other non-text content
+
+Tool results that are bytes, or MCP content blocks with images, audio or embedded files, aren't scanned as if they were
+text. Readable formats are extracted and scanned like any other content: PDFs with `pip install "guardlayer[extract]"`,
+images by OCR with `pip install "guardlayer[ocr]"` plus the Tesseract program. Add your own extractor with
+`guard.extractors.append(fn)`, where `fn(data: bytes, mime: str) -> str | None`.
+
+Whatever can't be read (audio, video, binaries, images without OCR) is recorded as `unreadable_content` and makes the
+session **untrusted**, unless the tool is declared trusted. An instruction hidden in an image nobody could read still
+can't drive a protected action or carry private data out.
+
 ## Check your configuration
 
 ```bash

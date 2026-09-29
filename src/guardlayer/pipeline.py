@@ -31,8 +31,10 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 from guardlayer.canary import Canary, CanaryManager
+from guardlayer.extract import DEFAULT_EXTRACTORS, Extractor, extract, media_parts
 from guardlayer.filelabels import FileLabelStore, written_paths
 from guardlayer.labels import BOTTOM as _BOTTOM_LABEL
+from guardlayer.labels import Integrity, Label
 from guardlayer.models import DIRECTIONS, Action, Category, Detection, Direction, ScanContext, ScanResult, Verdict
 from guardlayer.scanners.base import Scanner
 from guardlayer.scanners.heuristics import HeuristicScanner
@@ -178,6 +180,7 @@ class GuardLayer:
         self.session_policy = session_policy or SessionPolicy()
         self.sessions: SessionStore = sessions if sessions is not None else MemorySessionStore()
         self._file_labels: FileLabelStore | None = None
+        self.extractors: list[Extractor] = list(DEFAULT_EXTRACTORS)  # bytes -> text for PDFs, images... (guardlayer.extract)
         self._file_labels_for: object | None = None
         self.preset: str | None = None  # set by `from_preset` / a config with `preset = ...`
         self.hooks: list[Callable[[ScanResult], None]] = list(hooks)
@@ -307,7 +310,8 @@ class GuardLayer:
         return self._scan_content(content, source=source, session=session, tool=None, **context_fields)
 
     def _scan_content(
-        self, content: str, *, source: str | None, session: str | GuardSession | None, tool: str | None, **context_fields: Any
+        self, content: str, *, source: str | None, session: str | GuardSession | None, tool: str | None,
+        extra: Sequence[Detection] = (), force_untrusted: bool = False, **context_fields: Any,
     ) -> ScanResult:
         metadata = dict(context_fields.pop("metadata", {}) or {})
         if source:
@@ -318,15 +322,20 @@ class GuardLayer:
         # Results of remote tools (network/exec, untagged, or matching `remote_tools` such as
         # MCP or search tools) are untrusted: someone outside this machine could have written them.
         reaches_network = True if tool is None else self.tool_policy.is_remote(tool)
-        untrusted = state is not None and self.session_policy.enabled and self.session_policy.is_untrusted(tool, reaches_network)
+        policy = self.session_policy
+        untrusted = state is not None and policy.enabled and (
+            policy.is_untrusted(tool, reaches_network) or (force_untrusted and not policy.declared_trusted(tool))
+        )
         ctx = ScanContext(direction="context", metadata=metadata, **context_fields)
-        extra = self._seam_detections(state.seam, content, ctx) if untrusted and state is not None and state.seam else []
+        extra = [*extra, *(self._seam_detections(state.seam, content, ctx) if untrusted and state is not None and state.seam else [])]
         result = self._run(content, ctx, extra=extra)
         if state is not None:
             observe_content(
                 self.session_policy, state, content, result,
                 source=source or "context", tool=tool, can_reach_network=reaches_network,
             )  # fmt: skip
+            if force_untrusted and untrusted:
+                observe_label(state, Label(Integrity.UNTRUSTED), f"unreadable:{source or tool}")
             if untrusted:
                 state.seam = result.text[-SEAM_CHARS:]  # redacted text, so no secret is kept in the session
             self.sessions.put(state)
@@ -477,8 +486,20 @@ class GuardLayer:
         With a `session`, results from network-capable (or untagged) tools mark the session
         untrusted, injections mark it hostile, and secrets/PII mark it sensitive.
         """
-        text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
-        return self._scan_content(text, source=f"tool:{tool_name}", session=session, tool=tool_name, **context_fields)
+        parts = None if isinstance(result, str) else media_parts(result)
+        if parts is None:
+            text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
+            return self._scan_content(text, source=f"tool:{tool_name}", session=session, tool=tool_name, **context_fields)
+        # Bytes or media blocks: scan what can be extracted; what can't be read makes the session untrusted.
+        texts, blobs = parts
+        extracted, unreadable = extract(blobs, self.extractors)
+        extra = []
+        if unreadable:
+            extra.append(Detection("session", "unreadable_content", Category.POLICY.value, 0.0,
+                                   f"Couldn't read {', '.join(sorted(set(unreadable)))} content; treated as untrusted.",
+                                   metadata={"media": unreadable[:10]}, action=Action.LOG.value))  # fmt: skip
+        return self._scan_content("\n\n".join([*texts, *extracted]), source=f"tool:{tool_name}", session=session,
+                                  tool=tool_name, extra=extra, force_untrusted=bool(unreadable), **context_fields)  # fmt: skip
 
     # ------------------------------------------------------------------ canaries
     def add_canary(self, prompt: str, *, echo: bool = False) -> Canary:

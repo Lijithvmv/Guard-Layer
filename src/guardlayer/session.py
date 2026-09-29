@@ -502,6 +502,15 @@ class SessionPolicy:
     def is_trusted(self, tool: str | None) -> bool:
         return self._matches(tool, self.trusted_tools)
 
+    def declared_trusted(self, tool: str | None) -> bool:
+        """Listed in `trusted_tools`, or declared `integrity = "trusted"` in `sources` (and nowhere untrusted)."""
+        if tool is None:
+            return False
+        if self.is_trusted(tool):
+            return True
+        declared = [Integrity(s["integrity"]) for p, s in self.sources.items() if "integrity" in s and fnmatch.fnmatchcase(tool, p)]
+        return bool(declared) and max(declared) is Integrity.TRUSTED
+
     def allowed_kinds(self, tool: str | None) -> frozenset[str]:
         """Data types `tool` may send out (union over every matching `allow_egress` pattern)."""
         if tool is None:
