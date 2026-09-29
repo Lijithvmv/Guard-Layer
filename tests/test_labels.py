@@ -137,3 +137,64 @@ def test_strictest_sink_wins_across_patterns():
     assert p.sink("send_email") == (True, Confidentiality.PUBLIC)
     assert p.sink("send_sms") == (True, Confidentiality.PRIVATE)
     assert p.sink("other") == (True, None)
+
+
+# --- step 3: argument rules and destinations ---------------------------------------------------
+from guardlayer import ToolPolicy  # noqa: E402
+from guardlayer.tools import ArgumentRule, argument_values  # noqa: E402
+
+
+def test_argument_values_split_lists_names_and_nesting():
+    args = {"to": "Asha <asha@mycompany.com>, bob@outside.example; ", "cc": ["c@mycompany.com"],
+            "meta": {"to": "deep@x.example"}}  # fmt: skip
+    assert argument_values(args, "to") == ["asha@mycompany.com", "bob@outside.example", "deep@x.example"]
+    assert argument_values(args, "cc") == ["c@mycompany.com"]
+    assert argument_values("raw text", "to") == [] and argument_values(None, "to") == []
+
+
+def test_gap_b3_allowed_domain_can_be_narrowed_to_our_own_repos():
+    guard = build_guard({"tools": {"egress_allowlist": ["api.github.com"],
+                                   "arguments": [{"tool": "http_post", "argument": "url",
+                                                  "allow": ["https://api.github.com/repos/myorg/*"]}]}})  # fmt: skip
+    ours = guard.scan_tool_call("http_post", {"url": "https://api.github.com/repos/myorg/app/issues", "body": "ok"})
+    gist = guard.scan_tool_call("http_post", {"url": "https://api.github.com/gists", "body": " ".join(SECRET)})
+    assert "argument_not_allowed" not in rules(ours)
+    assert gist.verdict is Verdict.REVIEW and "argument_not_allowed" in rules(gist)
+
+
+def test_recipient_allow_and_deny():
+    policy = ToolPolicy(arguments=[{"tool": "send_email", "argument": "to", "allow": ["*@mycompany.com"]},
+                                   {"tool": "send_*", "argument": "to", "deny": ["*@competitor.example"], "action": "block"}])  # fmt: skip
+    ok = policy.evaluate("send_email", {"to": "Asha <ASHA@MyCompany.com>"})
+    outside = policy.evaluate("send_email", {"to": "asha@mycompany.com, x@outside.example"})
+    denied = policy.evaluate("send_sms", {"to": "boss@competitor.example"})
+    assert not [d for d in ok if d.rule.startswith("argument_")]
+    assert [(d.rule, d.metadata["value"]) for d in outside] == [("argument_not_allowed", "x@outside.example")]
+    assert [(d.rule, d.action) for d in denied] == [("argument_denied", "block")]
+    assert policy.evaluate("send_email", {"subject": "no recipient here"}) == []  # the argument is absent: rule silent
+
+
+def test_argument_rule_validation():
+    with pytest.raises(ValueError):
+        ArgumentRule("send_email", "to")  # needs allow or deny
+    with pytest.raises(ValueError):
+        ArgumentRule.from_dict({"tool": "x", "argument": "y", "allow": ["*"], "alow": []})
+    with pytest.raises(ValueError):
+        ArgumentRule("x", "y", allow=("*",), action="maybe")
+
+
+def test_destinations_let_internal_recipients_receive_private_data():
+    policy = SessionPolicy(sources={"get_customer": {"confidentiality": "private"}},
+                           sinks={"send_email": {"max_confidentiality": "public"}},
+                           destinations=[{"tool": "send_email", "argument": "to", "match": "*@mycompany.com",
+                                          "max_confidentiality": "private"}])  # fmt: skip
+    s = GuardLayer(session_policy=policy).session()
+    s.scan_tool_result("get_customer", CUSTOMER)
+    internal = s.scan_tool_call("send_email", {"to": "support@mycompany.com", "body": "Asha's balance"})
+    mixed = s.scan_tool_call("send_email", {"to": "support@mycompany.com, x@outside.example", "body": "Asha's balance"})
+    assert "confidentiality_exceeds_sink" not in rules(internal)
+    assert "confidentiality_exceeds_sink" in rules(mixed)  # one outside recipient caps the whole call at public
+    assert policy.call_cap("send_email", {"to": "support@mycompany.com"}) is Confidentiality.PRIVATE
+    assert policy.call_cap("send_email", {"to": "x@outside.example"}) is Confidentiality.PUBLIC
+    with pytest.raises(ValueError):
+        SessionPolicy(destinations=[{"tool": "send_email", "argument": "to", "match": "*"}])  # no cap

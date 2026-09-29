@@ -40,6 +40,13 @@ Example `guardlayer.toml`:
     default_integrity = "trusted"  # or "untrusted": every tool result is untrusted unless in trusted_tools
     sources = { get_customer = { confidentiality = "private" }, read_issue = { integrity = "untrusted" } }
     sinks = { post_comment = { max_confidentiality = "public" }, write_file = { accepts_untrusted = false } }
+    destinations = [{ tool = "send_email", argument = "to", match = "*@mycompany.com", max_confidentiality = "private" }]
+
+    [[tools.arguments]]            # constrain argument values (glob, case-insensitive; lists are split)
+    tool = "send_email"
+    argument = "to"
+    allow = ["*@mycompany.com", "*@partner.example"]
+    action = "review"
 
     [audit]                        # tamper-evident JSONL audit log
     path = "guardlayer-audit.jsonl"  # "audit-{hostname}-{pid}.jsonl" when several processes log
@@ -216,9 +223,9 @@ def build_guard(source: str | Path | Mapping[str, Any] | None = None) -> GuardLa
         scanners.append(factory(options, canaries, base_dir))
 
     labels_cfg = dict(config.get("labels", {}))
-    unknown = set(labels_cfg) - {"sources", "sinks", "default_integrity"}
+    unknown = set(labels_cfg) - {"sources", "sinks", "default_integrity", "destinations"}
     if unknown:
-        raise ValueError(f"unknown [labels] key(s) {sorted(unknown)}; use sources, sinks, default_integrity")
+        raise ValueError(f"unknown [labels] key(s) {sorted(unknown)}; use sources, sinks, destinations, default_integrity")
     session_policy, session_store = _session({**config.get("session", {}), **labels_cfg}, base_dir)
     guard = GuardLayer(
         scanners,

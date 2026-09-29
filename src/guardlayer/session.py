@@ -384,6 +384,7 @@ class SessionPolicy:
     sources: dict[str, dict[str, Any]] = field(default_factory=dict)
     sinks: dict[str, dict[str, Any]] = field(default_factory=dict)
     default_integrity: str = "trusted"
+    destinations: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         merged = dict(DEFAULT_SESSION_ACTIONS)
@@ -406,6 +407,12 @@ class SessionPolicy:
             if Integrity(spec.get("integrity", "trusted")) is Integrity.HOSTILE:
                 raise ValueError(f"sources[{pattern!r}]: 'hostile' is set by detection, not declared")
             Confidentiality(spec.get("confidentiality", "public"))
+        for dest in self.destinations:
+            missing = {"tool", "argument", "match", "max_confidentiality"} - set(dest)
+            extra = set(dest) - {"tool", "argument", "match", "max_confidentiality"}
+            if missing or extra:
+                raise ValueError(f"destination {dest!r}: needs tool, argument, match, max_confidentiality (and nothing else)")
+            Confidentiality(dest["max_confidentiality"])
         for pattern, spec in self.sinks.items():
             unknown = set(spec) - _SINK_KEYS
             if unknown:
@@ -444,6 +451,29 @@ class SessionPolicy:
                         level = Confidentiality(spec["max_confidentiality"])
                         cap = level if cap is None else min(cap, level)
         return accepts, cap
+
+    def call_cap(self, tool: str | None, arguments: Mapping[str, Any] | str | None) -> Confidentiality | None:
+        """The most sensitive data this particular call may carry.
+
+        Destinations can allow more for matching values (internal recipients may receive private data); every other
+        value gets the tool's sink cap. The call's cap is the lowest across its values.
+        """
+        from guardlayer.tools import argument_values, value_matches
+
+        _, cap = self.sink(tool)
+        if tool is None:
+            return cap
+        dests = [d for d in self.destinations if fnmatch.fnmatchcase(tool, d["tool"])]
+        caps: list[Confidentiality | None] = []
+        for argument in {d["argument"] for d in dests}:
+            for value in argument_values(arguments, argument):
+                allowed = [Confidentiality(d["max_confidentiality"]) for d in dests
+                           if d["argument"] == argument and value_matches(value, [d["match"]])]  # fmt: skip
+                caps.append(max(allowed) if allowed else (cap if cap is not None else Confidentiality.PUBLIC))
+        if not caps:
+            return cap
+        known = [c for c in caps if c is not None]
+        return min(known) if known else None
 
     def is_untrusted(self, tool: str | None, can_reach_network: bool) -> bool:
         if tool is None:
@@ -526,6 +556,7 @@ def taint_detections(
     arguments_text: str,
     *,
     remote: bool | None = None,
+    arguments: Mapping[str, Any] | str | None = None,
 ) -> list[Detection]:
     """Detections for a proposed tool call, given what the session has already seen.
 
@@ -558,7 +589,8 @@ def taint_detections(
         emit("after_injection", Category.PROMPT_INJECTION.value, 0.7,
              "This session read content containing a prompt injection; side-effecting actions need approval.",
              hostile=state.hostile_sources[-5:])  # fmt: skip
-    accepts_untrusted, cap = policy.sink(tool)
+    accepts_untrusted, _ = policy.sink(tool)
+    cap = policy.call_cap(tool, arguments)
     context = state.label
     if not accepts_untrusted and context.integrity >= Integrity.UNTRUSTED:
         emit("untrusted_to_protected_sink", Category.PROMPT_INJECTION.value, 0.8,

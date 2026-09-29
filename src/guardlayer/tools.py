@@ -255,6 +255,96 @@ def _domain_match(host: str, domains: Iterable[str]) -> bool:
     return any(host == d or host.endswith("." + d) for d in domains)
 
 
+_ADDRESS_IN_ANGLES = re.compile(r"<([^<>\s]+@[^<>\s]+)>")
+
+
+def argument_values(arguments: Mapping[str, Any] | str | None, name: str) -> list[str]:
+    """Every value of argument `name` anywhere in `arguments` (nested dicts and lists), as strings.
+
+    Comma- or semicolon-separated lists are split ("a@x.com, b@y.com"), and a display name is dropped
+    ("Asha <asha@x.com>" -> "asha@x.com"), so recipient lists are checked address by address.
+    """
+    found: list[str] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                if key == name:
+                    collect(item)
+                else:
+                    walk(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                walk(item)
+
+    def collect(value: Any) -> None:
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                collect(item)
+        elif isinstance(value, Mapping):
+            walk(value)
+        elif value is not None:
+            for part in re.split(r"[,;]", str(value)):
+                part = part.strip()
+                m = _ADDRESS_IN_ANGLES.search(part)
+                if part:
+                    found.append(m.group(1) if m else part)
+
+    if isinstance(arguments, Mapping):
+        walk(arguments)
+    return found
+
+
+def value_matches(value: str, patterns: Iterable[str]) -> bool:
+    """Case-insensitive glob match (`*@mycompany.com`, `https://api.github.com/repos/myorg/*`)."""
+    v = value.lower()
+    return any(fnmatch.fnmatchcase(v, p.lower()) for p in patterns)
+
+
+@dataclass(frozen=True)
+class ArgumentRule:
+    """Constrain the values one argument of a tool may take.
+
+    A value that matches `deny`, or doesn't match `allow` when `allow` is given, produces a detection with
+    `action`. Calls that don't carry the argument are not affected.
+    """
+
+    tool: str
+    argument: str
+    allow: tuple[str, ...] | None = None
+    deny: tuple[str, ...] = ()
+    action: Action | str = Action.REVIEW
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "action", Action(self.action))
+        if self.allow is not None:
+            object.__setattr__(self, "allow", tuple(self.allow))
+        object.__setattr__(self, "deny", tuple(self.deny))
+        if self.allow is None and not self.deny:
+            raise ValueError(f"argument rule for {self.tool}.{self.argument} needs `allow` or `deny`")
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ArgumentRule:
+        unknown = set(data) - {"tool", "argument", "allow", "deny", "action"}
+        if unknown:
+            raise ValueError(f"argument rule: unknown key(s) {sorted(unknown)}")
+        allow = data.get("allow")
+        return cls(data["tool"], data["argument"], tuple(allow) if allow is not None else None,
+                   tuple(data.get("deny", ())), data.get("action", Action.REVIEW))  # fmt: skip
+
+    def violations(self, tool: str, arguments: Mapping[str, Any] | str | None) -> list[tuple[str, str]]:
+        """(rule name, value) for every value of the argument that breaks the rule."""
+        if not fnmatch.fnmatchcase(tool, self.tool):
+            return []
+        out = []
+        for value in argument_values(arguments, self.argument):
+            if self.deny and value_matches(value, self.deny):
+                out.append(("argument_denied", value))
+            elif self.allow is not None and not value_matches(value, self.allow):
+                out.append(("argument_not_allowed", value))
+        return out
+
+
 def flatten_arguments(arguments: Mapping[str, Any] | str | None) -> str:
     """All string leaves of the arguments (keys excluded), newline-joined, so rules see raw commands."""
     if arguments is None:
@@ -303,6 +393,7 @@ class ToolPolicy:
         infer: bool = True,
         remote_tools: Iterable[str] = (),
         include_default_remote_tools: bool = True,
+        arguments: Iterable[ArgumentRule | Mapping[str, Any]] = (),
     ) -> None:
         self.allowlist = set(allowlist) if allowlist is not None else None
         self.denylist = set(denylist)
@@ -325,6 +416,7 @@ class ToolPolicy:
         self.flag_raw_ips = flag_raw_ips
         self.infer = infer
         self.remote_tools = [p.lower() for p in (*(DEFAULT_REMOTE_TOOLS if include_default_remote_tools else ()), *remote_tools)]
+        self.argument_rules = [r if isinstance(r, ArgumentRule) else ArgumentRule.from_dict(r) for r in arguments]
 
     def _explicit(self, tool: str) -> bool:
         return tool in self.capabilities or any(fnmatch.fnmatchcase(tool, p) for p in self.capabilities)
@@ -383,6 +475,13 @@ class ToolPolicy:
                 out.append(
                     self._detection(f"capability_{cap}", Category.POLICY.value, 0.5, f"Tool {tool!r} has the {cap!r} capability.", action, tool=tool)
                 )
+
+        for arg_rule in self.argument_rules:
+            for name, value in arg_rule.violations(tool, arguments):
+                verb = "is on the deny-list" if name == "argument_denied" else "is not in the allow-list"
+                out.append(self._detection(name, Category.TOOL_MISUSE.value, 0.8,
+                                           f"{tool}.{arg_rule.argument} = {value[:120]!r} {verb} for this argument.",
+                                           arg_rule.action, tool=tool, argument=arg_rule.argument, value=value[:200]))  # type: ignore[arg-type]  # fmt: skip
 
         text = flatten_arguments(arguments)
         if not text:
