@@ -226,7 +226,8 @@ def build_guard(source: str | Path | Mapping[str, Any] | None = None) -> GuardLa
     unknown = set(labels_cfg) - {"sources", "sinks", "default_integrity", "destinations"}
     if unknown:
         raise ValueError(f"unknown [labels] key(s) {sorted(unknown)}; use sources, sinks, destinations, default_integrity")
-    session_policy, session_store = _session({**config.get("session", {}), **labels_cfg}, base_dir)
+    tasks_cfg = config.get("tasks", {})
+    session_policy, session_store = _session({**config.get("session", {}), **labels_cfg, **({"tasks": tasks_cfg} if tasks_cfg else {})}, base_dir)
     guard = GuardLayer(
         scanners,
         policy=policy,

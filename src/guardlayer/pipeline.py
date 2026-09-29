@@ -55,6 +55,7 @@ from guardlayer.session import (
     observe_label,
     observe_tool_call,
     taint_detections,
+    task_detections,
 )
 from guardlayer.tools import ToolPolicy, flatten_arguments
 
@@ -216,9 +217,15 @@ class GuardLayer:
     def add_hook(self, hook: Callable[[ScanResult], None]) -> None:
         self.hooks.append(hook)
 
-    def session(self, session_id: str | None = None) -> GuardSession:
-        """A view of this guard bound to one session, so tool calls are judged by what came before."""
-        return GuardSession(self, session_id)
+    def session(self, session_id: str | None = None, *, task: str | None = None, task_args: Mapping[str, Any] | None = None) -> GuardSession:
+        """A view of this guard bound to one session, so tool calls are judged by what came before.
+
+        `task` puts the session under a task profile (see `guardlayer.tasks`), with `task_args` from the trusted request.
+        """
+        session = GuardSession(self, session_id)
+        if task is not None:
+            session.set_task(task, task_args)
+        return session
 
     def _load_session(self, session: str | GuardSession | None) -> SessionState | None:
         if session is None:
@@ -383,8 +390,9 @@ class GuardLayer:
             for path, label in refs:  # a labelled file the call mentions: the session has now, in effect, read it
                 observe_label(state, label, f"file:{path}")
             extra += file_label_detections(self.session_policy, tool_name, caps, tagged, refs)
+            extra += task_detections(self.session_policy, state, tool_name, arguments)
             metadata["session"] = {"untrusted": state.untrusted, "hostile": state.hostile, "sensitive": state.sensitive,
-                                   "label": state.label.to_dict()}  # fmt: skip
+                                   "label": state.label.to_dict(), "task": state.task}  # fmt: skip
             extra += taint_detections(self.session_policy, state, tool_name, caps, tagged, arguments_text, remote=remote,
                                       arguments=arguments)  # fmt: skip
         if scan_content is None:

@@ -203,6 +203,11 @@ class SessionState:
     private_sources: list[str] = field(default_factory=list)  # sources declared private (business data, not secrets)
     fingerprints: list[str] = field(default_factory=list)  # hashes of sensitive values
     sensitive_kinds: list[str] = field(default_factory=list)  # rules that found them (iban, credential_file, ...)
+    task: str | None = None  # the task profile in force (see guardlayer.tasks)
+    task_args: dict[str, Any] = field(default_factory=dict)  # values from the trusted request, for {task.NAME}
+    task_tools: list[str] | None = None  # tools still allowed; None = no task set
+    task_version: int = 0  # bumped on every task change; the newest wins when copies of a session merge
+    task_log: list[str] = field(default_factory=list)
     events: int = 0
 
     @property
@@ -255,6 +260,9 @@ class SessionState:
         self.created = min(self.created, other.created)
         self.updated = max(self.updated, other.updated)
         self.events = max(self.events, other.events)
+        if other.task_version > self.task_version:
+            self.task, self.task_args, self.task_tools = other.task, dict(other.task_args), other.task_tools
+            self.task_version, self.task_log = other.task_version, list(other.task_log)
 
 
 def _add(existing: list[str], new: Iterable[str], cap: int) -> list[str]:
@@ -407,6 +415,9 @@ DEFAULT_SESSION_ACTIONS: dict[str, Action] = {
     "confidentiality_exceeds_sink": Action.REVIEW,
     # File labels (0.7): running a file that untrusted content could have written.
     "untrusted_file_executed": Action.REVIEW,
+    # Task profiles (0.8): actions outside the task the session was given.
+    "out_of_task": Action.REVIEW,
+    "task_argument_not_allowed": Action.REVIEW,
 }
 _SOURCE_KEYS = {"integrity", "confidentiality"}
 _SINK_KEYS = {"accepts_untrusted", "max_confidentiality"}
@@ -444,6 +455,7 @@ class SessionPolicy:
     sinks: dict[str, dict[str, Any]] = field(default_factory=dict)
     default_integrity: str = "trusted"
     destinations: list[dict[str, Any]] = field(default_factory=list)
+    tasks: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         merged = dict(DEFAULT_SESSION_ACTIONS)
@@ -466,6 +478,9 @@ class SessionPolicy:
             if Integrity(spec.get("integrity", "trusted")) is Integrity.HOSTILE:
                 raise ValueError(f"sources[{pattern!r}]: 'hostile' is set by detection, not declared")
             Confidentiality(spec.get("confidentiality", "public"))
+        from guardlayer.tasks import TaskProfile
+
+        self.tasks = {name: t if isinstance(t, TaskProfile) else TaskProfile.from_dict(name, t) for name, t in self.tasks.items()}
         for dest in self.destinations:
             missing = {"tool", "argument", "match", "max_confidentiality"} - set(dest)
             extra = set(dest) - {"tool", "argument", "match", "max_confidentiality"}
@@ -586,6 +601,28 @@ def observe_content(
     _touch(state)
 
 
+def task_detections(policy: SessionPolicy, state: SessionState, tool: str, arguments: Mapping[str, Any] | str | None) -> list[Detection]:
+    """`out_of_task` / `task_argument_not_allowed` when the session has a task profile."""
+    if not policy.enabled or state.task_tools is None:
+        return []
+    out: list[Detection] = []
+    if not any(fnmatch.fnmatchcase(tool, pattern) for pattern in state.task_tools):
+        out.append(Detection(SCANNER, "out_of_task", Category.TOOL_MISUSE.value, 0.8,
+                             f"{tool!r} is not one of the tools for the task {state.task!r}.",
+                             metadata={"tool": tool, "task": state.task, "task_tools": state.task_tools[:20]},
+                             action=policy.actions["out_of_task"].value))  # fmt: skip
+        return out
+    profile = policy.tasks.get(state.task or "")
+    if profile is not None:
+        for rule in profile.argument_rules(state.task_args):
+            for _name, value in rule.violations(tool, arguments):
+                out.append(Detection(SCANNER, "task_argument_not_allowed", Category.TOOL_MISUSE.value, 0.8,
+                                     f"{tool}.{rule.argument} = {value[:120]!r} is not allowed in the task {state.task!r}.",
+                                     metadata={"tool": tool, "task": state.task, "argument": rule.argument, "value": value[:200]},
+                                     action=policy.actions["task_argument_not_allowed"].value))  # fmt: skip
+    return out
+
+
 def observe_label(state: SessionState, label: Label, source: str) -> None:
     """Raise the session's label to `label` (e.g. from a labelled file the call mentions)."""
     if label.integrity is Integrity.HOSTILE:
@@ -702,6 +739,48 @@ class GuardSession:
     def __init__(self, guard: GuardLayer, session_id: str | None = None) -> None:
         self.guard = guard
         self.id = session_id or uuid.uuid4().hex
+
+    # --- task profiles (guardlayer.tasks) ---------------------------------------------------------------
+    def set_task(self, name: str, task_args: Mapping[str, Any] | None = None, *, approved: bool = False) -> None:
+        """Put the session under the task profile `name`. Call it from trusted code with the user's request.
+
+        Setting a first task, or a narrower one, needs nothing. Switching to a task that allows a tool the current one
+        doesn't (widening) raises `PermissionError` unless `approved=True` (a human agreed), and the approval is logged.
+        """
+        profile = self.guard.session_policy.tasks.get(name)
+        if profile is None:
+            raise KeyError(f"unknown task {name!r}; define it under [tasks.{name}]")
+        args = dict(task_args or {})
+        profile.argument_rules(args)  # fails now, not at the first tool call, if a {task.NAME} value is missing
+        state = self.state
+        widening = state.task_tools is not None and not set(profile.tools) <= set(state.task_tools)
+        if widening and not approved:
+            raise PermissionError(f"task {name!r} allows tools the current task {state.task!r} doesn't; needs approved=True")
+        entry = f"{'widened (approved)' if widening else 'set'}: {name}"
+        state.task, state.task_args, state.task_tools = name, args, list(profile.tools)
+        state.task_version += 1
+        state.task_log = [*state.task_log, entry][-50:]
+        self.guard.sessions.put(state)
+
+    def narrow(self, tools: list[str]) -> None:
+        """Keep only these of the current task's tools (never adds any). No approval needed."""
+        state = self.state
+        if state.task_tools is None:
+            raise ValueError("no task is set; call set_task first")
+        state.task_tools = [t for t in state.task_tools if t in set(tools)]
+        state.task_version += 1
+        state.task_log = [*state.task_log, f"narrowed: {state.task_tools}"][-50:]
+        self.guard.sessions.put(state)
+
+    def clear_task(self, *, approved: bool = False) -> None:
+        """Remove the task restriction. That widens what the agent may do, so it needs `approved=True`."""
+        state = self.state
+        if state.task_tools is not None and not approved:
+            raise PermissionError("clearing a task widens the agent's permissions; needs approved=True")
+        state.task_log = [*state.task_log, f"cleared (approved): {state.task}"][-50:]
+        state.task, state.task_args, state.task_tools = None, {}, None
+        state.task_version += 1
+        self.guard.sessions.put(state)
 
     @property
     def state(self) -> SessionState:
