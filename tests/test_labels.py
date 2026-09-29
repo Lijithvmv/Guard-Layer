@@ -320,3 +320,24 @@ def test_normalisation_doesnt_invent_matches():
     s.scan_tool_result("read_file", f"OPENAI_API_KEY={SECRET}")
     for body in ["hello world", "sk-proj", base64.b64encode(b"a harmless status report").decode(), "deadbeef" * 4]:
         assert "sensitive_data_egress" not in rules(s.scan_tool_call("http_post", {"url": "https://a.example", "body": body}))
+
+
+# --- step 7: Claude Code label defaults --------------------------------------------------------
+def test_claude_code_labels_shell_output_and_subagent_reports_untrusted(tmp_path):
+    from guardlayer.integrations import claude_code
+
+    g = claude_code.configure_guard(GuardLayer(), state_dir=tmp_path / "st")
+    for tool in ("BashOutput", "Task", "Agent"):
+        assert g.session_policy.is_untrusted(tool, can_reach_network=False)
+    claude_code.handle_event({"session_id": "t", "hook_event_name": "PostToolUse", "tool_name": "Task",
+                              "tool_input": {"prompt": "research X"}, "tool_response": "Summary of the pages I read."}, g)  # fmt: skip
+    assert g.session("t").state.label.integrity is Integrity.UNTRUSTED  # the report was observed and labelled
+    reports, _ = __import__("guardlayer.policycheck", fromlist=["x"]).check_policy(g, ["BashOutput"])
+    assert not any("assumed trusted" in w for w in reports[0].warnings)
+
+
+def test_claude_code_label_defaults_yield_to_config(tmp_path):
+    from guardlayer.integrations import claude_code
+
+    g = claude_code.configure_guard(build_guard({"labels": {"sources": {"Task": {"integrity": "trusted"}}}}), state_dir=tmp_path)
+    assert not g.session_policy.is_untrusted("Task", can_reach_network=False)

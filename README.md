@@ -217,6 +217,10 @@ What counts:
   `scan_context`. Add or remove tools with `untrusted_tools` and `trusted_tools`.
 - **Sensitive data:** secrets or personal data found in what the agent read or was given,
   and credential or `.env` files it opened.
+- **Labels, for finer control:** declare which tools return private business data and which tools may receive it,
+  restrict exact recipients and URL paths, and let files keep the label of the context they were written in.
+  `guardlayer policy check` shows what is assumed for each tool and where the gaps are. See the docs page
+  "Labels and information flow".
 - **Data a tool is meant to send:** a payment tool sends IBANs, a CRM tool sends email addresses.
   `allow_egress = { send_money = ["iban"] }` exempts those data types, for that tool only, from
   `sensitive_data_egress` and `trifecta`; `after_injection` still applies. Keep it narrow: an injection

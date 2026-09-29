@@ -21,6 +21,7 @@ Install:  guardlayer hook claude-code --print-config   (merge the output into .c
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import sys
@@ -55,6 +56,14 @@ CLAUDE_CODE_CAPABILITIES: dict[str, list[str]] = {
         "ToolSearch", "SlashCommand", "KillShell", "KillBash", "Monitor", "TaskStop",
     )},  # fmt: skip
 }
+# Labels of what built-in tools return, where their capabilities alone would get it wrong (config wins).
+# BashOutput is a shell command's output: whatever a server or file gave that command. Task / Agent return a
+# sub-agent's report, which can carry what that sub-agent read on the web.
+CLAUDE_CODE_SOURCES: dict[str, dict[str, str]] = {
+    "BashOutput": {"integrity": "untrusted"},
+    "Task": {"integrity": "untrusted"},
+    "Agent": {"integrity": "untrusted"},
+}
 _WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 _PATH_KEYS = ("file_path", "notebook_path", "path")
 DEFAULT_STATE_DIR = "~/.guardlayer/sessions"
@@ -78,11 +87,11 @@ def policy_view(tool: str, tool_input: Mapping[str, Any] | None) -> dict[str, An
 
 
 def _scan_output_of(guard: GuardLayer, tool: str) -> bool:
-    """Only outputs that bring outside content into the context are worth scanning."""
+    """Only outputs that bring outside content into the context are worth scanning (and any tool with a declared label)."""
     if tool in _WRITE_TOOLS:
         return False
     caps, tagged = guard.tool_policy.resolve(tool)
-    return not tagged or bool(caps & {"read", "network", "exec"})
+    return not tagged or bool(caps & {"read", "network", "exec"}) or guard.session_policy.source_label(tool) is not None
 
 
 def _reason(prefix: str, result: Any) -> str:
@@ -142,6 +151,10 @@ def configure_guard(guard: GuardLayer, state_dir: str | Path | None = None) -> G
     """Add Claude Code's tool capabilities (config wins) and a file-backed session store."""
     for name, caps in CLAUDE_CODE_CAPABILITIES.items():
         guard.tool_policy.capabilities.setdefault(name, frozenset(caps))
+    sources = guard.session_policy.sources
+    for name, label in CLAUDE_CODE_SOURCES.items():
+        if not any(fnmatch.fnmatchcase(name, pattern) for pattern in sources):
+            sources[name] = dict(label)
     directory = state_dir or os.environ.get("GUARDLAYER_STATE_DIR")
     if directory or not isinstance(guard.sessions, FileSessionStore):  # keep a [session] store from the config
         guard.sessions = FileSessionStore(directory or DEFAULT_STATE_DIR)

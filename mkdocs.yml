@@ -80,6 +80,7 @@ nav:
       - How a verdict is reached: concepts/how-it-works.md
       - Guarding agent actions: concepts/agents.md
       - Sessions and taint: concepts/sessions.md
+      - Labels and information flow: concepts/labels.md
       - Presets and observe mode: concepts/presets.md
       - Audit log and evidence: concepts/audit-and-evidence.md
   - Integrations:

@@ -5,6 +5,41 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added: labels (information-flow control)
+- **Labels on everything the agent reads** (`guardlayer.labels`): integrity (`trusted` < `untrusted` < `hostile`) and
+  confidentiality (`public` < `private` < `restricted`), combined most-restrictive-wins; the session's context label is on
+  every tool-call result and audit entry. Docs: Concepts, "Labels and information flow".
+- **`[labels]` sources, sinks, destinations, default_integrity**: declare what a tool returns (`get_customer` is private,
+  `read_issue` is untrusted) and what a tool accepts (`max_confidentiality`, `accepts_untrusted`). New rules
+  `confidentiality_exceeds_sink` and `untrusted_to_protected_sink` (review by default) fire only for declared sinks.
+  Destinations let matching argument values receive more (internal recipients may get private data).
+  `default_integrity = "untrusted"` makes every undeclared tool result untrusted.
+- **`[[tools.arguments]]`**: allow/deny globs for one argument (recipients, URL paths, repos); recipient lists are split and
+  display names dropped.
+- **File labels**: a file written while the session's label is above trusted/public keeps that label; a later call that
+  mentions it, in any session, inherits the label, and running it needs review (`untrusted_file_executed`). Reviewed writes
+  are recorded only after they ran (`GuardLayer.record_written`, called by the Claude Code hook and `guard_tool`).
+- **Normalised fingerprints**: remembered secrets also match with separators removed and in base64, base64url, hex and
+  URL-encoded form.
+- **`guardlayer policy check`**: per tool, capabilities (declared, inferred or unknown), output label, sink limits and egress
+  limits, with plain-language warnings; `--strict` for CI, `--json`, `--claude-code`.
+- Docs tests now parse every TOML example and load its session, labels and tools sections.
+
+These close the five containment gaps found in the 2026-09-29 gap analysis (poisoned local file, business data not
+recognised as sensitive, leaks through allowed channels, disguised copies of secrets, write-then-run), each reproduced as a
+test.
+
+### What changes on upgrade
+Without a `[labels]` section most behaviour is unchanged, but three protections apply by default:
+- a disguised copy of a remembered secret (spelled out, separators removed, base64, hex or URL-encoded) in an outgoing
+  call is now **blocked** (`sensitive_data_egress`); before, it was allowed, or held for review only if untrusted content
+  had been read;
+- running a file that was written after the session read untrusted content now needs **review** (`untrusted_file_executed`);
+- in the Claude Code hook, shell output (`BashOutput`) and sub-agent reports (`Task`, `Agent`) now count as **untrusted**,
+  so the usual session rules apply after them. Override with `[labels] sources`.
+
+Set any of these rules to `"log"` in `[session] actions` to observe instead of enforce while you evaluate.
+
 ### Added
 - AgentDojo results for strip mode (banking and Slack, today's rules): attacks 0 / 10 in both modes, but attacked tasks
   didn't recover (banking 5 / 10 either way; Slack 0 / 10, where 32 of 33 poisoned results still fell back to withholding).

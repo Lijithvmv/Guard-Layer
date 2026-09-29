@@ -39,6 +39,18 @@ allow_egress = { send_money = ["iban"] } # data types a tool may send out (exemp
 store = "memory"                        # or "file", with dir = "...", for checks in separate processes
 ttl_seconds = 86400
 
+[labels]                                # information flow (see Concepts: Labels)
+default_integrity = "trusted"           # or "untrusted": undeclared tool results count as untrusted
+sources = { get_customer = { confidentiality = "private" }, read_issue = { integrity = "untrusted" } }
+sinks = { post_comment = { max_confidentiality = "public" }, write_file = { accepts_untrusted = false } }
+destinations = [{ tool = "send_email", argument = "to", match = "*@mycompany.com", max_confidentiality = "private" }]
+
+[[tools.arguments]]                     # allowed values for one argument (globs; lists split)
+tool = "send_email"
+argument = "to"
+allow = ["*@mycompany.com"]
+action = "review"
+
 [audit]                        # tamper-evident audit log
 path = "guardlayer-audit.jsonl"         # "{hostname}" and "{pid}" are filled in
 min_verdict = "flag"

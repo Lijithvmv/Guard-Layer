@@ -51,6 +51,11 @@ assert r.verdict is Verdict.REVIEW and {d.rule for d in r.detections} == {"trife
     `after_injection` still holds the call for review. The trade-off: an injection that isn't detected can direct that tool
     to send that kind of data.
 
+!!! tip "Finer control with labels"
+    The session rules above work with no configuration. To say which tools return private business data, which tools
+    may receive it, which exact recipients or URLs are allowed, and to carry labels through files, see
+    [Labels and information flow](labels.md).
+
 ## Storage and privacy
 
 Sensitive values are stored only as **fingerprints** (length, a 16-bit prefix check and a truncated SHA-256), so session
