@@ -387,3 +387,32 @@ def test_config_audit_path_per_process(tmp_path):
     guard.scan_input(ATTACK)
     expected = tmp_path / f"audit-{socket.gethostname()}-{os.getpid()}.jsonl"
     assert expected.exists() and verify_audit_log(expected).ok
+
+
+def test_audit_report_shows_what_observe_mode_would_have_done(tmp_path, capsys):
+    from guardlayer import AuditLogger
+    from guardlayer.audit import audit_report
+    from guardlayer.cli import main
+
+    log = tmp_path / "audit.jsonl"
+    observe = GuardLayer.from_preset("observe")
+    observe.add_hook(AuditLogger(log))
+    s = observe.session("pilot")
+    s.scan_tool_call("Bash", {"command": "rm -rf ~"})
+    s.scan_tool_call("Bash", {"command": "git push --force"})
+    s.scan_tool_call("Bash", {"command": "pytest -q"})
+    enforce = GuardLayer()
+    enforce.add_hook(AuditLogger(log))
+    enforce.scan_output("key AKIAIOSFODNN7EXAMPLE")
+
+    r = audit_report(log)
+    assert r["entries"] == 4 and r["sessions"] == 1 and r["redacted"] == 1
+    assert r["notable"] == 2 and r["observed_only"] == 2  # nothing was enforced in observe mode
+    assert r["by_rule"]["destructive_command"]["decisions"] == {"block": 1}
+    assert r["by_rule"]["risky_command"]["decisions"] == {"review": 1}
+    assert audit_report(log, min_verdict="block")["notable"] == 1
+    assert r["latest"][0]["rules"] == ["risky_command"]  # newest first
+
+    assert main(["audit", "report", str(log)]) == 0
+    out = capsys.readouterr().out
+    assert "destructive_command" in out and "(observed)" in out and "1 with secrets" in out

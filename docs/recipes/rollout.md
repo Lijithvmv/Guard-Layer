@@ -18,7 +18,8 @@ Nothing is blocked, held or redacted. Every result carries a `shadow_verdict`, a
 ## 2. Look at what would have happened
 
 ```bash
-guardlayer evidence export guardlayer-audit.jsonl          # a summary by control and verdict
+guardlayer audit report guardlayer-audit.jsonl --since-days 1   # by rule, by tool, latest; "(observed)" = would have fired
+guardlayer evidence export guardlayer-audit.jsonl               # the same log as control-mapped evidence
 ```
 
 Or read the log directly: each line has `verdict`, `shadow_verdict`, `observed_rules`, `categories` and `direction`. Look

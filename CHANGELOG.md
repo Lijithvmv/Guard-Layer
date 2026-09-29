@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`guardlayer audit report`**: what GuardLayer decided, or in observe mode would have decided, by rule and by tool, with
+  the latest notable entries and a count of redactions (`--since-days`, `--min`, `--json`). Built for pilots: run it daily
+  and sort each entry into correct, false alarm or unsure.
+- **Docs: "One-week pilot on your own work"**: install from PyPI into its own environment, observe-mode config, hook on one
+  project, a five-minute daily review, when to start enforcing, and what to report back.
+
 ## [0.6.2] - 2026-09-29
 
 ### Security

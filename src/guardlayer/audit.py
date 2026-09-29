@@ -23,6 +23,7 @@ import hashlib
 import json
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
@@ -249,3 +250,78 @@ def verify_audit_log(
     if expected_head is not None and prev != expected_head:
         return AuditVerification(False, count, prev, signed, "head hash differs from the expected head (log truncated or replaced)", None)
     return AuditVerification(True, count, prev if count else None, signed)
+
+
+# ------------------------------------------------------------------------------------------ review report
+_ORDER = {"allow": 0, "flag": 1, "review": 2, "block": 3}
+
+
+def audit_report(path: str | Path, *, since_days: float | None = None, min_verdict: str = "flag", latest: int = 15) -> dict[str, Any]:
+    """Summarise what GuardLayer decided, or would have decided in observe mode, for a human reviewer.
+
+    For each entry the effective decision is the stricter of `verdict` and `shadow_verdict`, so an observe-mode pilot
+    shows what enforcement would have done. Counts by rule and by tool, and the latest notable entries, are returned;
+    raw text is never needed (entries hold only hashes unless `include_text` was on).
+    """
+    threshold = _ORDER[str(Verdict(min_verdict).value)]
+    cutoff = time.time() - since_days * 86400 if since_days else None
+    total, notable, observed_only, redacted, sessions = 0, 0, 0, 0, set()
+    by_rule: dict[str, dict[str, Any]] = {}
+    by_tool: dict[str, int] = {}
+    recent: list[dict[str, Any]] = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            if cutoff and entry.get("timestamp", 0) < cutoff:
+                continue
+            total += 1
+            meta = entry.get("metadata") or {}
+            if meta.get("session_id"):
+                sessions.add(meta["session_id"])
+            redacted += bool(entry.get("modified"))
+            enforced = entry.get("verdict", "allow")
+            shadow = entry.get("shadow_verdict") or "allow"
+            effective = max(enforced, shadow, key=lambda v: _ORDER.get(v, 0))
+            if _ORDER.get(effective, 0) < threshold:
+                continue
+            notable += 1
+            only_observed = _ORDER.get(enforced, 0) < threshold
+            observed_only += only_observed
+            tool = meta.get("tool") or entry.get("direction", "?")
+            by_tool[tool] = by_tool.get(tool, 0) + 1
+            rules = sorted({d.get("rule", "?") for d in entry.get("detections", [])})
+            for rule in rules:
+                slot = by_rule.setdefault(rule, {"count": 0, "decisions": {}, "tools": set()})
+                slot["count"] += 1
+                slot["decisions"][effective] = slot["decisions"].get(effective, 0) + 1
+                slot["tools"].add(tool)
+            recent.append({"time": entry.get("timestamp"), "session": meta.get("session_id"), "tool": tool,
+                           "direction": entry.get("direction"), "decision": effective, "observed_only": only_observed,
+                           "rules": rules, "why": next((d.get("message") for d in entry.get("detections", [])), "")})  # fmt: skip
+    for slot in by_rule.values():
+        slot["tools"] = sorted(slot["tools"])
+    return {"entries": total, "sessions": len(sessions), "notable": notable, "observed_only": observed_only, "redacted": redacted,
+            "by_rule": dict(sorted(by_rule.items(), key=lambda kv: -kv[1]["count"])),
+            "by_tool": dict(sorted(by_tool.items(), key=lambda kv: -kv[1])), "latest": recent[-latest:][::-1]}  # fmt: skip
+
+
+def format_audit_report(report: dict[str, Any]) -> str:
+    lines = [f"{report['entries']} entries, {report['sessions']} sessions; {report['notable']} notable "
+             f"({report['observed_only']} only observed: what enforcement would have done); "
+             f"{report['redacted']} with secrets or personal data redacted"]  # fmt: skip
+    if report["by_rule"]:
+        lines += ["", "By rule:"]
+        for rule, slot in report["by_rule"].items():
+            decisions = ", ".join(f"{k} {v}" for k, v in sorted(slot["decisions"].items(), key=lambda kv: -_ORDER.get(kv[0], 0)))
+            lines.append(f"  {rule:32} {slot['count']:5}   {decisions}   tools: {', '.join(slot['tools'])}")
+    if report["latest"]:
+        lines += ["", "Latest:"]
+        for e in report["latest"]:
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(e["time"] or 0))
+            tag = " (observed)" if e["observed_only"] else ""
+            lines.append(f"  {when}  {e['decision']:6}{tag:11} {e['tool']:14} {', '.join(e['rules'])}")
+            if e["why"]:
+                lines.append(f"      {e['why']}")
+    return "\n".join(lines)

@@ -94,6 +94,12 @@ def main(argv: list[str] | None = None) -> int:
     verify.add_argument("--expected-head", help="A head hash recorded earlier, to detect a truncated log.")
     keygen = audit_sub.add_parser("keygen", help="Generate an Ed25519 signing key pair: PREFIX.key and PREFIX.pub.")
     keygen.add_argument("prefix")
+    report = audit_sub.add_parser("report", help="What GuardLayer decided (or would have, in observe mode): by rule, by tool, latest.")
+    report.add_argument("path")
+    report.add_argument("--since-days", type=float, help="Only entries from the last N days.")
+    report.add_argument("--min", default="flag", choices=["flag", "review", "block"], help="Lowest decision to include.")
+    report.add_argument("--latest", type=int, default=15, help="How many recent notable entries to list.")
+    report.add_argument("--json", action="store_true", help="Machine-readable output.")
 
     evidence = sub.add_parser("evidence", help="Control-mapped compliance evidence from an audit log.")
     evidence_sub = evidence.add_subparsers(dest="evidence_command", required=True)
@@ -222,8 +228,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _audit(args: argparse.Namespace) -> int:
-    from guardlayer.audit import AuditSigner, verify_audit_log
+    from guardlayer.audit import AuditSigner, audit_report, format_audit_report, verify_audit_log
 
+    if args.audit_command == "report":
+        data = audit_report(args.path, since_days=args.since_days, min_verdict=args.min, latest=args.latest)
+        print(json.dumps(data, indent=2) if args.json else format_audit_report(data))
+        return 0
     if args.audit_command == "keygen":
         key, pub = Path(f"{args.prefix}.key"), Path(f"{args.prefix}.pub")
         if key.exists() or pub.exists():

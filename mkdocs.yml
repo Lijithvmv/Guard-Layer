@@ -75,6 +75,7 @@ nav:
   - Getting started:
       - Install: getting-started/install.md
       - Quickstart: getting-started/quickstart.md
+      - One-week pilot on your own work: getting-started/pilot.md
   - Concepts:
       - How a verdict is reached: concepts/how-it-works.md
       - Guarding agent actions: concepts/agents.md
