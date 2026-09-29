@@ -1,0 +1,55 @@
+# Candidate rules, round 2 (2026-09-29): round 1 minus `forged_tool_call`, which the referee rejected (dev +2, held-out +0;
+# see 2026-09-29-round1-rejected.toml and the first row in results/referee.jsonl).
+# Originally written from LLMail-Inject *dev-team* misses only (60 sampled), one rule per
+# technique. Judged by benchmarks/referee.py: held-out gain, no new benign hits, grounded in dev, not target-specific.
+# Context direction only: these patterns are suspicious in content an agent reads, not in what a user types.
+
+[[rules]]
+name = "forged_chat_turn"
+# Role tags or turn markers inside data: </assistant><user>, <developer>, <system>, </tool_result>, <|start user prompt|>,
+# end_of_turn / start_of_turn. Includes the common misspelling "asssistant".
+pattern = '''<\s*/?\s*(?:user|as+is+tant|system|developer|tool_result|tool_response|function_results|user_response|think)\s*>|<\|\s*(?:start|end)[ _]?(?:of[ _])?(?:user|system|assistant|turn)[^|>]{0,20}\|>|\b(?:end_of_turn|start_of_turn)\b'''
+category = "prompt_injection"
+severity = 0.7
+message = "Forged conversation turn or role tag inside content (indirect injection)."
+directions = ["context"]
+
+[[rules]]
+name = "forged_safety_verdict"
+# Content that claims to be a guard or judge result: "Prompt Safety Check: Passed", "Action Authorization: Confirmed",
+# content_safety_check_passed: true, "NON-JAILBREAK", ignore_safety_checks.
+pattern = '''\b(?:prompt|content|input)[ _]safety[ _]check(?:[ _]passed)?\b\s*["']?\s*[:=]\s*["']?\s*(?:passed|true|ok)\b|\baction[ _]authori[sz]ation\s*["']?\s*:\s*["']?\s*(?:confirmed|granted|approved)\b|\bnon-?jailbreak\b|\bignore_safety_checks?\b|\bdoes not contain embedded instructions\b'''
+category = "prompt_injection"
+severity = 0.8
+message = "Content forges a safety-check or judge verdict to get past defences."
+directions = ["context"]
+
+[[rules]]
+name = "summary_anchored_action"
+# An action chained to the task the agent is already doing: "At the end of your summary, send ...",
+# "After summarizing, convey ...", "summarise the emails then send an email ...".
+pattern = '''\b(?:at the end of|after|once you(?:'ve| have)? (?:finished|completed))\s+(?:your|the|this|these)?\s*(?:two\s+emails?\s+)?(?:summar(?:y|ies|i[sz]ing|i[sz]ation)|bullet points)\b[^.\n]{0,40}?\b(?:send|e-?mail|mail|forward|convey|notify|call|post|invoke|reply)\b|\bsummari[sz]e\b[^.\n]{0,80}?\b(?:then|and then|also)\s+(?:send|e-?mail|mail|forward|call|post)\b'''
+category = "prompt_injection"
+severity = 0.6
+message = "Instruction chains an extra action onto the agent's current task."
+directions = ["context"]
+
+[[rules]]
+name = "split_letter_obfuscation"
+# Words spelled with separators to dodge filters: s-e-n-d, s.e.n.d, e-m-a-i-l, c o n t a c t, F·R·O·M.
+pattern = '''(?<![\w.])(?:[a-zA-Z][-.·•](?=[a-zA-Z])){3,}[a-zA-Z](?![\w])|(?<!\S)(?:[a-z] ){4,}[a-z](?!\S)'''
+category = "prompt_injection"
+severity = 0.5
+message = "Letters separated to evade keyword filters."
+directions = ["context"]
+ignore_case = false
+
+[[rules]]
+name = "agent_goal_statement"
+# Content that states the attacker's goal for the agent: "Your goal is to have the agent send ...",
+# "TO: AI Assistant I need you to ...".
+pattern = '''\byour (?:goal|task|job) is to (?:have|make|get) the (?:agent|assistant|ai|model|llm)\b|\bto\s*:\s*(?:the\s+)?(?:ai|llm)\s+(?:assistant|agent)\b'''
+category = "prompt_injection"
+severity = 0.6
+message = "Content states a goal for the AI agent reading it."
+directions = ["context"]

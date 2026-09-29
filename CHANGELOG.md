@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Detection-rule referee** (`benchmarks/referee.py`): a candidate rule pack ships only if it (1) detects more held-out
+  LLMail-Inject attacks, (2) adds no hits on any benign set (4,509 public prompts, AgentDojo environment texts, LLMail benign
+  emails), (3) fires on the dev attacks it was written from, and (4) names nothing specific to the challenge's goal. Every
+  rule is also judged alone, and every run, accepted or rejected, is appended to `benchmarks/results/referee.jsonl`.
+- **Held-out split** for LLMail-Inject by attacker team (60% of 99 teams held out, fixed on 2026-09-29 before any miss was
+  inspected; an email sent by any held-out team is held out). `llmail_eval.py` now reports held-out numbers separately.
+- `benchmarks/agentdojo_benign_texts.py`: exports AgentDojo's benign environment texts (404) for false-positive tests.
+- **Five context rules accepted by the referee** (round 1, written from 60 sampled dev-team misses): `forged_chat_turn`,
+  `forged_safety_verdict`, `summary_anchored_action`, `split_letter_obfuscation`, `agent_goal_statement`. On held-out teams,
+  rules-only detection of attacks that hijacked the model went from 10.4% to 44.5% (1,719 emails), and of those that also
+  evaded the challenge's defenses from 9.3% to 38.5% (161); still no hits on 5,151 benign texts. A sixth candidate,
+  `forged_tool_call`, was rejected (dev +2, held-out +0). Typed input is unaffected (public benchmark unchanged).
+
 ## [0.6.1] - 2026-09-29
 
 First release published to PyPI (0.5.0 and 0.6.0 were tagged on GitHub only; their publish step failed before trusted publishing was set up).

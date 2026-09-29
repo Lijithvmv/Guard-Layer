@@ -163,6 +163,33 @@ DEFAULT_RULES: list[Rule] = [
         r"\(\s*system[_ ](message|prompt|instructions?)\s*\)|#{2,}\s*\(?\s*system[_ ](message|prompt)\b",
         PI, 0.7, "Forged system-message marker inside content.", _CTX,
     ),
+    # --- Accepted by the referee on 2026-09-29 (benchmarks/referee.py; written from LLMail-Inject dev-team misses,
+    #     judged on held-out teams; see benchmarks/candidates/2026-09-29.toml) -------------------------------------
+    Rule(
+        'forged_chat_turn',
+        r'''<\s*/?\s*(?:user|as+is+tant|system|developer|tool_result|tool_response|function_results|user_response|think)\s*>|<\|\s*(?:start|end)[ _]?(?:of[ _])?(?:user|system|assistant|turn)[^|>]{0,20}\|>|\b(?:end_of_turn|start_of_turn)\b''',
+        PI, 0.7, 'Forged conversation turn or role tag inside content (indirect injection).', _CTX,
+    ),
+    Rule(
+        'forged_safety_verdict',
+        r'''\b(?:prompt|content|input)[ _]safety[ _]check(?:[ _]passed)?\b\s*["']?\s*[:=]\s*["']?\s*(?:passed|true|ok)\b|\baction[ _]authori[sz]ation\s*["']?\s*:\s*["']?\s*(?:confirmed|granted|approved)\b|\bnon-?jailbreak\b|\bignore_safety_checks?\b|\bdoes not contain embedded instructions\b''',
+        PI, 0.8, 'Content forges a safety-check or judge verdict to get past defences.', _CTX,
+    ),
+    Rule(
+        'summary_anchored_action',
+        r'''\b(?:at the end of|after|once you(?:'ve| have)? (?:finished|completed))\s+(?:your|the|this|these)?\s*(?:two\s+emails?\s+)?(?:summar(?:y|ies|i[sz]ing|i[sz]ation)|bullet points)\b[^.\n]{0,40}?\b(?:send|e-?mail|mail|forward|convey|notify|call|post|invoke|reply)\b|\bsummari[sz]e\b[^.\n]{0,80}?\b(?:then|and then|also)\s+(?:send|e-?mail|mail|forward|call|post)\b''',
+        PI, 0.6, "Instruction chains an extra action onto the agent's current task.", _CTX,
+    ),
+    Rule(
+        'split_letter_obfuscation',
+        r'''(?<![\w.])(?:[a-zA-Z][-.·•](?=[a-zA-Z])){3,}[a-zA-Z](?![\w])|(?<!\S)(?:[a-z] ){4,}[a-z](?!\S)''',
+        PI, 0.5, 'Letters separated to evade keyword filters.', _CTX, False,
+    ),
+    Rule(
+        'agent_goal_statement',
+        r'''\byour (?:goal|task|job) is to (?:have|make|get) the (?:agent|assistant|ai|model|llm)\b|\bto\s*:\s*(?:the\s+)?(?:ai|llm)\s+(?:assistant|agent)\b''',
+        PI, 0.6, 'Content states a goal for the AI agent reading it.', _CTX,
+    ),
     Rule(
         "hidden_html_instruction",
         r"<!--[^>]{0,300}?\b(ignore|instructions?|assistant|ai|system prompt|you must)\b",

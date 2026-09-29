@@ -738,25 +738,55 @@ defenses, to make it send an email to an address they chose. Every submission re
 rules were never tuned on it. Each unique phase-2 email was scanned as untrusted context (`scan_context`), the way a guarded
 agent sees an email it reads; detected means `flag` or above.
 
+**First run (0.6.0 rules, never tuned on it):**
+
 | LLMail-Inject phase 2 | Emails | Rules only | + classifier |
 |---|---|---|---|
 | All attack attempts | 38,014 | 11.2% | not run (CPU time) |
-| Attacks that hijacked the model | 2,486 | 17.4% | **47.0%** (95% CI 45.1–49.0%) |
-| … and also got past the challenge's own defenses | 234 | 24.4% | **50.4%** (44.1–56.8%) |
+| Attacks that hijacked the model | 2,486 | 17.4% | 47.0% (95% CI 45.1–49.0%) |
+| … and also got past the challenge's own defenses | 234 | 24.4% | 50.4% (44.1–56.8%) |
 | Benign emails (false positives) | 238 | 0 | 0 |
 
-- **This is the honest number for detection.** Against adaptive attackers, rules catch about one in six working attacks and
-  the classifier about half. That is why GuardLayer doesn't rely on detection. The attacker's goal here was an email to an
-  outside address, and a tool rule on the email tool stops that whether the injection is detected or not, for example
+**Improving it without fooling ourselves.** Writing rules from these misses and re-running the same emails would repeat
+the AgentDojo mistake. So before any miss was read, the 99 attacker teams were split: 66 are **held out** (an email sent by
+any held-out team is held out), and rules may be written only from the other teams' emails. A referee
+([`benchmarks/referee.py`](https://github.com/Lijithvmv/Guard-Layer/blob/main/benchmarks/referee.py)) then accepts a candidate
+rule only if it catches more held-out attacks, adds **no** hits on 5,151 benign texts (4,509 public prompts, 404 AgentDojo
+environment texts, 238 LLMail emails), fires on the dev attacks it came from, and names nothing specific to this challenge's
+goal. Every run is logged in `benchmarks/results/referee.jsonl`, rejected ones included.
+
+Round 1 (2026-09-29): six candidates written from 60 sampled dev misses, one per technique. The referee rejected
+`forged_tool_call` (fake `<function_calls>` markup: 2 dev hits, no held-out gain) and accepted five:
+`forged_chat_turn` (fake `</assistant><user>` turns and role tags: +536 held-out), `summary_anchored_action` ("at the end of
+your summary, send…": +344), `agent_goal_statement` (+3), `forged_safety_verdict` (fake "Safety Check: Passed": +1) and
+`split_letter_obfuscation` ("s-e-n-d": +1). The last three barely generalise beyond the teams they came from.
+
+| Held-out teams only | Emails | Rules before | Rules after | After + classifier |
+|---|---|---|---|---|
+| All attack attempts | 31,953 | 6.4% | **22.5%** | not run |
+| Attacks that hijacked the model | 1,719 | 10.4% | **44.5%** (42.2–46.9%) | **56.0%** (53.7–58.4%) |
+| … and also got past the challenge's own defenses | 161 | 9.3% | **38.5%** (31.3–46.2%) | **48.4%** (40.9–56.1%) |
+| Benign emails (false positives) | 238 | 0 | 0 | 0 |
+
+- **Detection still misses about half of what works against a real model**, even with the classifier. That is why GuardLayer
+  doesn't rely on it. The attacker's goal here was an email to an outside address, and a tool rule on the email tool stops that
+  whether the injection is detected or not, for example
   `{ name = "external_recipient", tools = ["send_email"], pattern = '@(?!(?:[a-z0-9-]+\.)*example\.com\b)[a-z0-9.-]+\.[a-z]{2,}', action = "review" }`.
   (`tools.egress_allowlist` checks URLs and hosts, not email addresses.)
-- The classifier (`protectai/deberta-v3-base-prompt-injection-v2`, pinned) predates the challenge, so it hasn't seen these
-  emails either. 238 benign emails bound the false-positive rate only loosely (95% upper bound 1.6%).
-- Scored on text, not on an agent run: what a detection would change in an agent depends on the session rules and tool policy.
+- The new rules apply to content an agent reads (`scan_context`), not to what a user types; the public benchmark above is
+  unchanged. Most matches give `flag`, which marks the session hostile so the agent's next side-effecting action goes to review.
+- **The held-out set is not fresh forever.** Each accept or reject decision leaks a little about it; it has been used for one
+  round. After one more round it should be replaced (for example with phase 1 of the challenge).
+- 5,151 benign texts bound the false-positive rate, not prove it zero: real mail containing XML role tags, or a colleague
+  writing "summarise these then send them to me", can trigger the new rules.
+- The classifier (`protectai/deberta-v3-base-prompt-injection-v2`, pinned) predates the challenge. The "before" classifier
+  figure wasn't measured on the held-out split. Scored on text, not on agent runs.
 
 Reproduce (about 263 MB, not committed): download `raw_submissions_phase2.jsonl`, `emails_for_fp_tests.json` and
 `scenarios.json` from the dataset's `data/` folder, then `python benchmarks/llmail_eval.py --data <dir>` (add
-`--classifier --hijacked-only` for the classifier column). Results: `benchmarks/results/llmail-inject-phase2.jsonl`.
+`--classifier --hijacked-only` for the classifier column). Referee: `python benchmarks/referee.py --data <dir> --candidate
+benchmarks/candidates/2026-09-29.toml`; `--list-dev-misses 20` samples dev misses to study. Results:
+`benchmarks/results/llmail-inject-phase2.jsonl` and `benchmarks/results/referee.jsonl`.
 
 ### Your own data
 

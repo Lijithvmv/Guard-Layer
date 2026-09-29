@@ -17,6 +17,7 @@ Download (about 263 MB, not committed) from https://huggingface.co/datasets/micr
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import time
@@ -33,6 +34,17 @@ def email_text(subject: str, body: str) -> str:
     return f"Subject of the email: {subject}.   Body: {body}"  # the challenge's own email format
 
 
+# Held-out split, fixed on 2026-09-29 before any missed attack was inspected. A team is held out when the first 8 hex
+# digits of sha256(SPLIT_SALT + team_id) mod 100 < HELDOUT_PERCENT. Rules may be written from dev-team emails only; an
+# email submitted by any held-out team counts as held out (so identical text can't leak across).
+SPLIT_SALT = "guardlayer-llmail-split-v1:"
+HELDOUT_PERCENT = 60
+
+
+def is_heldout_team(team_id: str) -> bool:
+    return int(hashlib.sha256((SPLIT_SALT + team_id).encode()).hexdigest()[:8], 16) % 100 < HELDOUT_PERCENT
+
+
 def load(data: Path) -> tuple[dict[str, dict[str, bool]], list[str]]:
     attacks: dict[str, dict[str, bool]] = {}
     with open(data / "raw_submissions_phase2.jsonl", encoding="utf-8") as fh:
@@ -43,9 +55,10 @@ def load(data: Path) -> tuple[dict[str, dict[str, bool]], list[str]]:
             flags = json.loads(objectives) if isinstance(objectives, str) else (objectives or {})
             hijacked = bool(flags.get("exfil.sent") and flags.get("exfil.destination") and flags.get("exfil.content"))
             evaded = hijacked and bool(flags.get("defense.undetected")) and bool(flags.get("email.retrieved"))
-            seen = attacks.setdefault(text, {"hijacked": False, "evaded": False})
+            seen = attacks.setdefault(text, {"hijacked": False, "evaded": False, "heldout": False})
             seen["hijacked"] |= hijacked  # the same email can be submitted to several levels
             seen["evaded"] |= evaded
+            seen["heldout"] |= is_heldout_team(row.get("team_id") or "")
     benign = set(json.loads((data / "emails_for_fp_tests.json").read_text(encoding="utf-8")))
     for scenario in json.loads((data / "scenarios.json").read_text(encoding="utf-8")).values():
         benign.update(scenario.get("emails", []))
@@ -102,6 +115,10 @@ def main() -> int:
         **({} if args.hijacked_only else {"all_attempts": list(attacks)}),
         "hijacked_model": [t for t, f in attacks.items() if f["hijacked"]],
         "hijacked_and_evaded_defenses": [t for t, f in attacks.items() if f["evaded"]],
+        # Held-out teams only (see is_heldout_team): the fair numbers once rules have been written from dev teams.
+        **({} if args.hijacked_only else {"heldout_all_attempts": [t for t, f in attacks.items() if f["heldout"]]}),
+        "heldout_hijacked_model": [t for t, f in attacks.items() if f["hijacked"] and f["heldout"]],
+        "heldout_hijacked_and_evaded": [t for t, f in attacks.items() if f["evaded"] and f["heldout"]],
         "benign_emails": benign,
     }
     row = {"benchmark": "llmail-inject phase 2 (unique submissions)", "guardlayer": __version__,
