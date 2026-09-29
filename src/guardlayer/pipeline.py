@@ -349,7 +349,8 @@ class GuardLayer:
         state = self._load_session(session)
         if state is not None:
             metadata["session_id"] = state.id
-            metadata["session"] = {"untrusted": state.untrusted, "hostile": state.hostile, "sensitive": state.sensitive}
+            metadata["session"] = {"untrusted": state.untrusted, "hostile": state.hostile, "sensitive": state.sensitive,
+                                   "label": state.label.to_dict()}  # fmt: skip
             extra += taint_detections(self.session_policy, state, tool_name, caps, tagged, arguments_text, remote=remote)
         if scan_content is None:
             scan_content = self.tool_policy.can_act(tool_name)

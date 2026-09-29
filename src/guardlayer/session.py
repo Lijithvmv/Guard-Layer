@@ -51,6 +51,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from guardlayer.labels import Confidentiality, Integrity, Label
 from guardlayer.models import Action, Category, Detection, ScanResult, Verdict
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -157,12 +158,20 @@ class SessionState:
     def sensitive(self) -> bool:
         return bool(self.sensitive_sources)
 
+    @property
+    def label(self) -> Label:
+        """The session's context label: the most restrictive label of everything it has read (see `guardlayer.labels`)."""
+        integrity = Integrity.HOSTILE if self.hostile else Integrity.UNTRUSTED if self.untrusted else Integrity.TRUSTED
+        confidentiality = Confidentiality.RESTRICTED if self.sensitive else Confidentiality.PUBLIC
+        return Label(integrity, confidentiality)
+
     def summary(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "untrusted": self.untrusted,
             "hostile": self.hostile,
             "sensitive": self.sensitive,
+            "label": self.label.to_dict(),
             "untrusted_sources": self.untrusted_sources[-5:],
             "hostile_sources": self.hostile_sources[-5:],
             "sensitive_sources": self.sensitive_sources[-5:],
