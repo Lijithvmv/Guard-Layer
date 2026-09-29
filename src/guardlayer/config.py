@@ -36,6 +36,11 @@ Example `guardlayer.toml`:
     allow_egress = { send_money = ["iban"] }  # data types a tool may send out (exempt from egress/trifecta)
     store = "memory"               # or "file" with dir = "..." (one process per check, e.g. hooks)
 
+    [labels]                       # information-flow labels (see guardlayer.labels)
+    default_integrity = "trusted"  # or "untrusted": every tool result is untrusted unless in trusted_tools
+    sources = { get_customer = { confidentiality = "private" }, read_issue = { integrity = "untrusted" } }
+    sinks = { post_comment = { max_confidentiality = "public" }, write_file = { accepts_untrusted = false } }
+
     [audit]                        # tamper-evident JSONL audit log
     path = "guardlayer-audit.jsonl"  # "audit-{hostname}-{pid}.jsonl" when several processes log
     min_verdict = "flag"
@@ -210,7 +215,11 @@ def build_guard(source: str | Path | Mapping[str, Any] | None = None) -> GuardLa
             continue
         scanners.append(factory(options, canaries, base_dir))
 
-    session_policy, session_store = _session(config.get("session", {}), base_dir)
+    labels_cfg = dict(config.get("labels", {}))
+    unknown = set(labels_cfg) - {"sources", "sinks", "default_integrity"}
+    if unknown:
+        raise ValueError(f"unknown [labels] key(s) {sorted(unknown)}; use sources, sinks, default_integrity")
+    session_policy, session_store = _session({**config.get("session", {}), **labels_cfg}, base_dir)
     guard = GuardLayer(
         scanners,
         policy=policy,

@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from guardlayer.labels import Confidentiality, Integrity, Label
+from guardlayer.labels import combine as combine_labels
 from guardlayer.models import Action, Category, Detection, ScanResult, Verdict
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -142,6 +143,7 @@ class SessionState:
     untrusted_sources: list[str] = field(default_factory=list)  # where untrusted content came from
     hostile_sources: list[str] = field(default_factory=list)  # sources whose content held an injection
     sensitive_sources: list[str] = field(default_factory=list)  # where sensitive data was seen
+    private_sources: list[str] = field(default_factory=list)  # sources declared private (business data, not secrets)
     fingerprints: list[str] = field(default_factory=list)  # hashes of sensitive values
     sensitive_kinds: list[str] = field(default_factory=list)  # rules that found them (iban, credential_file, ...)
     events: int = 0
@@ -162,7 +164,9 @@ class SessionState:
     def label(self) -> Label:
         """The session's context label: the most restrictive label of everything it has read (see `guardlayer.labels`)."""
         integrity = Integrity.HOSTILE if self.hostile else Integrity.UNTRUSTED if self.untrusted else Integrity.TRUSTED
-        confidentiality = Confidentiality.RESTRICTED if self.sensitive else Confidentiality.PUBLIC
+        confidentiality = (
+            Confidentiality.RESTRICTED if self.sensitive else Confidentiality.PRIVATE if self.private_sources else Confidentiality.PUBLIC
+        )
         return Label(integrity, confidentiality)
 
     def summary(self) -> dict[str, Any]:
@@ -188,7 +192,8 @@ class SessionState:
 
     def merge(self, other: SessionState) -> None:
         """Union another copy of this session into this one (state only grows, so merging is safe)."""
-        for name, cap in (("untrusted_sources", MAX_SOURCES), ("hostile_sources", MAX_SOURCES), ("sensitive_sources", MAX_SOURCES), ("fingerprints", MAX_FINGERPRINTS), ("sensitive_kinds", MAX_SOURCES)):
+        for name, cap in (("untrusted_sources", MAX_SOURCES), ("hostile_sources", MAX_SOURCES), ("sensitive_sources", MAX_SOURCES), ("private_sources", MAX_SOURCES),
+                          ("fingerprints", MAX_FINGERPRINTS), ("sensitive_kinds", MAX_SOURCES)):
             setattr(self, name, _add(getattr(other, name), getattr(self, name), cap))
         self.created = min(self.created, other.created)
         self.updated = max(self.updated, other.updated)
@@ -340,7 +345,12 @@ DEFAULT_SESSION_ACTIONS: dict[str, Action] = {
     "sensitive_data_egress": Action.BLOCK,
     "trifecta": Action.REVIEW,
     "after_injection": Action.REVIEW,
+    # Label rules (0.7): only fire for tools declared as sinks in `sinks`.
+    "untrusted_to_protected_sink": Action.REVIEW,
+    "confidentiality_exceeds_sink": Action.REVIEW,
 }
+_SOURCE_KEYS = {"integrity", "confidentiality"}
+_SINK_KEYS = {"accepts_untrusted", "max_confidentiality"}
 
 
 @dataclass
@@ -356,6 +366,13 @@ class SessionPolicy:
       `email`) that tool may send out. Those types don't trigger `sensitive_data_egress`, nor
       `trifecta` when they are the only sensitive data in the session. It also means an
       undetected injection could direct that tool to send that data type; keep it narrow.
+    * `sources`: tool-name glob -> the label of what that tool returns, e.g.
+      `{"get_customer": {"confidentiality": "private"}, "read_issue": {"integrity": "untrusted"}}`.
+      Declarations only *raise* the session label; content detections can raise it further.
+    * `sinks`: tool-name glob -> what that tool accepts: `accepts_untrusted = false` (untrusted
+      content must not drive it) and/or `max_confidentiality` (the most sensitive data it may receive).
+    * `default_integrity`: `"trusted"` (default: local, read-only tools are trusted) or
+      `"untrusted"` (every tool result is untrusted unless listed in `trusted_tools`).
     """
 
     enabled: bool = True
@@ -364,6 +381,9 @@ class SessionPolicy:
     trusted_tools: list[str] = field(default_factory=list)
     hostile_min_verdict: Verdict = Verdict.FLAG
     allow_egress: dict[str, list[str]] = field(default_factory=dict)
+    sources: dict[str, dict[str, Any]] = field(default_factory=dict)
+    sinks: dict[str, dict[str, Any]] = field(default_factory=dict)
+    default_integrity: str = "trusted"
 
     def __post_init__(self) -> None:
         merged = dict(DEFAULT_SESSION_ACTIONS)
@@ -377,6 +397,21 @@ class SessionPolicy:
             if isinstance(kinds, str) or not all(isinstance(k, str) for k in kinds):
                 raise ValueError(f"allow_egress[{pattern!r}] must be a list of data types, e.g. [\"iban\"]")
         self.allow_egress = {p: list(k) for p, k in self.allow_egress.items()}
+        if self.default_integrity not in ("trusted", "untrusted"):
+            raise ValueError('default_integrity must be "trusted" or "untrusted"')
+        for pattern, spec in self.sources.items():
+            unknown = set(spec) - _SOURCE_KEYS
+            if unknown:
+                raise ValueError(f"sources[{pattern!r}]: unknown key(s) {sorted(unknown)}; use {sorted(_SOURCE_KEYS)}")
+            if Integrity(spec.get("integrity", "trusted")) is Integrity.HOSTILE:
+                raise ValueError(f"sources[{pattern!r}]: 'hostile' is set by detection, not declared")
+            Confidentiality(spec.get("confidentiality", "public"))
+        for pattern, spec in self.sinks.items():
+            unknown = set(spec) - _SINK_KEYS
+            if unknown:
+                raise ValueError(f"sinks[{pattern!r}]: unknown key(s) {sorted(unknown)}; use {sorted(_SINK_KEYS)}")
+            if "max_confidentiality" in spec:
+                Confidentiality(spec["max_confidentiality"])
 
     def _matches(self, tool: str | None, patterns: list[str]) -> bool:
         return tool is not None and any(fnmatch.fnmatchcase(tool, p) for p in patterns)
@@ -390,10 +425,35 @@ class SessionPolicy:
             return frozenset()
         return frozenset(k for p, kinds in self.allow_egress.items() if fnmatch.fnmatchcase(tool, p) for k in kinds)
 
+    def source_label(self, tool: str | None) -> Label | None:
+        """The declared label of what `tool` returns (most restrictive over matching patterns), or None."""
+        if tool is None:
+            return None
+        found = [Label(s.get("integrity", "trusted"), s.get("confidentiality", "public"))
+                 for p, s in self.sources.items() if fnmatch.fnmatchcase(tool, p)]  # fmt: skip
+        return combine_labels(*found) if found else None
+
+    def sink(self, tool: str | None) -> tuple[bool, Confidentiality | None]:
+        """(accepts_untrusted, max_confidentiality) for `tool`; the strictest over matching patterns."""
+        accepts, cap = True, None
+        if tool is not None:
+            for p, spec in self.sinks.items():
+                if fnmatch.fnmatchcase(tool, p):
+                    accepts = accepts and bool(spec.get("accepts_untrusted", True))
+                    if "max_confidentiality" in spec:
+                        level = Confidentiality(spec["max_confidentiality"])
+                        cap = level if cap is None else min(cap, level)
+        return accepts, cap
+
     def is_untrusted(self, tool: str | None, can_reach_network: bool) -> bool:
         if tool is None:
             return True
-        return not self.is_trusted(tool) and (can_reach_network or self._matches(tool, self.untrusted_tools))
+        if self.is_trusted(tool):
+            return False
+        declared = [Integrity(s["integrity"]) for p, s in self.sources.items() if "integrity" in s and fnmatch.fnmatchcase(tool, p)]
+        if declared:  # an explicit declaration decides, whatever the tool's capabilities
+            return max(declared) >= Integrity.UNTRUSTED
+        return can_reach_network or self._matches(tool, self.untrusted_tools) or self.default_integrity == "untrusted"
 
 
 # ------------------------------------------------------------------------------------- tracking
@@ -423,6 +483,13 @@ def observe_content(
         state.hostile_sources = _add(state.hostile_sources, [source], MAX_SOURCES)
     if record_sensitive_values(state, text, result):
         state.sensitive_sources = _add(state.sensitive_sources, [source], MAX_SOURCES)
+    declared = policy.source_label(tool)
+    if declared is not None:
+        if declared.confidentiality is Confidentiality.RESTRICTED:
+            state.sensitive_sources = _add(state.sensitive_sources, [source], MAX_SOURCES)
+            state.sensitive_kinds = _add(state.sensitive_kinds, [f"declared:{tool}"], MAX_SOURCES)
+        elif declared.confidentiality is Confidentiality.PRIVATE:
+            state.private_sources = _add(state.private_sources, [source], MAX_SOURCES)
     _touch(state)
 
 
@@ -491,6 +558,17 @@ def taint_detections(
         emit("after_injection", Category.PROMPT_INJECTION.value, 0.7,
              "This session read content containing a prompt injection; side-effecting actions need approval.",
              hostile=state.hostile_sources[-5:])  # fmt: skip
+    accepts_untrusted, cap = policy.sink(tool)
+    context = state.label
+    if not accepts_untrusted and context.integrity >= Integrity.UNTRUSTED:
+        emit("untrusted_to_protected_sink", Category.PROMPT_INJECTION.value, 0.8,
+             f"This tool doesn't accept untrusted input, and the session has read {context.integrity.value} content.",
+             label=context.to_dict(), untrusted=state.untrusted_sources[-5:], hostile=state.hostile_sources[-5:])  # fmt: skip
+    if cap is not None and context.confidentiality > cap:
+        emit("confidentiality_exceeds_sink", Category.DATA_EXFILTRATION.value, 0.8,
+             f"The session holds {context.confidentiality.value} data; this tool accepts at most {cap.value}.",
+             label=context.to_dict(), max_confidentiality=cap.value,
+             sources=(state.sensitive_sources + state.private_sources)[-5:])  # fmt: skip
     return out
 
 
