@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-30
+
+**Labels.** The same gap tests before and after (fake data, harmless instructions): with 0.6.3 all five containment
+gaps were allowed; with 0.7.0, disguised secrets are blocked and write-then-run needs review out of the box, and the
+other three are closed by a `[labels]` / `[[tools.arguments]]` configuration (`guardlayer policy check` shows where).
+The scripted agentic suite is unchanged (0/30 attacks, 7/8 benign tasks, 1 benign review), also with
+`default_integrity = "untrusted"`.
+
 ### Added: labels (information-flow control)
 - **Labels on everything the agent reads** (`guardlayer.labels`): integrity (`trusted` < `untrusted` < `hostile`) and
   confidentiality (`public` < `private` < `restricted`), combined most-restrictive-wins; the session's context label is on
