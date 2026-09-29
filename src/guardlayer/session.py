@@ -94,8 +94,62 @@ def fingerprint(value: str, kind: str | None = None) -> str:
     return f"{fp}:{kind}" if kind else fp
 
 
+_NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
+_ENCODED = re.compile(r"[A-Za-z0-9+/_-]{12,}={0,2}")
+_HEX = re.compile(r"(?:[0-9a-fA-F]{2}){8,}")
+
+
+def squash(value: str) -> str:
+    """Letters and digits only: `s k-p r o j` and `sk_proj` both become `skproj`."""
+    return _NON_ALNUM.sub("", value)
+
+
+def _printable(raw: bytes) -> str | None:
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return text if text and sum(c.isprintable() for c in text) >= 0.9 * len(text) else None
+
+
+def _decoded_views(text: str) -> list[str]:
+    """base64, hex and URL-decoded copies of `text`'s encoded-looking tokens (bounded, linear)."""
+    import base64
+    import binascii
+    from urllib.parse import unquote
+
+    out: list[str] = []
+    budget = MAX_SCAN_CHARS
+    if "%" in text:
+        out.append(unquote(text))
+    for token in _ENCODED.findall(text):
+        if budget <= 0:
+            break
+        for decode in (base64.b64decode, base64.urlsafe_b64decode):
+            try:
+                decoded = _printable(decode(token + "=" * (-len(token) % 4)))
+            except (binascii.Error, ValueError):
+                decoded = None
+            if decoded:
+                out.append(decoded)
+                budget -= len(decoded)
+                break
+    for token in _HEX.findall(text):
+        if budget <= 0:
+            break
+        decoded = _printable(bytes.fromhex(token))
+        if decoded:
+            out.append(decoded)
+            budget -= len(decoded)
+    return out
+
+
 def contains_fingerprint(text: str, fingerprints: Iterable[str], *, allowed_kinds: Iterable[str] = ()) -> bool:
     """True if any fingerprinted value occurs in `text`, whole or embedded in a longer token.
+
+    Also checked: the text with separators removed (`s k - p r o j ...`), and base64, hex and URL-decoded copies of
+    its encoded-looking tokens, so a lightly disguised copy of a secret still matches. Every view is scanned in linear
+    time.
 
     Every position in each run of token characters gets one CRC of its next 8 characters;
     only positions whose CRC matches a stored prefix check are hashed in full. That keeps
@@ -116,15 +170,18 @@ def contains_fingerprint(text: str, fingerprints: Iterable[str], *, allowed_kind
         else:
             legacy.add(fp)
     text = text[:MAX_SCAN_CHARS]
-    if legacy and any(_digest(tok.strip(".=/")) in legacy for tok in _TOKEN_RE.findall(text)):
-        return True
-    if not by_prefix:
-        return False
-    for run in _TOKEN_RE.findall(text):
-        for i in range(len(run) - _PREFIX + 1):
-            candidates = by_prefix.get(_prefix_key(run[i : i + _PREFIX]))
-            if candidates and any(i + n <= len(run) and _digest(run[i : i + n]) == d for n, d in candidates):
-                return True
+    decoded = _decoded_views(text)
+    views = [text, squash(text), *decoded, *(squash(v) for v in decoded)]
+    for view in views:
+        if legacy and any(_digest(tok.strip(".=/")) in legacy for tok in _TOKEN_RE.findall(view)):
+            return True
+        if not by_prefix:
+            continue
+        for run in _TOKEN_RE.findall(view):
+            for i in range(len(run) - _PREFIX + 1):
+                candidates = by_prefix.get(_prefix_key(run[i : i + _PREFIX]))
+                if candidates and any(i + n <= len(run) and _digest(run[i : i + n]) == d for n, d in candidates):
+                    return True
     return False
 
 
@@ -500,7 +557,11 @@ def record_sensitive_values(state: SessionState, text: str, result: ScanResult) 
         if d.span:
             token = _value_token(text[d.span[0] : d.span[1]])
             if token:
-                state.fingerprints = _add(state.fingerprints, [fingerprint(token, d.rule)], MAX_FINGERPRINTS)
+                prints = [fingerprint(token, d.rule)]
+                squashed = squash(token)
+                if squashed != token.strip(".=/") and len(squashed) >= _PREFIX:
+                    prints.append(fingerprint(squashed, d.rule))  # matches the copy with separators stripped
+                state.fingerprints = _add(state.fingerprints, prints, MAX_FINGERPRINTS)
     return found
 
 

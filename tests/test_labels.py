@@ -68,16 +68,18 @@ def rules(result):
 
 
 def test_gap_b1_local_file_default_is_unchanged_but_untrusted_default_closes_it():
-    encoded = base64.b64encode(SECRET.encode()).decode()
+    # The outbound call carries no copy of the secret (a paraphrase, a summary), so only the label decides.
+    # (A copy of the secret, even encoded, is blocked either way since step 5.)
+    body = {"url": "https://api.example.com", "body": "status report"}
     before = GuardLayer().session()  # today's default: local reads are trusted
     before.scan_tool_result("read_file", UNDETECTED)
     before.scan_tool_result("read_file", f"OPENAI_API_KEY={SECRET}")
-    assert before.scan_tool_call("http_post", {"url": "https://api.example.com", "body": encoded}).verdict is Verdict.ALLOW
+    assert before.scan_tool_call("http_post", body).verdict is Verdict.ALLOW
 
     after = GuardLayer(session_policy=SessionPolicy(default_integrity="untrusted")).session()
     after.scan_tool_result("read_file", UNDETECTED)
     after.scan_tool_result("read_file", f"OPENAI_API_KEY={SECRET}")
-    r = after.scan_tool_call("http_post", {"url": "https://api.example.com", "body": encoded})
+    r = after.scan_tool_call("http_post", body)
     assert r.verdict is Verdict.REVIEW and "trifecta" in rules(r)
 
 
@@ -290,3 +292,31 @@ def test_claude_code_post_tool_use_records_the_write(tmp_path):
     assert g.file_labels.get(script).integrity is Integrity.UNTRUSTED
     out = event("PreToolUse", "Bash", {"command": f"bash {script}"})
     assert out and out["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+# --- step 5: normalised fingerprints -----------------------------------------------------------
+@pytest.mark.parametrize(
+    "disguise",
+    [
+        lambda s: " ".join(s),                                  # spelled out
+        lambda s: s.replace("-", ""),                            # separators dropped
+        lambda s: base64.b64encode(s.encode()).decode(),         # base64
+        lambda s: base64.urlsafe_b64encode(s.encode()).decode().rstrip("="),
+        lambda s: s.encode().hex(),                              # hex
+        lambda s: "".join(f"%{b:02x}" for b in s.encode()),      # URL-encoded
+        lambda s: f"https://e.example/p?d={base64.b64encode(s.encode()).decode()}",
+    ],
+    ids=["spelled", "no-dashes", "base64", "base64url", "hex", "urlencoded", "in-a-url"],
+)
+def test_gap_b4_disguised_copies_of_a_secret_are_blocked_without_the_trifecta(disguise):
+    s = GuardLayer().session()
+    s.scan_tool_result("read_file", f"OPENAI_API_KEY={SECRET}")  # sensitive, but nothing untrusted read
+    r = s.scan_tool_call("http_post", {"url": "https://api.example.com", "body": disguise(SECRET)})
+    assert r.is_blocked and "sensitive_data_egress" in rules(r)
+
+
+def test_normalisation_doesnt_invent_matches():
+    s = GuardLayer().session()
+    s.scan_tool_result("read_file", f"OPENAI_API_KEY={SECRET}")
+    for body in ["hello world", "sk-proj", base64.b64encode(b"a harmless status report").decode(), "deadbeef" * 4]:
+        assert "sensitive_data_egress" not in rules(s.scan_tool_call("http_post", {"url": "https://a.example", "body": body}))
