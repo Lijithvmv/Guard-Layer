@@ -5,6 +5,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **Hardened the project's own build pipeline:** every GitHub Action pinned to a full commit SHA; read-only default token
+  in all workflows; `persist-credentials: false` on checkouts; release tooling pinned (`build`, `twine`); the third-party
+  release action replaced with the runner's `gh`; concurrency limits; Dependabot for actions and pip with a 7-day cooldown;
+  a `workflow-security` CI job running zizmor. Documented in SECURITY.md ("How releases are built").
+
 ### Added
 - **`benchmarks/llmail_eval.py`**: a held-out test on Microsoft's LLMail-Inject (phase 2, 38,014 unique real attacker emails,
   MIT). GuardLayer detects 17.4% of the attacks that hijacked the model with rules only and 47.0% with the classifier (50.4% of those

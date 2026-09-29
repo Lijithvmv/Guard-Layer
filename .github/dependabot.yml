@@ -1,0 +1,19 @@
+# Keep pinned GitHub Actions (commit SHAs) and Python tooling current, without taking brand-new releases on day one:
+# a new version must be at least 7 days old before Dependabot proposes it (time for a poisoned release to be caught).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

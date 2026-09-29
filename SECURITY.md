@@ -25,6 +25,15 @@ fix can be measured.
 
 What GuardLayer protects, what it assumes and what it can't stop: [THREAT_MODEL.md](https://github.com/Lijithvmv/Guard-Layer/blob/main/THREAT_MODEL.md).
 
+## How releases are built
+
+- Releases are published to PyPI by GitHub Actions with **trusted publishing** (OIDC): no PyPI token is stored anywhere.
+  PyPI records the workflow that built each file.
+- Every third-party action is pinned to a full commit SHA, workflows get a read-only token by default, checkouts don't keep
+  credentials, and release tooling is version-pinned. A CI job audits the workflows with zizmor on every push.
+- Dependabot proposes updates to actions and Python tooling only after a release is at least 7 days old.
+- The core package has no runtime dependencies.
+
 ## Deployment guidance
 
 - GuardLayer is one layer of defense in depth. Keep agent tools least-privilege and require human
