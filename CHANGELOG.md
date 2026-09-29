@@ -27,6 +27,11 @@ All notable changes to this project are documented here. The format follows
   outputs, 92 of 238 LLMail emails at 0.7), so it is **documented, not recommended** for blocking. See
   *Recipes → Other languages*.
 
+### Changed
+- **`strict` and `airgap` presets treat every tool result as untrusted** (`[labels] default_integrity = "untrusted"`)
+  unless the tool is declared trusted in `[labels] sources`. `balanced` is unchanged. Measured on AgentDojo banking and
+  Slack: same utility and attack success as before, one extra review on benign banking tasks.
+
 ### Fixed
 - **Zero-width false positives on Indian-language, Persian and emoji text.** The zero-width joiner and non-joiner are part
   of correct spelling in these scripts (`जन्‍म`, word-final ZWNJ in Kannada, emoji sequences), but were counted as hidden

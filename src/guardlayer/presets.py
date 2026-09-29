@@ -61,7 +61,8 @@ PRESETS: dict[str, Preset] = {
             "strict",
             "For agents that hold real credentials or touch production. Lower thresholds, fail-closed, every shell "
             "and write-capable tool call held for review, raw-IP egress and .env access blocked, unknown "
-            "suspicious content flagged sooner, and any action after reading an injection blocked.",
+            "suspicious content flagged sooner, any action after reading an injection blocked, and every tool result "
+            "treated as untrusted unless you declare the tool trusted in [labels] sources.",
             (
                 "Review fatigue: approvers see every shell/write call; rubber-stamping defeats the control.",
                 "More false positives than 'balanced' (thresholds 0.3 / 0.6).",
@@ -75,6 +76,7 @@ PRESETS: dict[str, Preset] = {
                     "rule_actions": {"egress_raw_ip": "block", "dotenv_file": "block", "persistence": "block"},
                 },
                 "session": {"actions": {"after_injection": "block"}},
+                "labels": {"default_integrity": "untrusted"},
             },
         ),
         Preset(
@@ -93,6 +95,7 @@ PRESETS: dict[str, Preset] = {
                     "rule_actions": {"egress_raw_ip": "block", "dotenv_file": "block", "persistence": "block"},
                 },
                 "session": {"actions": {"after_injection": "block", "trifecta": "block"}},
+                "labels": {"default_integrity": "untrusted"},
             },
         ),
     )

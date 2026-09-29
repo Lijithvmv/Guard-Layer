@@ -329,7 +329,7 @@ guardlayer presets                                     # what each one does and 
 |---|---|---|
 | `observe` | rolling out | none; shadow verdicts only |
 | `balanced` *(default)* | most apps | blocks clear attacks and dangerous actions, reviews risky commands |
-| `strict` | agents with real credentials or production access | thresholds 0.3/0.6, fail-closed, every shell and write call reviewed, raw-IP egress blocked |
+| `strict` | agents with real credentials or production access | thresholds 0.3/0.6, fail-closed, every shell and write call reviewed, raw-IP egress blocked, every tool result untrusted unless declared trusted |
 | `airgap` | regulated or offline work | network and shell tools blocked outright, fail-closed |
 
 `GuardLayer.from_preset("strict")`, `preset = "strict"` in a config file, or
