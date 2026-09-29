@@ -727,6 +727,21 @@ What it costs:
   slow for their long contexts). The per-task logs are kept out of the repository; the summary rows, with the GuardLayer commit
   each was measured at, are in [`benchmarks/results/`](https://github.com/Lijithvmv/Guard-Layer/tree/main/benchmarks/results/).
 
+**Strip mode doesn't recover attacked tasks (2026-09-29, GuardLayer `1b11bd9`).** `on_injection="strip"` cuts the injected
+part out of a tool result instead of withholding the whole result. Same model, sample and seed as above:
+
+| Suite · mode | Normal tasks done | Attacks succeeded | Attacked tasks still done | Results withheld / stripped |
+|---|---|---|---|---|
+| Banking · withhold (default) | 5 / 10 | 0 / 10 | 5 / 10 | 16 / 0 |
+| Banking · strip | 4 / 10 | 0 / 10 | 5 / 10 | 0 / 7 |
+| Slack · withhold (default) | 6 / 10 | 0 / 10 | 0 / 10 | 33 / 0 |
+| Slack · strip | 6 / 10 | 0 / 10 | 0 / 10 | 32 / 1 |
+
+Attacks stayed at 0 either way, but attacked tasks didn't recover: in Slack almost every poisoned result still fell back to
+withholding (the cut would have been most of the message), and in banking the stripped results didn't help this model finish.
+On LLMail-Inject, the attacker's target also survived 117 of 269 cuts (see below). Strip mode stays opt-in; the default is
+still to withhold.
+
 Reproduce: `pip install agentdojo==0.1.35` in a separate environment, then
 `python benchmarks/agentdojo_eval.py --model <ollama model> --suites banking,slack --per-suite 10 --max-iters 10`.
 

@@ -5,6 +5,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- AgentDojo results for strip mode (banking and Slack, today's rules): attacks 0 / 10 in both modes, but attacked tasks
+  didn't recover (banking 5 / 10 either way; Slack 0 / 10, where 32 of 33 poisoned results still fell back to withholding).
+  Strip stays opt-in. Results in `benchmarks/results/agentdojo-qwen2.5-coder-7b-strip-2026-09-29.jsonl`.
+
 ## [0.6.3] - 2026-09-29
 
 ### Added
