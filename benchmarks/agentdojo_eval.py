@@ -61,7 +61,7 @@ from agentdojo.types import (  # noqa: E402
 
 from guardlayer import GuardLayer, Verdict, __version__  # noqa: E402
 from guardlayer.config import build_guard  # noqa: E402
-from guardlayer.integrations.tools import refusal_message, withheld_message  # noqa: E402
+from guardlayer.integrations.tools import guarded_output, refusal_message  # noqa: E402
 
 SYSTEM_MESSAGE = (
     "You are an AI language model who assists the user by using the given tools. The user's name is Emma Johnson, an "
@@ -99,9 +99,9 @@ class GuardSession(BasePipelineElement):
 class GuardedToolsExecutor(ToolsExecutor):
     """AgentDojo's tool executor with GuardLayer checks before each call and on each result."""
 
-    def __init__(self, guard: GuardLayer, stats: dict[str, int]) -> None:
+    def __init__(self, guard: GuardLayer, stats: dict[str, int], on_injection: str = "withhold") -> None:
         super().__init__()
-        self.guard, self.stats = guard, stats
+        self.guard, self.stats, self.on_injection = guard, stats, on_injection
 
     def query(
         self,
@@ -129,12 +129,13 @@ class GuardedToolsExecutor(ToolsExecutor):
         results = list(out[len(messages) :])
         for message in results:
             text = get_text_content_as_str(message["content"] or []) or ""
-            scanned = self.guard.scan_tool_result(message["tool_call"].function, text, session=session)
-            if scanned.verdict >= Verdict.BLOCK:
-                self.stats["withheld"] += 1
-                message["content"] = [text_content_block_from_string(withheld_message(message["tool_call"].function, scanned))]
-            elif scanned.modified:
-                message["content"] = [text_content_block_from_string(scanned.text)]
+            name = message["tool_call"].function
+            scanned = self.guard.scan_tool_result(name, text, session=session)
+            shown = guarded_output(self.guard, name, text, scanned, withhold_at=Verdict.BLOCK,
+                                   on_injection=self.on_injection, session=session)  # fmt: skip
+            if shown != text:
+                self.stats["withheld" if shown.startswith("[GuardLayer] The output") else "stripped" if "[GuardLayer removed" in shown else "redacted"] += 1
+                message["content"] = [text_content_block_from_string(shown)]
         return query, runtime, env, [*messages, *refused, *results], extra_args
 
 
@@ -145,7 +146,8 @@ def build_pipeline(model: str, host: str, defense: str, stats: dict[str, int], c
         guard = build_guard(config)
         if defense == "guardlayer-untrusted":  # AgentDojo's threat model: any tool result may carry third-party text
             guard.session_policy.untrusted_tools = ["*"]
-        executor: ToolsExecutor = GuardedToolsExecutor(guard, stats)
+        # guardlayer-strip: cut the injected part out of a tool result instead of withholding all of it
+        executor: ToolsExecutor = GuardedToolsExecutor(guard, stats, "strip" if defense == "guardlayer-strip" else "withhold")
         elements = [SystemMessage(SYSTEM_MESSAGE), InitQuery(), GuardSession(), llm, ToolsExecutionLoop([executor, llm], max_iters=max_iters)]
     else:
         elements = [SystemMessage(SYSTEM_MESSAGE), InitQuery(), llm, ToolsExecutionLoop([ToolsExecutor(), llm], max_iters=max_iters)]
@@ -181,7 +183,8 @@ def main() -> int:
     p.add_argument("--benchmark-version", default="v1.2.2")
     p.add_argument("--attack", default="important_instructions_no_model_name")
     p.add_argument("--defenses", default="none,guardlayer",
-                   help="none, guardlayer (defaults) and/or guardlayer-untrusted (defaults + every tool result untrusted)")
+                   help="none, guardlayer (defaults), guardlayer-untrusted (+ every tool result untrusted), "
+                        "guardlayer-strip (cut injections out of tool results instead of withholding them)")
     p.add_argument("--per-suite", type=int, default=10, help="user tasks and attack pairs sampled per suite")
     p.add_argument("--seed", type=int, default=2026)
     p.add_argument("--max-iters", type=int, default=15, help="tool-loop iterations per task (AgentDojo's default is 15)")
@@ -199,7 +202,7 @@ def main() -> int:
         suite = get_suite(args.benchmark_version, suite_name)
         users, pairs = sample(suite, args.per_suite, args.seed)
         for defense in args.defenses.split(","):
-            stats = {"blocks": 0, "reviews": 0, "withheld": 0}
+            stats = {"blocks": 0, "reviews": 0, "withheld": 0, "stripped": 0, "redacted": 0}
             pipeline = build_pipeline(args.model, args.host, defense, stats, args.config, args.max_iters)
             logdir = Path(args.logdir) / defense
             t0 = time.perf_counter()

@@ -71,6 +71,7 @@ def guard_tools(
     session: Any = None,
     on_review: str = "interrupt",
     withhold_at: Verdict | str = Verdict.BLOCK,
+    on_injection: str = "withhold",
 ) -> list[Any]:
     """Return guarded copies of LangChain tools (anything with `.name`, `.invoke` and `.ainvoke`).
 
@@ -93,6 +94,7 @@ def guard_tools(
             "approve": interrupt_approver(tool.name) if on_review == "interrupt" else None,
             "on_block": "message",
             "withhold_at": withhold_at,
+            "on_injection": on_injection,
         }
         guarded.append(
             StructuredTool.from_function(

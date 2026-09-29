@@ -30,7 +30,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from guardlayer.integrations.tools import refusal_message, withheld_message
+from guardlayer.integrations.tools import ON_INJECTION, guarded_output, refusal_message
 from guardlayer.models import Verdict
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -74,8 +74,11 @@ class GuardrailSet:
 class _Checks:
     """The guardrail logic, independent of the SDK so it can be tested without it."""
 
-    def __init__(self, guard: GuardLayer, session: str | Callable[[Any], str | None] | None, withhold_at: Verdict) -> None:
-        self.guard, self.session, self.withhold_at = guard, session, withhold_at
+    def __init__(self, guard: GuardLayer, session: str | Callable[[Any], str | None] | None, withhold_at: Verdict,
+                 on_injection: str = "withhold") -> None:  # fmt: skip
+        if on_injection not in ON_INJECTION:
+            raise ValueError(f"on_injection must be one of {ON_INJECTION}")
+        self.guard, self.session, self.withhold_at, self.on_injection = guard, session, withhold_at, on_injection
 
     def _sid(self, context: Any) -> str | None:
         if callable(self.session):
@@ -101,8 +104,11 @@ class _Checks:
 
     def tool_output(self, context: Any, tool_name: str, output: Any) -> str | None:
         """Returns a replacement notice, or None to pass the output through."""
-        result = self.guard.scan_tool_result(tool_name, output, session=self._sid(context))
-        return withheld_message(tool_name, result) if result.verdict >= self.withhold_at else None
+        sid = self._sid(context)
+        result = self.guard.scan_tool_result(tool_name, output, session=sid)
+        shown = guarded_output(self.guard, tool_name, output, result, withhold_at=self.withhold_at,
+                               on_injection=self.on_injection, session=sid)  # fmt: skip
+        return None if shown is output or shown == output else shown
 
 
 def guardrails(
@@ -110,6 +116,7 @@ def guardrails(
     *,
     session: str | Callable[[Any], str | None] | None = None,
     withhold_at: Verdict | str = Verdict.BLOCK,
+    on_injection: str = "withhold",
 ) -> GuardrailSet:
     """Build the four guardrails. Needs `pip install openai-agents`."""
     try:
@@ -124,7 +131,7 @@ def guardrails(
     except ModuleNotFoundError as exc:  # pragma: no cover
         raise ModuleNotFoundError("OpenAI Agents guardrails need: pip install openai-agents") from exc
 
-    checks = _Checks(guard, session, Verdict(withhold_at))
+    checks = _Checks(guard, session, Verdict(withhold_at), on_injection)
 
     @input_guardrail(name="guardlayer_input")
     def gl_input(ctx: Any, agent: Any, value: Any) -> Any:

@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`on_injection="strip"`** for `guard_tool`, LangGraph `guard_tools` and the OpenAI Agents SDK `guardrails`: cut the injected
+  part out of a tool result instead of withholding all of it (`strip_injections`: from the first to the last flagged line,
+  widened to an enclosing tag pair such as `<INFORMATION>...</INFORMATION>`). Only with a session, only for string results, and only
+  when the cut is under 80% of the text, every detection has a location and the remainder scans clean; otherwise withheld as before.
+  Default unchanged (`"withhold"`). AgentDojo harness: `guardlayer-strip` defense.
 - **Detection-rule referee** (`benchmarks/referee.py`): a candidate rule pack ships only if it (1) detects more held-out
   LLMail-Inject attacks, (2) adds no hits on any benign set (4,509 public prompts, AgentDojo environment texts, LLMail benign
   emails), (3) fires on the dev attacks it was written from, and (4) names nothing specific to the challenge's goal. Every

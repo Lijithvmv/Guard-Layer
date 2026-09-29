@@ -267,7 +267,8 @@ tools = guard_tools(guard, [search, fetch_url, run_shell])   # drop-in for ToolN
 Blocked calls return a refusal the model can read. A `review` verdict pauses the graph with
 LangGraph's `interrupt()`. Resume with `Command(resume=True)` to approve, or anything else to
 refuse. The graph's `thread_id` becomes the GuardLayer session, and outputs containing an
-injection are withheld from the model.
+injection are withheld from the model. `on_injection="strip"` cuts only the injected part out and keeps the rest
+(the session still holds the next side-effecting action for review).
 
 ### OpenAI Agents SDK
 
