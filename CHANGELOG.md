@@ -20,6 +20,13 @@ All notable changes to this project are documented here. The format follows
   checked action; `needs_intent_check` limits it to tools that can act, after untrusted content. Based on MELON
   (masked re-execution). See *Concepts → Behavioural check*.
 
+- **ONNX runtime for the classifier** (`runtime = "onnx"`, `multilingual` extra: onnxruntime + tokenizers, no PyTorch):
+  runs a local model directory you downloaded and checked; nothing is fetched for you. Measured Horizon Labs'
+  30-language `prompt-injection-guard-small` with the new `benchmarks/classifier_eval.py`: much higher recall on unseen
+  public attack sets (deepset 14 → 32 of 60), but new false alarms on benign agent data (11 of 404 AgentDojo tool
+  outputs, 92 of 238 LLMail emails at 0.7), so it is **documented, not recommended** for blocking. See
+  *Recipes → Other languages*.
+
 ### Fixed
 - **Zero-width false positives on Indian-language, Persian and emoji text.** The zero-width joiner and non-joiner are part
   of correct spelling in these scripts (`जन्‍म`, word-final ZWNJ in Kannada, emoji sequences), but were counted as hidden

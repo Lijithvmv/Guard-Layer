@@ -80,6 +80,7 @@ pip install -e .                     # core: zero dependencies
 pip install -e ".[api]"              # + REST API (FastAPI/uvicorn)
 pip install -e ".[embeddings]"       # + semantic similarity (sentence-transformers)
 pip install -e ".[ml]"               # + transformer classifier
+pip install -e ".[multilingual]"     # + classifier on ONNX, no PyTorch (see docs: multilingual)
 pip install -e ".[signing]"          # + Ed25519-signed audit logs (cryptography)
 pip install -e ".[langgraph]"        # + LangGraph / LangChain integration
 pip install -e ".[openai-agents]"    # + OpenAI Agents SDK integration

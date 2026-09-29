@@ -91,6 +91,7 @@ nav:
       - Any framework: integrations/any-framework.md
       - REST API: integrations/rest-api.md
   - Recipes:
+      - Other languages: recipes/multilingual.md
       - Protect a RAG pipeline: recipes/rag.md
       - Guard an email or browsing agent: recipes/browsing-agent.md
       - Roll out without breaking anything: recipes/rollout.md

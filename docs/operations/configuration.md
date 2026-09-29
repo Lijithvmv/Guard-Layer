@@ -80,6 +80,8 @@ threshold = 0.7
 # device = 0                   # GPU index
 # model = "org/model"          # a different Hugging Face classifier
 # revision = "<commit sha>"    # pin it (the default model is pinned for you)
+# runtime = "onnx"             # run a local ONNX model dir instead (`multilingual` extra, no PyTorch)
+# model_file = "onnx/model_quantized.onnx"
 ```
 
 Every scanner section accepts `enabled` and `directions`. The default scanners are on unless disabled; the opt-in ones
