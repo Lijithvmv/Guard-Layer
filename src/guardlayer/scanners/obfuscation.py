@@ -20,6 +20,33 @@ _MIXED_SCRIPT_RE = re.compile(r"\b(?=\w*[A-Za-z])(?=\w*[Ͱ-ϿЀ-ӿ])\w{3,}\b")
 _BLOB_RE = re.compile(r"[A-Za-z0-9+/=_-]{120,}")
 
 
+_JOINERS = "\u200c\u200d"  # zero-width non-joiner / joiner: part of correct spelling in several scripts
+# Scripts where ZWNJ/ZWJ are normal: Arabic/Persian, Indian scripts and Sinhala, Myanmar; and emoji sequences (ZWJ).
+_JOINING_RANGES = ((0x0600, 0x06FF), (0x0750, 0x077F), (0x08A0, 0x08FF), (0x0900, 0x0DFF), (0x1000, 0x109F),
+                   (0x2600, 0x27BF), (0x1F000, 0x1FAFF))  # fmt: skip
+
+
+def _joins(ch: str) -> bool:
+    cp = ord(ch)
+    return any(lo <= cp <= hi for lo, hi in _JOINING_RANGES) or ch == "\ufe0f"
+
+
+def suspicious_invisibles(text: str) -> list[re.Match[str]]:
+    """Invisible characters, except a ZWNJ/ZWJ that follows a letter of a script that uses them (Hindi, Kannada,
+    Malayalam, Persian, emoji...), including word-final ZWNJ. Those shape correct text; counting them flagged about
+    1 in 20 normal Indian-language texts. A joiner after a Latin letter still counts."""
+    out = []
+    for m in INVISIBLE_RE.finditer(text):
+        if m.group() in _JOINERS:
+            j = m.start() - 1
+            while j >= 0 and text[j] in _JOINERS:  # a run of joiners: look at the letter before the run
+                j -= 1
+            if j >= 0 and _joins(text[j]):
+                continue
+        out.append(m)
+    return out
+
+
 class ObfuscationScanner(BaseScanner):
     name = "obfuscation"
 
@@ -54,9 +81,10 @@ class ObfuscationScanner(BaseScanner):
         if bidi:
             found.append(self.detection("bidi_override", OBF, 0.6, "Bidirectional override characters (text-reordering trick).", bidi.span()))
 
-        zero_width = INVISIBLE_RE.findall(text)
+        invisible = suspicious_invisibles(text)
+        zero_width = [m.group() for m in invisible]
         if len(zero_width) >= self.zero_width_threshold:
-            first = INVISIBLE_RE.search(text)
+            first = invisible[0]
             found.append(
                 self.detection(
                     "zero_width_chars", OBF, min(0.7, 0.3 + 0.05 * len(zero_width)),

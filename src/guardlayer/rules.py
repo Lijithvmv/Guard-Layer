@@ -89,6 +89,45 @@ LEAK = Category.SYSTEM_PROMPT_LEAK.value
 EXFIL = Category.DATA_EXFILTRATION.value
 CMD = Category.UNSAFE_COMMAND.value
 
+# --- Indian languages ------------------------------------------------------------------------------------------
+# "Ignore (all) previous instructions" in nine Indian languages and romanised Hindi. Word stems per language:
+# (ignore/forget verbs, previous/all, instructions). Indian languages usually put the verb last ("previous all
+# instructions ignore"), so both orders match. Checked for false positives on 2,056 Wikipedia introductions in these
+# languages, 256 of them chosen because they use these very words (benchmarks/indic_benign_texts.py). Native speakers:
+# corrections and additions welcome.
+_INDIC_WORDS: dict[str, tuple[list[str], list[str], list[str]]] = {
+    "hi": (["अनदेखा", "नज़रअंदाज़", "नजरअंदाज", "भूल जा", "भूल जाइए", "भुला द", "इग्नोर"],
+           ["पिछल", "पहले", "पूर्व", "सभी", "सारे", "सारी", "ऊपर"],
+           ["निर्देश", "आदेश", "हिदायत", "नियम", "इंस्ट्रक्शन"]),
+    "mr": (["दुर्लक्ष", "विसर", "इग्नोर"], ["मागील", "आधीच्या", "आधीचे", "सर्व", "वरील"], ["सूचना", "निर्देश", "आदेश", "नियम"]),
+    "bn": (["উপেক্ষা", "ভুলে যা", "অগ্রাহ্য", "ইগনোর"], ["আগের", "পূর্ববর্তী", "সব", "সমস্ত", "উপরের"], ["নির্দেশ", "আদেশ", "নিয়ম"]),
+    "gu": (["અવગણ", "ભૂલી જા", "ઇગ્નોર"], ["અગાઉ", "પહેલાં", "પહેલાની", "બધી", "બધા", "ઉપરની"], ["સૂચના", "નિર્દેશ", "આદેશ", "નિયમ"]),
+    "pa": (["ਨਜ਼ਰਅੰਦਾਜ਼", "ਅਣਡਿੱਠ", "ਭੁੱਲ ਜਾ", "ਇਗਨੋਰ"], ["ਪਿਛਲ", "ਪਹਿਲ", "ਸਾਰ", "ਉੱਪਰ"], ["ਹਦਾਇਤ", "ਨਿਰਦੇਸ਼", "ਹੁਕਮ", "ਨਿਯਮ"]),
+    "ta": (["புறக்கணி", "மறந்துவிடு", "மறந்து விடு", "மற", "இக்னோர்"],
+           ["முந்தைய", "முன்பு", "முந்திய", "அனைத்து", "எல்லா", "மேலே"],
+           ["அறிவுறுத்தல்", "வழிமுறை", "கட்டளை", "விதி", "அறிவுரை"]),
+    "te": (["విస్మరించ", "పట్టించుకోవద్దు", "మర్చిపో", "మరచిపో", "ఇగ్నోర్"], ["మునుపటి", "ఇంతకు ముందు", "అన్ని", "పైన"],
+           ["సూచన", "ఆదేశ", "నియమ"]),
+    "kn": (["ನಿರ್ಲಕ್ಷಿಸ", "ಕಡೆಗಣಿಸ", "ಮರೆತು", "ಮರೆಯ", "ಇಗ್ನೋರ್"], ["ಹಿಂದಿನ", "ಮೊದಲಿನ", "ಎಲ್ಲಾ", "ಎಲ್ಲ", "ಮೇಲಿನ"],
+           ["ಸೂಚನೆ", "ನಿರ್ದೇಶನ", "ಆದೇಶ", "ನಿಯಮ"]),
+    "ml": (["അവഗണിക്ക", "അവഗണിച്ച", "മറക്ക", "മറന്നേക്ക", "ഇഗ്നോർ"], ["മുമ്പത്തെ", "മുൻപത്തെ", "മുൻ", "എല്ലാ", "മുകളിലെ"],
+           ["നിർദ്ദേശ", "നിർദേശ", "ആജ്ഞ", "നിയമ"]),
+}  # fmt: skip
+_HINGLISH = (r"(pichh?l[ea]|pehl[ea]|saar[ea]|sabhi|upar\s+(?:wal[ea]|ke))[^.\n]{0,40}(instructions?|nirdesh\w*|hidayat\w*|niyam)"
+             r"[^.\n]{0,30}(ignore\s+kar\w*|bhool\s+ja\w*|bhul\s+ja\w*|nazar\s*andaa?z\s+kar\w*)")
+
+
+def _indic_pattern() -> str:
+    def alt(words: Iterable[str]) -> str:
+        return "(?:" + "|".join(re.escape(w) for w in sorted(set(words), key=len, reverse=True)) + ")"
+
+    verbs = alt(w for v, _, _ in _INDIC_WORDS.values() for w in v)
+    prev = alt(w for _, p, _ in _INDIC_WORDS.values() for w in p)
+    instr = alt(w for _, _, i in _INDIC_WORDS.values() for w in i)
+    gap = "[^.\n\u0964\u0965]{0,40}"  # within one sentence: full stop, newline, danda, double danda end it
+    return f"{prev}{gap}{instr}{gap}{verbs}|{verbs}{gap}{prev}{gap}{instr}|{_HINGLISH}"
+
+
 DEFAULT_RULES: list[Rule] = [
     # --- Instruction override / prompt injection -------------------------------------------
     Rule(
@@ -230,6 +269,11 @@ DEFAULT_RULES: list[Rule] = [
         r"|(забудь(те)?|игнорируй(те)?|проигнорируй(те)?)[^.\n]{0,25}(все|всё|предыдущие)[^.\n]{0,25}(инструкции|указания|правила|что было)"
         r"|\b(zaboravi|zaboravite|ignoriši|ignoriraj)\b[^.\n]{0,25}\b(sve|prethodne)\b[^.\n]{0,25}\b(instrukcije|upute|uputstva|naredbe|pravila)\b",
         PI, 0.9, "Instruction override in a non-English language.",
+    ),
+    Rule(
+        "ignore_instructions_indic",
+        _indic_pattern(),
+        PI, 0.9, "Instruction override in an Indian language (Hindi, Marathi, Bengali, Gujarati, Punjabi, Tamil, Telugu, Kannada, Malayalam, romanised Hindi).",
     ),
     Rule(
         "new_instructions_multilingual",

@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Indian-language detection in the core** (`ignore_instructions_indic`): "ignore (all) previous instructions" in Hindi,
+  Marathi, Bengali, Gujarati, Punjabi, Tamil, Telugu, Kannada, Malayalam and romanised Hindi, in either word order (these
+  languages usually put the verb last). Word lists kept readable in `rules.py` for native-speaker review. No false
+  positives on 2,056 Wikipedia introductions in these languages, 256 chosen because they use these very words
+  (`benchmarks/indic_benign_texts.py`, CC BY-SA text fetched on demand, not committed), nor on 4,913 other benign texts.
+  The referee's false-positive gate now includes the Indian-language set.
+- Task profiles, split-instruction detection and non-text extraction (0.8 steps 1–3; see the design notes).
+
+### Fixed
+- **Zero-width false positives on Indian-language, Persian and emoji text.** The zero-width joiner and non-joiner are part
+  of correct spelling in these scripts (`जन्‍म`, word-final ZWNJ in Kannada, emoji sequences), but were counted as hidden
+  characters: 105 of 2,056 normal Indian-language texts (5%) were flagged. A joiner that follows a letter of a script that
+  uses joiners no longer counts; after a Latin letter it still does. Now 3 of 2,056. Public benchmark numbers unchanged.
+
 ## [0.7.0] - 2026-09-30
 
 **Labels.** The same gap tests before and after (fake data, harmless instructions): with 0.6.3 all five containment

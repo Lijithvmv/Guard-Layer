@@ -52,6 +52,9 @@ def benign_sets(llmail_benign: list[str]) -> dict[str, list[str]]:
     path = DATA / "agentdojo_benign.jsonl"
     if path.exists():
         sets["agentdojo"] = [json.loads(line)["text"] for line in path.open(encoding="utf-8")]
+    path = DATA / "indic_benign.jsonl"  # benchmarks/indic_benign_texts.py (Wikipedia, CC BY-SA; not committed)
+    if path.exists():
+        sets["indic"] = [json.loads(line)["text"] for line in path.open(encoding="utf-8")]
     return sets
 
 

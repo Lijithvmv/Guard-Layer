@@ -16,6 +16,7 @@ SEEDS = [
     "a", "a ", "a-", "a.", "-", ".", "\n", " \n", "\r\n", "\t", "#", "##(", "<", "</", "<user", "<|", "(system_",
     "ignore ", "ignore previous ", "before you ", "to you, the ", "your goal is to ", "to: ai ",
     "at the end of your summary ", "summarise the email then ", "prompt safety check ", "s-e-n-d ", "A-", "a b ",
+    "पिछले ", "सभी निर्देश ", "അവഗണിക്ക ", "‌", "க‌",
 ]  # fmt: skip
 SMALL, LARGE = 2_000, 8_000
 
