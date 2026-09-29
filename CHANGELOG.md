@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-09-29
+
 ### Added
 - **`guardlayer audit report`**: what GuardLayer decided, or in observe mode would have decided, by rule and by tool, with
   the latest notable entries and a count of redactions (`--since-days`, `--min`, `--json`). Built for pilots: run it daily
