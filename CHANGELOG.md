@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-29
+
 ### Security
 - **Fixed five ReDoS (catastrophic backtracking) paths** that let a single crafted input up to the 50,000-character limit
   cost minutes of CPU: rules `fake_role_header` (blank-line runs) and `fake_system_marker` (runs of `#`), the `limits`
