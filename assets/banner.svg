@@ -39,7 +39,7 @@
 
   <!-- wordmark -->
   <g transform="translate(96,150)">
-    <rect x="0" y="-34" width="132" height="30" rx="6" fill="#0e241b" stroke="#1c4a3a"/>
+    <rect x="0" y="-34" width="150" height="30" rx="6" fill="#0e241b" stroke="#1c4a3a"/>
     <text x="16" y="-13" font-size="15" letter-spacing="2" font-weight="600" fill="#34d399">AI · SECURITY</text>
 
     <text x="0" y="78" font-size="92" font-weight="800" fill="#f0fdf8" letter-spacing="-1">GuardLayer</text>
@@ -76,6 +76,6 @@
   <!-- footer -->
   <g transform="translate(96,600)" font-size="17" fill="#5f8f7e">
     <text x="0" y="0">github.com/Lijithvmv/Guard-Layer</text>
-    <text x="1184" y="0" text-anchor="end" fill="#4b7a69">MIT  ·  Python 3.10–3.13  ·  ~0.2 ms / tool call</text>
+    <text x="1088" y="0" text-anchor="end" fill="#4b7a69">MIT  ·  Python 3.10–3.13  ·  ~0.2 ms / tool call</text>
   </g>
 </svg>
