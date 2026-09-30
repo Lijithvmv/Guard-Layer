@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.svg" alt="GuardLayer — runtime guardrails between an agent and its tools" width="100%">
+</p>
+
 # GuardLayer
 
 > Stop an AI agent from doing harm after it reads something an attacker wrote.
