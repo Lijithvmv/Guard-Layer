@@ -43,7 +43,7 @@ output = "untrusted"
 | `arguments` | rules for argument values: `allow` / `deny` globs, `action` |
 | `destinations` | allow more data for some values: `{ argument, match, max_data }` |
 
-Check what you declared with `guardlayer policy check --config guardlayer.toml`: it lists every tool and what
+Check what you declared with `guardlayer --config guardlayer.toml policy check`: it lists every tool and what
 GuardLayer assumes about it.
 
 ## Everything else

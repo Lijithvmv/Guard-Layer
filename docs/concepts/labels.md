@@ -88,6 +88,9 @@ Internal recipients may get private data; one outside address in the same email 
 
 ## Files keep their label
 
+!!! warning "Experimental"
+    File labels are new in 0.7 and haven't been tried outside tests and benchmarks. It may change or be removed in a later release, depending on how it works in real use.
+
 An agent could write a script while reading an untrusted page, then run it with a command that looks harmless. So a file
 written while the session's label is above `trusted`/`public` **keeps that label**:
 
@@ -107,6 +110,9 @@ those blocks the call (`sensitive_data_egress`), even when nothing untrusted was
 *information* can't be fingerprinted; confidentiality labels cover that case instead.
 
 ## Images, PDFs and other non-text content
+
+!!! warning "Experimental"
+    Extraction is new in 0.8. It may change or be removed in a later release, depending on how it works in real use.
 
 Tool results that are bytes, or MCP content blocks with images, audio or embedded files, aren't scanned as if they were
 text. Readable formats are extracted and scanned like any other content: PDFs with `pip install "guardlayer[extract]"`,

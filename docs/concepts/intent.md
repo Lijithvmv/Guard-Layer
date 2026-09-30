@@ -1,5 +1,8 @@
 # Behavioural check: who asked for this action?
 
+!!! warning "Experimental"
+    On AgentDojo banking with a local 7B model the check flagged nothing (0 of 30 replays) while 4 of 10 attacks succeeded; it may need a stronger model. Measure it on your own agent before relying on it. It may change or be removed in a later release, depending on how it works in real use.
+
 Scanners look for injections by what they *say*. An attacker who writes in another language, or phrases the request
 politely, can get past them. The behavioural check doesn't read the content at all. It asks a different question:
 **would the agent still take this action if the user had never asked for anything?**

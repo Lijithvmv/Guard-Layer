@@ -58,8 +58,8 @@ The command in the output points at your pilot environment and config. In observ
 Claude Code behaves exactly as before, apart from about a second per tool call on Windows (less on macOS and Linux).
 
 !!! tip "Repositories full of attack samples"
-    If the project is a security tool with injection strings in its tests, add `[session] trusted_tools = ["Read", "Grep"]`
-    to `pilot.toml`, or every read of those files will count as hostile content.
+    If the project is a security tool with injection strings in its tests, add `[tool.Read]` and `[tool.Grep]` tables with
+    `output = "trusted"` to `pilot.toml`, or every read of those files will count as hostile content.
 
 ## Days 1–7: work normally, review for five minutes a day
 
