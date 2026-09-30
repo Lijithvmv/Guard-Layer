@@ -4,6 +4,20 @@ Example `guardlayer.toml`:
 
     preset = "balanced"            # observe | balanced | strict | airgap — the settings below override it
 
+    [tool.read_email]              # everything about one tool in one place (see TOOL_KEYS)
+    capabilities = ["read"]
+    output = "untrusted"           # what it returns: "trusted" | "untrusted"
+    output_data = "private"        # how sensitive that is: "public" | "private" | "restricted"
+
+    [tool.send_email]
+    capabilities = ["network"]
+    accepts_untrusted = false      # untrusted content must not drive it
+    max_data = "private"           # the most sensitive data it may receive
+    may_send = ["email"]           # data types it is meant to send out
+    arguments = [{ argument = "to", allow = ["*@mycompany.com"], action = "review" }]
+
+The sections below are the lower-level form of the same settings (and cover global rules). Both work together.
+
     [guard]
     flag_threshold = 0.4
     block_threshold = 0.8
@@ -186,9 +200,93 @@ def _bool(raw: str | bool) -> bool:
     return raw if isinstance(raw, bool) else raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# [tool.NAME] key -> what it means, in plain words (also the error message for unknown keys)
+TOOL_KEYS = {
+    "capabilities": "what the tool can do: read, write, network, exec",
+    "output": 'whether what it returns is "trusted" or "untrusted"',
+    "output_data": 'how sensitive what it returns is: "public", "private" or "restricted"',
+    "accepts_untrusted": "false: content from untrusted sources must not drive this tool",
+    "max_data": 'the most sensitive data it may receive: "public", "private" or "restricted"',
+    "may_send": 'data types it is meant to send out, e.g. ["iban"] (exempt from the egress rules)',
+    "remote": "true: its arguments leave the machine even though it only reads (a search API)",
+    "arguments": 'rules for argument values, e.g. [{ argument = "to", allow = ["*@me.com"] }]',
+    "destinations": 'more data allowed for some values: [{ argument = "to", match = "*@me.com", max_data = "private" }]',
+}
+
+
+def expand_tool_declarations(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Turn `[tool.NAME]` tables into the lower-level `[tools]`, `[session]` and `[labels]` settings.
+
+    One tool's settings then live in one place; the engine is unchanged. Tool names may be globs (`"mcp__github__*"`).
+    """
+    declared = config.get("tool")
+    if not declared:
+        return dict(config)
+    if not isinstance(declared, Mapping):
+        raise ValueError("[tool] must be a table of tools: [tool.NAME]")
+    out = {k: v for k, v in config.items() if k != "tool"}
+    tools = dict(out.get("tools", {}))
+    session = dict(out.get("session", {}))
+    labels = dict(out.get("labels", {}))
+    capabilities = dict(tools.get("capabilities", {}))
+    arguments = list(tools.get("arguments", []))
+    remote = list(tools.get("remote_tools", []))
+    trusted, untrusted = list(session.get("trusted_tools", [])), list(session.get("untrusted_tools", []))
+    allow_egress = dict(session.get("allow_egress", {}))
+    sources, sinks = dict(labels.get("sources", {})), dict(labels.get("sinks", {}))
+    destinations = list(labels.get("destinations", []))
+    for name, spec in declared.items():
+        if not isinstance(spec, Mapping):
+            raise ValueError(f"[tool.{name}] must be a table")
+        unknown = set(spec) - set(TOOL_KEYS)
+        if unknown:
+            known = "\n".join(f"  {k}: {v}" for k, v in TOOL_KEYS.items())
+            raise ValueError(f"[tool.{name}]: unknown key(s) {sorted(unknown)}. Known keys:\n{known}")
+        if "capabilities" in spec:
+            capabilities[name] = list(spec["capabilities"])
+        output = spec.get("output")
+        if output is not None:
+            if output not in ("trusted", "untrusted"):
+                raise ValueError(f'[tool.{name}] output must be "trusted" or "untrusted", not {output!r}')
+            (trusted if output == "trusted" else untrusted).append(name)
+        if "output_data" in spec:
+            sources[name] = {**sources.get(name, {}), "confidentiality": spec["output_data"]}
+        sink = {**sinks.get(name, {})}
+        if "accepts_untrusted" in spec:
+            sink["accepts_untrusted"] = bool(spec["accepts_untrusted"])
+        if "max_data" in spec:
+            sink["max_confidentiality"] = spec["max_data"]
+        if sink:
+            sinks[name] = sink
+        if "may_send" in spec:
+            allow_egress[name] = list(spec["may_send"])
+        if spec.get("remote"):
+            remote.append(name)
+        for rule in spec.get("arguments", []):
+            arguments.append({"tool": name, **rule})
+        for dest in spec.get("destinations", []):
+            dest = dict(dest)
+            if "max_data" in dest:
+                dest["max_confidentiality"] = dest.pop("max_data")
+            destinations.append({"tool": name, **dest})
+    for key, value in (("capabilities", capabilities), ("arguments", arguments), ("remote_tools", remote)):
+        if value:
+            tools[key] = value
+    for key, value in (("trusted_tools", trusted), ("untrusted_tools", untrusted), ("allow_egress", allow_egress)):
+        if value:
+            session[key] = value
+    for key, value in (("sources", sources), ("sinks", sinks), ("destinations", destinations)):
+        if value:
+            labels[key] = value
+    for section, value in (("tools", tools), ("session", session), ("labels", labels)):
+        if value:
+            out[section] = value
+    return out
+
+
 def build_guard(source: str | Path | Mapping[str, Any] | None = None) -> GuardLayer:
     """Construct a `GuardLayer` from a config file/dict (None = defaults + env overrides)."""
-    config = load_config(source)
+    config = expand_tool_declarations(load_config(source))
     base_dir = Path(source).parent if isinstance(source, (str, Path)) else None
     preset = os.environ.get(ENV_PREFIX + "PRESET") or config.get("preset") or config.get("guard", {}).get("preset")
     if preset:

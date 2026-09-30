@@ -27,7 +27,16 @@ All notable changes to this project are documented here. The format follows
   outputs, 92 of 238 LLMail emails at 0.7), so it is **documented, not recommended** for blocking. See
   *Recipes → Other languages*.
 
+### Added (simplification)
+- **`[tool.NAME]`: everything about one tool in one place** (`capabilities`, `output`, `output_data`,
+  `accepts_untrusted`, `max_data`, `may_send`, `remote`, `arguments`, `destinations`). Until now the same facts were
+  spread over `[tools]`, `[session]` and `[labels]` (whether a tool's output is trusted could be said in four places).
+  It expands into those sections, so both forms work together and nothing changes for existing configs. Unknown keys
+  fail with the list of known ones.
+
 ### Changed
+- A tool you list in `remote_tools` yourself is now remote even when you also give it explicit capabilities (the
+  built-in patterns such as `*search*` still give way to explicit capabilities). Before, the listing was silently ignored.
 - **`strict` and `airgap` presets treat every tool result as untrusted** (`[labels] default_integrity = "untrusted"`)
   unless the tool is declared trusted in `[labels] sources`. `balanced` is unchanged. Measured on AgentDojo banking and
   Slack: same utility and attack success as before, one extra review on benign banking tasks.

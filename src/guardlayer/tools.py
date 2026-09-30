@@ -415,6 +415,7 @@ class ToolPolicy:
         self.block_exfil_services = block_exfil_services
         self.flag_raw_ips = flag_raw_ips
         self.infer = infer
+        self.declared_remote = [p.lower() for p in remote_tools]  # named by the user: always remote
         self.remote_tools = [p.lower() for p in (*(DEFAULT_REMOTE_TOOLS if include_default_remote_tools else ()), *remote_tools)]
         self.argument_rules = [r if isinstance(r, ArgumentRule) else ArgumentRule.from_dict(r) for r in arguments]
 
@@ -425,13 +426,16 @@ class ToolPolicy:
         """True when the tool talks to something outside this machine: its results are untrusted
         content and its arguments leave the machine. Network/exec-capable and untagged tools are
         remote; so are inferred or untagged tools matching `remote_tools` (e.g. `mcp__*`,
-        `*search*`), even when their names sound read-only. Explicit capabilities win."""
+        `*search*`), even when their names sound read-only. Explicit capabilities win over the default patterns, not
+        over tools you list in `remote_tools` yourself."""
         caps, tagged = self.resolve(tool)
         if not tagged or caps & {"network", "exec"}:
             return True
+        name = tool.lower()
+        if any(fnmatch.fnmatchcase(name, p) for p in self.declared_remote):
+            return True
         if self._explicit(tool):
             return False
-        name = tool.lower()
         return any(fnmatch.fnmatchcase(name, p) for p in self.remote_tools)
 
     def resolve(self, tool: str) -> tuple[frozenset[str], bool]:

@@ -1,7 +1,55 @@
 # Configuration
 
-One TOML or JSON file configures everything. Load it with `GuardLayer.from_config("guardlayer.toml")`, `--config` on
-the CLI, or `GUARDLAYER_CONFIG` for the REST API. A preset sets the baseline; everything in the file overrides it.
+You may not need a file at all: a [preset](../concepts/presets.md) alone is a working setup. When you do, one TOML or
+JSON file configures everything. Load it with `GuardLayer.from_config("guardlayer.toml")`, `--config` on the CLI, or
+`GUARDLAYER_CONFIG` for the REST API. A preset sets the baseline; everything in the file overrides it.
+
+## Describe your tools (the part that matters most)
+
+GuardLayer's strongest protection comes from knowing your tools: which ones bring in outside content, which ones can
+act or send data out. Say it once per tool:
+
+```toml
+preset = "balanced"
+
+[tool.read_email]
+capabilities = ["read"]            # read | write | network | exec
+output = "untrusted"               # others can write what it returns
+output_data = "private"            # public | private | restricted
+
+[tool.read_docs]
+output = "trusted"                 # your own content: never untrusted
+
+[tool.send_email]
+capabilities = ["network"]
+accepts_untrusted = false          # untrusted content must not drive it
+max_data = "private"               # the most sensitive data it may receive
+may_send = ["email"]               # data it is meant to send (exempt from egress rules)
+arguments = [{ argument = "to", allow = ["*@mycompany.com"], action = "review" }]
+
+[tool."mcp__github__*"]            # names can be globs
+output = "untrusted"
+```
+
+| Key | Meaning |
+|---|---|
+| `capabilities` | what the tool can do: `read`, `write`, `network`, `exec` (inferred from the name when omitted) |
+| `output` | `"trusted"` or `"untrusted"`: can someone else write what it returns? |
+| `output_data` | how sensitive its output is: `public`, `private` (business data), `restricted` (secrets) |
+| `accepts_untrusted` | `false`: refuse (review) when the session has read untrusted content |
+| `max_data` | the most sensitive data it may receive |
+| `may_send` | data types it is meant to send out, e.g. `["iban"]` for a payment tool |
+| `remote` | `true`: its arguments leave the machine though it only reads (a search API) |
+| `arguments` | rules for argument values: `allow` / `deny` globs, `action` |
+| `destinations` | allow more data for some values: `{ argument, match, max_data }` |
+
+Check what you declared with `guardlayer policy check --config guardlayer.toml`: it lists every tool and what
+GuardLayer assumes about it.
+
+## Everything else
+
+The sections below are the full reference. `[tool.NAME]` is a shorter way to write the per-tool parts of `[tools]`,
+`[session]` and `[labels]`; both forms work together.
 
 ```toml
 preset = "balanced"            # observe | balanced | strict | airgap
