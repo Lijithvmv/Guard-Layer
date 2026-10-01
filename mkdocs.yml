@@ -104,6 +104,7 @@ nav:
       - Deployment and performance: operations/deployment.md
   - Evaluation: evaluation.md
   - Reference:
+      - What's stable: reference/stability.md
       - Python API: reference/python-api.md
       - CLI: reference/cli.md
       - Built-in rules: reference/rules.md

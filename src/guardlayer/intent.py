@@ -1,5 +1,7 @@
 """Behavioural hijack check: did the user ask for this tool call, or did something the agent read?
 
+Experimental (0.8): on AgentDojo with a local 7B model it flagged nothing; it may change or be removed.
+
 Masked re-execution (MELON, ICML 2025): ask the agent's own model again, with the user's request replaced by a neutral
 task ("summarise the tool results above") and everything the agent read left in place. A model that is following its
 user has no reason to propose the same action under the neutral task. If it does, the action is being driven by the

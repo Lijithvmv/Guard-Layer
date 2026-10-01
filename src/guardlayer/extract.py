@@ -1,5 +1,7 @@
 """Content GuardLayer can't read as text: extract what it can, and label the rest untrusted.
 
+Experimental (0.8): the extractor interface may change.
+
 A tool can return bytes (a PDF, an image, audio) or MCP-style content blocks (`{"type": "image", "data": ...}`). Turning
 those into a string and "scanning" it would scan nothing while looking reassuring. Instead:
 

@@ -1,5 +1,7 @@
 """File labels: a file written while the agent's context was untrusted or sensitive keeps that label.
 
+Experimental (0.7): not yet used outside tests and benchmarks; the stored format may change.
+
 Without this, an agent can launder a label through the file system: write a script while reading an untrusted page,
 then run `bash deploy.sh`, a command that looks harmless on its own. With file labels:
 

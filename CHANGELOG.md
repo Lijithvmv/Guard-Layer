@@ -5,6 +5,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- New docs page *What's stable*: which features are core, which are add-ons, and which are experimental (task profiles,
+  file labels, split-instruction detection, extraction, behavioural check). Experimental modules say so in their first
+  lines. A dead-code scan (vulture, counting tests and examples as users) found nothing to remove.
+
 ## [0.8.2] - 2026-10-02
 
 Draft your tool declarations from what your agent actually did.

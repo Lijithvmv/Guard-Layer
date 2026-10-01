@@ -1,5 +1,7 @@
 """Task profiles: the tools (and argument values) a kind of task may use, chosen by trusted code per request.
 
+Experimental (0.8): not yet used outside tests and benchmarks; the profile format may change.
+
 Detection asks "does this text look like an attack?". A task profile asks "is this action part of what the user asked
 for?", which doesn't depend on how an attacker words things or which language they use:
 
