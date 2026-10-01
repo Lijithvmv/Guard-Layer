@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "guardlayer"
-version = "0.7.0"
+version = "0.8.0"
 description = "A lightweight security layer that filters the inputs and outputs of LLM and agent applications — prompt injection, jailbreaks, leakage, secrets, PII and unsafe actions."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -54,6 +54,9 @@ Changelog = "https://github.com/Lijithvmv/Guard-Layer/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/guardlayer"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [".hypothesis", ".pytest_cache", "site", "dist", "benchmarks/data", "benchmarks/results/agentdojo-logs*"]
 
 [tool.ruff]
 line-length = 120

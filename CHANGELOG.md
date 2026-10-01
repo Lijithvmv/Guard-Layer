@@ -5,55 +5,77 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-02
+
+Simpler and faster. One place to describe each tool, a Claude Code hook that answers in about 10 ms, Indian-language
+detection in the core, and a README that says what is proven and what isn't. Several new features ship as
+**experimental**: they work and are tested, but haven't been used outside tests and benchmarks yet.
+
 ### Added
+- **Hook server for Claude Code** (`guardlayer hook claude-code --server`). The command hook starts Python for every
+  event (about 0.6 s on Windows, before and after each tool call). The hook server is a long-running local GuardLayer
+  that Claude Code calls through its HTTP hooks, with the same checks. Before a tool call: 608 ms → 10 ms on Windows.
+  `--server --print-config` prints the settings, including a `SessionStart` hook (`--ensure-server`) that starts the
+  server in the background and warns you if it can't. Loopback only; refuses browser-style requests (an `Origin` header,
+  a non-loopback `Host`, a non-JSON body); optional bearer token (`--token-env`); an edited config is picked up on the
+  next event. **If the server isn't running, Claude Code lets tool calls through**: the command hook remains for where
+  that matters more than speed.
+- **`[tool.NAME]`: everything about one tool in one place**: `capabilities`, `output` (trusted or untrusted),
+  `output_data`, `accepts_untrusted`, `max_data`, `may_send`, `remote`, `arguments`, `destinations`. Until now whether a
+  tool's output is trusted could be said in four places, and where it may send data in six. It expands into the existing
+  `[tools]`, `[session]` and `[labels]` settings, so both forms work together. Unknown keys fail with the list of known
+  ones.
 - **Indian-language detection in the core** (`ignore_instructions_indic`): "ignore (all) previous instructions" in Hindi,
-  Marathi, Bengali, Gujarati, Punjabi, Tamil, Telugu, Kannada, Malayalam and romanised Hindi, in either word order (these
-  languages usually put the verb last). Word lists kept readable in `rules.py` for native-speaker review. No false
-  positives on 2,056 Wikipedia introductions in these languages, 256 chosen because they use these very words
-  (`benchmarks/indic_benign_texts.py`, CC BY-SA text fetched on demand, not committed), nor on 4,913 other benign texts.
-  The referee's false-positive gate now includes the Indian-language set.
-- Task profiles, split-instruction detection and non-text extraction (0.8 steps 1–3; see the design notes).
-- **Behavioural check** (`check_intent`, `acheck_intent`, `needs_intent_check`, also on sessions): replays the
-  conversation with the user's request hidden, through a `replay` function you supply (your own model). If the model
-  still proposes the same action (same tool and destination), it is driven by content the agent read:
-  `injection_driven_action` (review). Independent of the injection's language or wording. One extra model call per
-  checked action; `needs_intent_check` limits it to tools that can act, after untrusted content. Based on MELON
-  (masked re-execution). See *Concepts → Behavioural check*.
+  Marathi, Bengali, Gujarati, Punjabi, Tamil, Telugu, Kannada, Malayalam and romanised Hindi, in either word order. No
+  false positives on 2,056 Wikipedia introductions in these languages (256 chosen because they use the rule's own words)
+  or on 4,913 other benign texts.
+- **ONNX runtime for the classifier** (`runtime = "onnx"`, `multilingual` extra: onnxruntime and tokenizers, no
+  PyTorch). It runs a model directory you downloaded and checked; nothing is fetched for you. Measured with the new
+  `benchmarks/classifier_eval.py` on Horizon Labs' 30-language `prompt-injection-guard-small`: much higher recall on
+  unseen public attacks (deepset 14 → 32 of 60), but new false alarms on normal agent data (11 of 404 AgentDojo tool
+  outputs, 92 of 238 LLMail emails), so it is **documented, not recommended** for blocking (*Recipes → Other languages*).
 
-- **ONNX runtime for the classifier** (`runtime = "onnx"`, `multilingual` extra: onnxruntime + tokenizers, no PyTorch):
-  runs a local model directory you downloaded and checked; nothing is fetched for you. Measured Horizon Labs'
-  30-language `prompt-injection-guard-small` with the new `benchmarks/classifier_eval.py`: much higher recall on unseen
-  public attack sets (deepset 14 → 32 of 60), but new false alarms on benign agent data (11 of 404 AgentDojo tool
-  outputs, 92 of 238 LLMail emails at 0.7), so it is **documented, not recommended** for blocking. See
-  *Recipes → Other languages*.
-
-### Added
-- **Hook server for Claude Code** (`guardlayer hook claude-code --server`): a long-running local GuardLayer that
-  Claude Code calls through HTTP hooks, with the same checks as the command hook. Before a tool call: 608 ms → 10 ms
-  on Windows. `--print-config` with `--server` adds a `SessionStart` hook (`--ensure-server`) that starts it in the
-  background. Loopback only; refuses browser-style requests (Origin header, non-loopback Host, non-JSON body);
-  optional bearer token (`--token-env`); reloads an edited config. If it isn't running, Claude Code lets tool calls
-  through (documented; the command hook remains for where that matters).
-
-### Added (simplification)
-- **`[tool.NAME]`: everything about one tool in one place** (`capabilities`, `output`, `output_data`,
-  `accepts_untrusted`, `max_data`, `may_send`, `remote`, `arguments`, `destinations`). Until now the same facts were
-  spread over `[tools]`, `[session]` and `[labels]` (whether a tool's output is trusted could be said in four places).
-  It expands into those sections, so both forms work together and nothing changes for existing configs. Unknown keys
-  fail with the list of known ones.
+### Added, experimental
+- **Task profiles** (`[tasks.NAME]`, `guard.session(id, task=..., task_args=...)`): the tools a task may use, and
+  argument values bound to the trusted request (`{task.customer_email}`). Outside the profile: `out_of_task` and
+  `task_argument_not_allowed` (review). A session's task can only narrow without an approval.
+- **Instructions split across two pieces of content** (`split_injection`): the end of the previous untrusted content is
+  scanned together with the start of the next. Only a redacted 500-character tail is kept in the session.
+- **PDFs and images in tool results** (`guardlayer.extract`; `extract` and `ocr` extras): text is extracted and scanned;
+  content that can't be read (`unreadable_content`) makes the session untrusted.
+- **Behavioural check** (`check_intent`, `acheck_intent`, `needs_intent_check`): replays the conversation through your
+  own model with the user's request hidden; the same action proposed anyway is `injection_driven_action` (review).
+  **On AgentDojo banking with a local 7B model it flagged nothing** (0 of 30 replays) while 4 of 10 attacks succeeded:
+  without a task, the model only summarised. Measure it on your own agent before relying on it.
 
 ### Changed
-- A tool you list in `remote_tools` yourself is now remote even when you also give it explicit capabilities (the
-  built-in patterns such as `*search*` still give way to explicit capabilities). Before, the listing was silently ignored.
-- **`strict` and `airgap` presets treat every tool result as untrusted** (`[labels] default_integrity = "untrusted"`)
-  unless the tool is declared trusted in `[labels] sources`. `balanced` is unchanged. Measured on AgentDojo banking and
-  Slack: same utility and attack success as before, one extra review on benign banking tasks.
+- **`strict` and `airgap` treat every tool result as untrusted** unless you declare the tool trusted
+  (`[tool.NAME] output = "trusted"`). `balanced` is unchanged. On AgentDojo banking and Slack this gave the same task
+  success and attack success, with one extra review on normal banking tasks.
+- A tool you list in `remote_tools` yourself is now remote even when you also give it explicit capabilities. Before,
+  the listing was silently ignored; the built-in patterns (`*search*`, `mcp__*`, ...) still give way to explicit
+  capabilities.
+- `import guardlayer` no longer loads the compliance module, and the similarity scanner loads its attack corpus on first
+  use, so a process that checks one tool call starts faster. `from guardlayer import build_evidence` works as before.
+- The README is rewritten around what GuardLayer is for, with an evidence table that says how much to trust each number;
+  the full evaluation moved to the documentation.
 
 ### Fixed
 - **Zero-width false positives on Indian-language, Persian and emoji text.** The zero-width joiner and non-joiner are part
-  of correct spelling in these scripts (`जन्‍म`, word-final ZWNJ in Kannada, emoji sequences), but were counted as hidden
-  characters: 105 of 2,056 normal Indian-language texts (5%) were flagged. A joiner that follows a letter of a script that
-  uses joiners no longer counts; after a Latin letter it still does. Now 3 of 2,056. Public benchmark numbers unchanged.
+  of correct spelling in these scripts, but were counted as hidden characters: 105 of 2,056 normal Indian-language texts
+  were flagged. A joiner after a letter of such a script no longer counts; after a Latin letter it still does. Now 3 of
+  2,056.
+
+### What changes on upgrade
+- With `strict` or `airgap`, expect more reviews in sessions that read local files: their output now counts as
+  untrusted. Declare your own content trusted with `[tool.Read] output = "trusted"` (or `[labels] default_integrity =
+  "trusted"` to restore 0.7 behaviour).
+- Indian-language content with an instruction override is now flagged; Indian-language text with zero-width joiners is
+  flagged far less.
+- Session files written by 0.8 carry new fields; 0.7 ignores them, so downgrading keeps working.
+- New rules (`out_of_task`, `task_argument_not_allowed`, `split_injection`, `unreadable_content`,
+  `injection_driven_action`) only fire when you use the feature behind them, except `split_injection` and
+  `unreadable_content`, which apply to sessions that read untrusted content.
 
 ## [0.7.0] - 2026-09-30
 
