@@ -209,6 +209,31 @@ still to withhold.
 Reproduce: `pip install agentdojo==0.1.35` in a separate environment, then
 `python benchmarks/agentdojo_eval.py --model <ollama model> --suites banking,slack --per-suite 10 --max-iters 10`.
 
+### Recorded agent sessions: ADR-Bench (2026-10-02, GuardLayer 0.8.0)
+
+[ADR](https://github.com/uber/ADR) (Uber, Apache-2.0) publishes 303 recorded sessions of a coding agent using 134 MCP
+servers, labelled benign (261) or malicious (42 with recordings). [`benchmarks/adr_eval.py`](https://github.com/Lijithvmv/Guard-Layer/blob/main/benchmarks/adr_eval.py)
+replays every prompt, tool call and tool result through a GuardLayer session; a session counts as *intervened* when a
+tool call would have been held for review or refused. No tools were declared, as in an out-of-the-box deployment.
+
+| Preset | Malicious sessions intervened | Normal sessions intervened |
+|---|---|---|
+| balanced | 9 / 42 | **42 / 261 (16%)** |
+| strict | 25 / 42 | 212 / 261 |
+
+**This is a poor result, and it is reported as such.**
+
+- The malicious sessions are malicious *tool servers*: the user's request is ordinary and the tools' outputs look
+  ordinary (a "credential manager" that collects credentials, an "access auditor"). The harm happens on the server side.
+  No content scanner can see that; only declaring which tools are trusted, and with what, can. Undeclared, GuardLayer
+  caught 9 of 42, all through `trifecta`.
+- **One normal session in six would have been interrupted.** Causes: content rules firing on ordinary tool output
+  (`dangerous_scheme` on `Created file: ...` and `file://` in error messages; `split_letter_obfuscation`), which then
+  trigger `after_injection` on the next call; and `trifecta` on every network-capable MCP call once personal data has
+  appeared in any tool result. Our benign test sets had no MCP tool output, so the referee never saw these.
+- The recordings keep tool names but not arguments, so argument and egress rules couldn't be tested; and it is a
+  replay, so it measures whether GuardLayer would have intervened, not what the agent would have done next.
+
 ### Unseen attacks: LLMail-Inject
 
 The AgentDojo fixes were written after seeing its attacks, so they can't show how GuardLayer does on attacks it has never
