@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-10-02
+
+Draft your tool declarations from what your agent actually did.
+
 ### Added
 - **`guardlayer policy draft AUDIT.jsonl`**: drafts `[tool.NAME]` declarations from what the agent actually used. Every
   MCP server gets `output = "untrusted"`; each tool gets its guessed capabilities, and `output_data` when secrets or
