@@ -189,13 +189,16 @@ def build_pipeline(model: str, host: str, defense: str, stats: dict[str, int], c
     return pipeline
 
 
-def sample(suite, per_suite: int, seed: int) -> tuple[list[str], list[tuple[str, str]]]:  # type: ignore[no-untyped-def]
-    """A reproducible sample: `per_suite` user tasks (for utility), and `per_suite` (user task, injection task) pairs."""
+def sample(suite, per_suite: int, seed: int, pairs_per_suite: int | None = None) -> tuple[list[str], list[tuple[str, str]]]:  # type: ignore[no-untyped-def]
+    """A reproducible sample: `per_suite` user tasks for utility (0 = all of them), and `pairs_per_suite` (user task,
+    injection task) pairs (default: `per_suite`). The same seed and sizes give the same sample as earlier runs."""
     rng = random.Random(seed)
     users = sorted(suite.user_tasks)
     injections = sorted(suite.injection_tasks)
     pairs = sorted((u, i) for u in users for i in injections)
-    return sorted(rng.sample(users, min(per_suite, len(users)))), sorted(rng.sample(pairs, min(per_suite, len(pairs))))
+    n_pairs = per_suite if pairs_per_suite is None else pairs_per_suite
+    picked = sorted(rng.sample(users, min(per_suite, len(users)))) if per_suite else users
+    return picked, sorted(rng.sample(pairs, min(n_pairs, len(pairs))))
 
 
 def _commit() -> str | None:
@@ -214,12 +217,14 @@ def main() -> int:
     p.add_argument("--host", default="http://127.0.0.1:11434")
     p.add_argument("--suites", default="workspace,travel,banking,slack")
     p.add_argument("--benchmark-version", default="v1.2.2")
-    p.add_argument("--attack", default="important_instructions_no_model_name")
+    p.add_argument("--attack", default="important_instructions_no_model_name",
+                   help="attack style(s), comma-separated; each runs on the same pairs")
     p.add_argument("--defenses", default="none,guardlayer",
                    help="none, guardlayer (defaults), guardlayer-untrusted (+ every tool result untrusted), "
                         "guardlayer-strip (cut injections out of tool results instead of withholding them), "
                         "intent-only (the behavioural check alone), guardlayer-intent (defaults + behavioural check)")
-    p.add_argument("--per-suite", type=int, default=10, help="user tasks and attack pairs sampled per suite")
+    p.add_argument("--per-suite", type=int, default=10, help="user tasks sampled per suite for utility (0 = all)")
+    p.add_argument("--pairs-per-suite", type=int, help="attack pairs per suite (default: --per-suite)")
     p.add_argument("--seed", type=int, default=2026)
     p.add_argument("--max-iters", type=int, default=15, help="tool-loop iterations per task (AgentDojo's default is 15)")
     p.add_argument("--config", help="GuardLayer config (default: built-in balanced)")
@@ -230,11 +235,11 @@ def main() -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     meta = {"model": args.model, "benchmark": f"agentdojo {args.benchmark_version}", "attack": args.attack,
-            "guardlayer": __version__, "guardlayer_commit": _commit(), "seed": args.seed, "per_suite": args.per_suite, "max_iters": args.max_iters, "date": time.strftime("%Y-%m-%d")}  # fmt: skip
+            "guardlayer": __version__, "guardlayer_commit": _commit(), "seed": args.seed, "per_suite": args.per_suite, "pairs_per_suite": args.pairs_per_suite, "max_iters": args.max_iters, "date": time.strftime("%Y-%m-%d")}  # fmt: skip
     print(json.dumps(meta), flush=True)
     for suite_name in args.suites.split(","):
         suite = get_suite(args.benchmark_version, suite_name)
-        users, pairs = sample(suite, args.per_suite, args.seed)
+        users, pairs = sample(suite, args.per_suite, args.seed, args.pairs_per_suite)
         for defense in args.defenses.split(","):
             stats = {"blocks": 0, "reviews": 0, "withheld": 0, "stripped": 0, "redacted": 0,
                      "intent_replays": 0, "intent_flags": 0, "intent_errors": 0}  # fmt: skip
@@ -246,28 +251,27 @@ def main() -> int:
             benign = benchmark_suite_without_injections(pipeline, suite, logdir, force_rerun=False, user_tasks=users,
                                                         benchmark_version=args.benchmark_version)  # fmt: skip
             benign_stats = dict(stats)
-            attack = load_attack(args.attack, suite, pipeline)
-            attacked = {"utility_results": {}, "security_results": {}}
-            for user_task, injection_task in pairs:
-                r = benchmark_suite_with_injections(pipeline, suite, attack, logdir, force_rerun=False, user_tasks=[user_task],
-                                                    injection_tasks=[injection_task], benchmark_version=args.benchmark_version)  # fmt: skip
-                attacked["utility_results"].update(r["utility_results"])
-                attacked["security_results"].update(r["security_results"])
+            base = {**meta, "suite": suite_name, "defense": defense,
+                    "benign_n": len(benign["utility_results"]), "benign_utility": sum(benign["utility_results"].values()),
+                    "guard_benign": benign_stats, "user_tasks": users, "pairs": [list(x) for x in pairs]}  # fmt: skip
+            for attack_name in args.attack.split(","):
+                attack = load_attack(attack_name, suite, pipeline)
+                attacked = {"utility_results": {}, "security_results": {}}
+                for user_task, injection_task in pairs:
+                    r = benchmark_suite_with_injections(pipeline, suite, attack, logdir, force_rerun=False, user_tasks=[user_task],
+                                                        injection_tasks=[injection_task], benchmark_version=args.benchmark_version)  # fmt: skip
+                    attacked["utility_results"].update(r["utility_results"])
+                    attacked["security_results"].update(r["security_results"])
+                row = {**base, "attack": attack_name, "attack_n": len(attacked["security_results"]),
+                       "attack_success": sum(attacked["security_results"].values()),
+                       "utility_under_attack": sum(attacked["utility_results"].values()),
+                       "guard_total": dict(stats), "seconds": round(time.perf_counter() - t0)}  # fmt: skip
+                with out.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(row) + "\n")
+                print(f"{suite_name:<10} {defense:<11} {attack_name:<38} benign utility {row['benign_utility']}/{row['benign_n']}  "
+                      f"attack success {row['attack_success']}/{row['attack_n']}  utility under attack "
+                      f"{row['utility_under_attack']}/{row['attack_n']}  {row['seconds']}s", flush=True)  # fmt: skip
             logger.__exit__(None, None, None)
-            row = {
-                **meta, "suite": suite_name, "defense": defense,
-                "benign_n": len(benign["utility_results"]), "benign_utility": sum(benign["utility_results"].values()),
-                "attack_n": len(attacked["security_results"]),
-                "attack_success": sum(attacked["security_results"].values()),
-                "utility_under_attack": sum(attacked["utility_results"].values()),
-                "guard_benign": benign_stats, "guard_total": stats,
-                "user_tasks": users, "pairs": [list(x) for x in pairs], "seconds": round(time.perf_counter() - t0),
-            }  # fmt: skip
-            with out.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(row) + "\n")
-            print(f"{suite_name:<10} {defense:<11} benign utility {row['benign_utility']}/{row['benign_n']}  "
-                  f"attack success {row['attack_success']}/{row['attack_n']}  utility under attack "
-                  f"{row['utility_under_attack']}/{row['attack_n']}  guard {stats}  {row['seconds']}s", flush=True)  # fmt: skip
     return 0
 
 
