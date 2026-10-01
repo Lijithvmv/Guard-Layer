@@ -448,6 +448,8 @@ class SessionPolicy:
       content must not drive it) and/or `max_confidentiality` (the most sensitive data it may receive).
     * `default_integrity`: `"trusted"` (default: local, read-only tools are trusted) or
       `"untrusted"` (every tool result is untrusted unless listed in `trusted_tools`).
+    * `trifecta_on_pii`: personal data found in tool output counts as sensitive for `trifecta` (as secrets always
+      do). Off by default: it makes the session private instead; exact copies leaving are still caught.
     """
 
     enabled: bool = True
@@ -461,6 +463,7 @@ class SessionPolicy:
     default_integrity: str = "trusted"
     destinations: list[dict[str, Any]] = field(default_factory=list)
     tasks: dict[str, Any] = field(default_factory=dict)
+    trifecta_on_pii: bool = False
 
     def __post_init__(self) -> None:
         merged = dict(DEFAULT_SESSION_ACTIONS)
@@ -575,13 +578,13 @@ class SessionPolicy:
 
 
 # ------------------------------------------------------------------------------------- tracking
-def record_sensitive_values(state: SessionState, text: str, result: ScanResult) -> bool:
-    """Fingerprint secret/PII spans in `text`. Returns True when anything sensitive was found."""
-    found = False
+def record_sensitive_values(state: SessionState, text: str, result: ScanResult) -> set[str]:
+    """Fingerprint secret/PII spans in `text`. Returns the categories found (`secret`, `pii`)."""
+    found: set[str] = set()
     for d in result.detections:
         if d.category not in SENSITIVE_CATEGORIES or d.rule in _NOT_SENSITIVE_PII:
             continue
-        found = True
+        found.add(d.category)
         state.sensitive_kinds = _add(state.sensitive_kinds, [d.rule], MAX_SOURCES)
         if d.span:
             token = _value_token(text[d.span[0] : d.span[1]])
@@ -603,8 +606,15 @@ def observe_content(
         state.untrusted_sources = _add(state.untrusted_sources, [source], MAX_SOURCES)
     if not trusted and result.effective_verdict >= policy.hostile_min_verdict and HOSTILE_CATEGORIES & set(result.categories):
         state.hostile_sources = _add(state.hostile_sources, [source], MAX_SOURCES)
-    if record_sensitive_values(state, text, result):
+    found = record_sensitive_values(state, text, result)
+    # Secrets make a session sensitive (restricted). Personal data makes it private: its exact values are still
+    # fingerprinted (sensitive_data_egress), but it doesn't turn every later network call into a review unless
+    # `trifecta_on_pii` is set (strict and airgap). Replaying ADR-Bench showed sample emails in ordinary tool output
+    # interrupting one normal session in ten.
+    if Category.SECRET.value in found or (found and policy.trifecta_on_pii):
         state.sensitive_sources = _add(state.sensitive_sources, [source], MAX_SOURCES)
+    elif found:
+        state.private_sources = _add(state.private_sources, [source], MAX_SOURCES)
     declared = policy.source_label(tool)
     if declared is not None:
         if declared.confidentiality is Confidentiality.RESTRICTED:

@@ -21,7 +21,12 @@ LINK = Category.UNSAFE_LINK.value
 _MD_IMAGE_RE = re.compile(r"!\[[^\]]{0,200}\]\(\s*<?([^)\s>]+)")
 _HTML_SRC_RE = re.compile(r"<(?:img|iframe|script|link|source|video|audio)\b[^>]{0,300}?\b(?:src|href)\s*=\s*[\"']?([^\"'\s>]+)", re.IGNORECASE)
 _URL_RE = re.compile(r"\b(?:https?|ftp|wss?)://[^\s<>\"'`)\]]+", re.IGNORECASE)
-_SCHEME_RE = re.compile(r"\b(javascript|vbscript|data\s*:\s*text/html|file):", re.IGNORECASE)
+# javascript:/vbscript: followed directly by code, data:text/html anywhere; file: only where it is a link (a markdown
+# target or an href/src), since "Audio File: promo.wav" and file:// URIs in tool errors are ordinary text.
+_SCHEME_RE = re.compile(
+    r"\b(javascript|vbscript):(?=[^\s:])|\b(data\s*:\s*text/html)|(?:\]\(\s*<?|(?:href|src)\s*=\s*[\"']?\s*)(file):",
+    re.IGNORECASE,
+)
 _IP_HOST_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$|^\[[0-9a-f:]+\]$", re.IGNORECASE)
 
 
@@ -83,7 +88,8 @@ class LinkScanner(BaseScanner):
                 add("untrusted_domain", LINK, 0.5, f"Link to a domain outside the allow-list: {host}.", span, url)
 
         for match in _SCHEME_RE.finditer(text):
-            add("dangerous_scheme", LINK, 0.7, f"Dangerous URL scheme '{match.group(1)}:'.", match.span(), match.group())
+            scheme = next(g for g in match.groups() if g)
+            add("dangerous_scheme", LINK, 0.7, f"Dangerous URL scheme '{scheme.split(':')[0].strip()}:'.", match.span(), match.group())
         return found
 
 

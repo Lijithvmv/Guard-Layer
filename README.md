@@ -108,7 +108,7 @@ Everything below is reproducible from `benchmarks/`; the full write-up, includin
 | Detection, held-out public datasets (never used to tune) | recall 0.23 (deepset), 0.57 (Gandalf), 0.21 (SPML), 0.72 (jailbreak-classification); **no false positives** on about 7,200 normal texts | solid; shows detection alone is not enough |
 | Detection, LLMail-Inject attacks that hijacked a real model, held-out teams | 44.5% caught, 0 false positives on its normal emails | solid for email-style injection |
 | AgentDojo (ETH Zurich), all four suites, local 7B model | attacks that worked: banking 7→0, Slack 4→0, workspace 1→0, travel 3→0 (out of 10 each); normal tasks: banking 6→5, Slack 8→6, workspace and travel unchanged | **small**: 40 of 949 attack pairs, one attack style that the rules were fixed on, one model |
-| ADR-Bench (Uber): 303 recorded sessions with 134 MCP servers, replayed, no tools declared | balanced stepped in on 9 of 42 malicious sessions and **42 of 261 normal ones (16%)** | third-party, real tool output; a poor result we're fixing (malicious tool servers need declarations; the false alarms have known causes) |
+| ADR-Bench (Uber): 303 recorded sessions with 134 MCP servers, replayed, no tools declared | 0.8.0: 16% of normal sessions interrupted. **0.8.1: 4%** on the held-out half (5 of 118); 0 of 23 malicious sessions | third-party, real tool output. The malicious cases are malicious tool servers with normal-looking output: undeclared, GuardLayer can't tell them apart |
 | Tool policy, everyday dev commands | 31 of 31 attack commands caught, 0 of 23 normal commands flagged | small, hand-made |
 
 Not measured yet: a large AgentDojo run across many attack styles, other models, and real users. When an attack is

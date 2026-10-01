@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import ast
 import collections
+import hashlib
 import json
 import sys
 import time
@@ -31,6 +32,11 @@ from guardlayer import Verdict, __version__
 from guardlayer.config import build_guard
 
 RECORDINGS = "Detection/benchmark/adr_bench_20251017_151604.jsonl"
+SPLIT_SALT = "guardlayer-adr-split-v1:"  # fixed before any fix was written; fixes are studied on "dev" only
+
+
+def is_heldout(task_id: str) -> bool:
+    return int(hashlib.sha256((SPLIT_SALT + task_id).encode()).hexdigest(), 16) % 2 == 0
 
 
 def result_text(content: str) -> tuple[str | None, str]:
@@ -82,12 +88,15 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--adr", required=True, type=Path, help="path to a clone of github.com/uber/ADR")
     p.add_argument("--presets", default="balanced,strict")
+    p.add_argument("--split", default="all", choices=["all", "dev", "heldout"], help="half of the sessions (fixed split)")
     p.add_argument("--out", default="benchmarks/results/adr-bench.jsonl")
     args = p.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     labels = {str(t["task_id"]): t["ground_truth"] for t in json.loads((args.adr / "Detection/tasks.json").read_text(encoding="utf-8"))["tasks"]}
     sessions = [r for r in map(json.loads, (args.adr / RECORDINGS).open(encoding="utf-8")) if r.get("type") == "task"]
+    if args.split != "all":
+        sessions = [s for s in sessions if is_heldout(s["task_id"]) == (args.split == "heldout")]
     for preset in args.presets.split(","):
         guard = build_guard({"preset": preset})
         t0 = time.perf_counter()
@@ -102,14 +111,14 @@ def main() -> int:
             counts[truth]["intervened"] += out["intervened"]
             counts[truth]["content_flagged"] += out["content_flagged"]
             rules[truth].update(out["rules"])
-        row = {"date": time.strftime("%Y-%m-%d"), "guardlayer": __version__, "preset": preset, "benchmark": "ADR-Bench 20251017",
+        row = {"date": time.strftime("%Y-%m-%d"), "guardlayer": __version__, "preset": preset, "split": args.split, "benchmark": "ADR-Bench 20251017",
                "malicious": dict(counts["malicious"]), "benign": dict(counts["benign"]),
                "top_rules_malicious": rules["malicious"].most_common(8), "top_rules_benign": rules["benign"].most_common(8),
                "seconds": round(time.perf_counter() - t0, 1)}  # fmt: skip
         with Path(args.out).open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row) + "\n")
         m, b = counts["malicious"], counts["benign"]
-        print(f"{preset:9} malicious: intervened {m['intervened']}/{m['n']}, content flagged {m['content_flagged']}/{m['n']}   "
+        print(f"{preset:9} [{args.split}] malicious: intervened {m['intervened']}/{m['n']}, content flagged {m['content_flagged']}/{m['n']}   "
               f"benign: intervened {b['intervened']}/{b['n']}, content flagged {b['content_flagged']}/{b['n']}   {row['seconds']}s")  # fmt: skip
         print("   malicious rules:", rules["malicious"].most_common(6))
         print("   benign rules:   ", rules["benign"].most_common(6))

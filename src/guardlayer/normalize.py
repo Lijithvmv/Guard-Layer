@@ -68,6 +68,16 @@ def despace(text: str) -> str:
     return _SPACED_RE.sub(lambda m: _SPACED_SEP_RE.sub("", m.group()), text)
 
 
+_TOKEN_RE = re.compile(r"\S+")
+_LETTER_RE = re.compile(r"[^\W\d_]")
+
+
+def leetspeak(text: str) -> str:
+    """Leetspeak decoded in words that have letters (`1gn0re` -> `ignore`). A token with no letters is a number, an
+    IP address or a version (`1.1.1.1`, `3.14`), not leetspeak: decoding it turned `1.1.1.1` into `i.i.i.i`."""
+    return _TOKEN_RE.sub(lambda m: m.group().translate(_LEET) if _LETTER_RE.search(m.group()) else m.group(), text)
+
+
 def text_variants(text: str) -> dict[str, str]:
     """Alternative views of `text` worth scanning, excluding the raw text itself.
 
@@ -77,7 +87,7 @@ def text_variants(text: str) -> dict[str, str]:
     norm = normalize(text)
     candidates = {
         "normalized": norm,
-        "leetspeak": norm.translate(_LEET),
+        "leetspeak": leetspeak(norm),
         # De-space before collapsing whitespace: wider gaps mark the original word boundaries.
         "despaced": _WS_RE.sub(" ", despace(normalize(text, collapse_whitespace=False))).strip(),
         "smuggled": decode_tag_chars(text),

@@ -5,6 +5,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-02
+
+Fewer false alarms on real agent tool output. Replaying ADR-Bench (Uber: 303 recorded sessions with 134 MCP servers)
+showed 0.8.0 interrupting about one normal session in six. Fixes were studied on half of the sessions and checked on the
+other half: **18% → 4% of normal sessions interrupted** on the held-out half. Detection on the public datasets,
+LLMail-Inject and the Indian-language set is unchanged.
+
+### Changed
+- **Personal data in tool output makes a session private, not sensitive.** Exact copies of those values leaving the
+  machine are still blocked (`sensitive_data_egress`) and declared sinks still enforce their limits, but personal data
+  alone no longer triggers `trifecta`. In recorded AgentDojo runs that rule, on personal data alone, interrupted 12 of 130
+  normal tasks and was the only thing that stopped 1 of 130 attacks. Secrets still make a session sensitive. `strict`
+  and `airgap` keep the old behaviour (`[session] trifecta_on_pii = true`).
+
+### Fixed
+- Decimal numbers were read as card, phone or Aadhaar numbers (`31.41592653589793`, `9724.1633798299`).
+- Leetspeak decoding turned numbers into letters, so IP addresses such as `1.1.1.1` looked like split letters
+  (`i.i.i.i`). Tokens without letters are no longer decoded.
+- `dangerous_scheme` fired on "Audio File: x.wav", "Created file: ..." and `file://` in error messages. `file:` now
+  counts only as a link target (markdown or `href`/`src`); `javascript:`/`vbscript:` only when code follows.
+
 ## [0.8.0] - 2026-10-02
 
 Simpler and faster. One place to describe each tool, a Claude Code hook that answers in about 10 ms, Indian-language

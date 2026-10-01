@@ -3,7 +3,7 @@
 services:
   guardlayer:
     build: ..
-    image: guardlayer:0.8.0
+    image: guardlayer:0.8.1
     environment:
       GUARDLAYER_API_KEY: ${GUARDLAYER_API_KEY:?set GUARDLAYER_API_KEY}
       GUARDLAYER_CONFIG: /etc/guardlayer/guardlayer.toml

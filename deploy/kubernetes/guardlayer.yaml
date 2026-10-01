@@ -60,7 +60,7 @@ spec:
             matchLabels: {app.kubernetes.io/name: guardlayer}
       containers:
         - name: guardlayer
-          image: guardlayer:0.8.0          # build from the repo Dockerfile and push to your registry; pin by digest
+          image: guardlayer:0.8.1          # build from the repo Dockerfile and push to your registry; pin by digest
           imagePullPolicy: IfNotPresent
           ports:
             - {name: http, containerPort: 8000}

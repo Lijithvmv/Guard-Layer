@@ -34,8 +34,13 @@ assert r.verdict is Verdict.REVIEW and {d.rule for d in r.detections} == {"trife
 - **Untrusted:** results of [remote tools](agents.md#remote-tools) (network or exec capable, untagged, MCP, search,
   web, mail…), anything passed to `scan_context`, and tools you list in `untrusted_tools`.
 - **Hostile:** untrusted content in which an injection was detected (at `flag` or above, configurable).
-- **Sensitive:** secrets or personal data found in what the agent read or was given, and credential or `.env` files it
-  opened.
+- **Sensitive:** secrets found in what the agent read or was given, and credential or `.env` files it opened.
+- **Private:** personal data (email addresses, phone numbers, card numbers, IBANs…) found in what the agent read. Exact
+  copies of those values leaving the machine are still caught (`sensitive_data_egress`), and sinks you declare still
+  enforce their limits, but personal data alone doesn't trigger `trifecta`: ordinary tool output is full of it, and in
+  recorded agent sessions it held back between one normal session in ten and one in six, while being the only thing
+  that stopped one attack in 130. The
+  `strict` and `airgap` presets set `[session] trifecta_on_pii = true` to keep the stricter behaviour.
 
 !!! warning "Local data is trusted by default"
     Results of local, read-only tools (`read_file`, a database query) are **trusted** unless you say otherwise. If

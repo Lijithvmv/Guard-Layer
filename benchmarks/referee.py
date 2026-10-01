@@ -43,7 +43,20 @@ TARGET_SPECIFIC = ["contact@contact", "confirmation", "zenith", "q2 budget", "ll
 _GUARDS: dict[str, object] = {}
 
 
-def benign_sets(llmail_benign: list[str]) -> dict[str, list[str]]:
+def adr_benign_outputs(adr: Path) -> list[str]:
+    """Tool outputs from ADR-Bench's benign recorded sessions (github.com/uber/ADR): real MCP tool output."""
+    from adr_eval import RECORDINGS, result_text
+
+    tasks = json.loads((adr / "Detection/tasks.json").read_text(encoding="utf-8"))["tasks"]
+    benign = {str(t["task_id"]) for t in tasks if t["ground_truth"] == "benign"}
+    out = []
+    for s in map(json.loads, (adr / RECORDINGS).open(encoding="utf-8")):
+        if s.get("type") == "task" and str(int(s["task_id"].split("_")[1])) in benign:
+            out += [t for m in s["conversation"] if m["message_type"] == "tool_result" and (t := result_text(str(m["content"]))[1].strip())]
+    return out
+
+
+def benign_sets(llmail_benign: list[str], adr: Path | None = None) -> dict[str, list[str]]:
     sets: dict[str, list[str]] = {"public": [], "agentdojo": [], "llmail": list(llmail_benign)}
     for name in PUBLIC_BENIGN:
         path = DATA / f"{name}.jsonl"
@@ -52,6 +65,8 @@ def benign_sets(llmail_benign: list[str]) -> dict[str, list[str]]:
     path = DATA / "agentdojo_benign.jsonl"
     if path.exists():
         sets["agentdojo"] = [json.loads(line)["text"] for line in path.open(encoding="utf-8")]
+    if adr is not None:
+        sets["adr_tool_outputs"] = adr_benign_outputs(adr)
     path = DATA / "indic_benign.jsonl"  # benchmarks/indic_benign_texts.py (Wikipedia, CC BY-SA; not committed)
     if path.exists():
         sets["indic"] = [json.loads(line)["text"] for line in path.open(encoding="utf-8")]
@@ -78,6 +93,7 @@ def main() -> int:
     p.add_argument("--data", required=True, type=Path, help="directory with the LLMail-Inject files")
     p.add_argument("--candidate", help="candidate rule pack (TOML)")
     p.add_argument("--list-dev-misses", type=int, metavar="N", help="print N random dev attacks the current guard misses")
+    p.add_argument("--adr", type=Path, help="a clone of github.com/uber/ADR: adds its benign MCP tool outputs to the FP gate")
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--out", default="benchmarks/results/referee.jsonl")
     args = p.parse_args()
@@ -101,7 +117,7 @@ def main() -> int:
 
     rules = load_rules(args.candidate)
     names = {r.name for r in rules}
-    benign = benign_sets(llmail_benign)
+    benign = benign_sets(llmail_benign, args.adr)
     groups = {"dev_hijacked": dev, "heldout_hijacked": held, **{f"benign_{k}": v for k, v in benign.items()}}
     texts = sorted({t for g in groups.values() for t in g})
     t0 = time.perf_counter()

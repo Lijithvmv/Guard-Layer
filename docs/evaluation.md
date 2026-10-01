@@ -234,6 +234,23 @@ tool call would have been held for review or refused. No tools were declared, as
 - The recordings keep tool names but not arguments, so argument and egress rules couldn't be tested; and it is a
   replay, so it measures whether GuardLayer would have intervened, not what the agent would have done next.
 
+**What 0.8.1 changed.** Before any fix was written the sessions were split in two by a salted hash of the task id
+(`--split dev|heldout`); the causes were studied on the dev half only. Four fixes: floats no longer read as card, phone
+or Aadhaar numbers; leetspeak decoding skips tokens with no letters (`1.1.1.1` had become `i.i.i.i`, "split letters");
+`file:` counts only inside a link; and personal data in tool output makes a session *private* rather than *sensitive*,
+so it no longer triggers `trifecta` (`strict` and `airgap` keep it).
+
+| `balanced` | Normal sessions interrupted, before → after | Malicious sessions, before → after |
+|---|---|---|
+| Dev half (studied) | 21 / 143 → 2 / 143 | 6 / 19 → 3 / 19 |
+| **Held-out half** | **21 / 118 → 5 / 118** | 3 / 23 → 0 / 23 |
+
+The malicious "catches" that went away came from the same `trifecta` firing on personal data that hit normal sessions
+about as often: it wasn't telling them apart. Checked against what the change could cost elsewhere: in our recorded
+AgentDojo runs, `trifecta` on personal data alone interrupted 12 of 130 normal tasks and was the only thing that stopped
+1 of 130 attacks. Public datasets, LLMail-Inject and the Indian-language set are unchanged (same recall, zero false
+positives).
+
 ### Unseen attacks: LLMail-Inject
 
 The AgentDojo fixes were written after seeing its attacks, so they can't show how GuardLayer does on attacks it has never

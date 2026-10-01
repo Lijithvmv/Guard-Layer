@@ -73,15 +73,18 @@ def _valid_ip(s: str) -> bool:
     return not (ip.is_loopback or ip.is_unspecified)
 
 
+_DECIMAL_RE = re.compile(r"\d+\.\d+")
+
+
 def _valid_phone(s: str) -> bool:
     n = len(_digits(s))
-    return 10 <= n <= 15
+    return 10 <= n <= 15 and not _DECIMAL_RE.fullmatch(s.strip())  # 9724.1633798299 is a measurement, not a number to call
 
 
 # entity -> (pattern, severity, validator)
 _ENTITIES: dict[str, tuple[str, float, Callable[[str], bool] | None]] = {
-    "credit_card": (r"(?<![\d-])(?:\d[ -]?){12,18}\d(?![\d-])", 0.8, lambda s: 13 <= len(_digits(s)) <= 19 and luhn_valid(_digits(s))),
-    "aadhaar": (r"(?<!\d)[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}(?!\d)", 0.7, lambda s: verhoeff_valid(_digits(s))),
+    "credit_card": (r"(?<![\d-])(?<!\d\.)(?:\d[ -]?){12,18}\d(?![\d-])(?!\.\d)", 0.8, lambda s: 13 <= len(_digits(s)) <= 19 and luhn_valid(_digits(s))),
+    "aadhaar": (r"(?<!\d)(?<!\d\.)[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}(?!\d)(?!\.\d)", 0.7, lambda s: verhoeff_valid(_digits(s))),
     "us_ssn": (r"(?<!\d)(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?!\d)", 0.8, None),
     "iban": (r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,4})?\b", 0.6, iban_valid),
     # Starts only where a run of local-part characters starts, with RFC 5321 length caps: an unanchored `[...]+@` retried
