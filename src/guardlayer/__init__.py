@@ -11,7 +11,6 @@ __version__ = "0.7.0"
 
 from guardlayer.audit import AuditLogger, AuditSigner, AuditVerification, verify_audit_log  # noqa: E402
 from guardlayer.canary import Canary, CanaryManager  # noqa: E402
-from guardlayer.compliance import EvidencePack, build_evidence  # noqa: E402
 from guardlayer.labels import Confidentiality, Integrity, Label  # noqa: E402
 from guardlayer.models import Action, Category, Detection, Direction, ScanContext, ScanResult, Verdict  # noqa: E402
 from guardlayer.pipeline import Guard, GuardBlocked, GuardLayer, Policy, default_scanners  # noqa: E402
@@ -100,3 +99,13 @@ __all__ = [
     "ClassifierScanner",
     "LLMJudgeScanner",
 ]
+
+_LAZY = {"EvidencePack": "guardlayer.compliance", "build_evidence": "guardlayer.compliance"}
+
+
+def __getattr__(name: str):  # add-ons load on first use, so `import guardlayer` (and every hook call) stays fast
+    if name in _LAZY:
+        import importlib
+
+        return getattr(importlib.import_module(_LAZY[name]), name)
+    raise AttributeError(f"module 'guardlayer' has no attribute {name!r}")

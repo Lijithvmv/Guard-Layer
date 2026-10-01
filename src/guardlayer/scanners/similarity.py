@@ -36,14 +36,24 @@ class SimilarityScanner(BaseScanner):
         directions: Iterable[str] | None = None,
     ) -> None:
         super().__init__(directions)
-        self.store = store if store is not None else VectorStore(embedder)
-        if load_builtin and store is None:
-            self.store.add(builtin_attack_corpus(), {"source": "builtin"})
-        if corpus_file:
-            self.store.load(corpus_file)
+        self._store = store if store is not None else VectorStore(embedder)
+        # Loading the corpus costs tens of milliseconds, which a short-lived process (a hook checking one tool call,
+        # where this scanner doesn't run) shouldn't pay. It loads on first use, in the same order as before.
+        self._pending = (load_builtin and store is None, corpus_file)
         self.threshold = threshold
         self.window_sentences = window_sentences
         self.max_windows = max_windows
+
+    @property
+    def store(self) -> VectorStore:
+        if self._pending is not None:
+            builtin, corpus_file = self._pending
+            self._pending = None
+            if builtin:
+                self._store.add(builtin_attack_corpus(), {"source": "builtin"})
+            if corpus_file:
+                self._store.load(corpus_file)
+        return self._store
 
     def _windows(self, text: str) -> list[str]:
         sentences = [s for s in _SENTENCE_RE.split(text.strip()) if s.strip()]
