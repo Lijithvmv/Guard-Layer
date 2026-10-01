@@ -13,6 +13,7 @@
     guardlayer evidence export audit.jsonl --format csv -o evidence.csv   # control-mapped evidence pack
     guardlayer evidence controls              # frameworks and controls GuardLayer maps to
     guardlayer hook claude-code --print-config   # settings.json snippet for the Claude Code hook
+    guardlayer hook claude-code --server --print-config   # the same, answered by a long-running server (faster)
     guardlayer serve --port 8000              # REST API (needs the `api` extra)
 
 `scan` exits 1 when the verdict is BLOCK (or at/above `--fail-on`), so it composes in CI.
@@ -127,6 +128,11 @@ def main(argv: list[str] | None = None) -> int:
     cc.add_argument("--state-dir", help="Session state directory (default ~/.guardlayer/sessions or GUARDLAYER_STATE_DIR).")
     cc.add_argument("--block-prompts", action="store_true", help="Also block user prompts that GuardLayer blocks.")
     cc.add_argument("--print-config", action="store_true", help="Print the settings.json hooks snippet and exit.")
+    cc.add_argument("--server", action="store_true",
+                    help="Run as a long-running local server for Claude Code's HTTP hooks (with --print-config: print that setup).")
+    cc.add_argument("--ensure-server", action="store_true", help="Start the server if it isn't running (a SessionStart hook).")
+    cc.add_argument("--port", type=int, help="Server port (default: derived from --config and --preset).")
+    cc.add_argument("--token-env", help="Require a bearer token, read from this environment variable (shared machines).")
 
     serve = sub.add_parser("serve", help="Run the REST API.")
     serve.add_argument("--host", default="127.0.0.1")
@@ -185,15 +191,45 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if args.strict and warned else 0
 
     if args.command == "hook":
-        from guardlayer.integrations import claude_code
+        from guardlayer.integrations import claude_code, hookserver
 
+        config = Path(args.config).resolve().as_posix() if args.config else None
+        state_dir = Path(args.state_dir).expanduser().resolve().as_posix() if args.state_dir else None
+        port = args.port or hookserver.default_port(config, args.preset)
+        extra = [*(["--state-dir", state_dir] if state_dir else []), *(["--block-prompts"] if args.block_prompts else []),
+                 *(["--token-env", args.token_env] if args.token_env else [])]  # fmt: skip
         if args.print_config:
             command = claude_code.default_command(args.config, args.preset)
-            if args.state_dir:
-                command += f' --state-dir "{Path(args.state_dir).expanduser().resolve().as_posix()}"'
+            if state_dir:
+                command += f' --state-dir "{state_dir}"'
             if args.block_prompts:
                 command += " --block-prompts"
-            print(json.dumps(claude_code.settings_snippet(command), indent=2))
+            if args.server:
+                ensure = command + f" --ensure-server --port {port}" + (f" --token-env {args.token_env}" if args.token_env else "")
+                print(json.dumps(hookserver.settings_snippet(port, ensure, token_env=args.token_env), indent=2))
+            else:
+                print(json.dumps(claude_code.settings_snippet(command), indent=2))
+            return 0
+        token = os.environ.get(args.token_env) if args.token_env else None
+        if args.token_env and not token:
+            print(f"--token-env {args.token_env}: that environment variable is empty", file=sys.stderr)
+            return 2
+        if args.ensure_server:
+            start = [sys.executable, "-m", "guardlayer.cli", *(["--config", config] if config else []),
+                     *(["--preset", args.preset] if args.preset else []), "hook", "claude-code", "--server", "--port", str(port), *extra]  # fmt: skip
+            ok, message = hookserver.ensure_server(port, start, config=config, preset=args.preset, token=token)
+            if not ok:  # shown to the user; tool calls go unchecked until the server runs
+                print(json.dumps({"systemMessage": f"GuardLayer: {message}. Tool calls are NOT being checked until it runs."}))
+            return 0
+        if args.server:
+            service = hookserver.HookService(lambda: claude_code.configure_guard(build_guard(config), state_dir), config=config,
+                                             preset=args.preset, block_prompts=args.block_prompts, token=token)  # fmt: skip
+            server = hookserver.make_server(service, port)
+            print(f"GuardLayer hook server on http://{hookserver.HOST}:{port}{hookserver.PATH} (pid {os.getpid()})", file=sys.stderr, flush=True)
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                pass
             return 0
         guard = claude_code.configure_guard(build_guard(args.config), args.state_dir)
         return claude_code.run(guard, block_prompts=args.block_prompts)

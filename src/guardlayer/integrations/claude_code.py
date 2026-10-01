@@ -17,6 +17,7 @@ or `GUARDLAYER_STATE_DIR`, or `--state-dir`), keyed by Claude Code's `session_id
 and hashed fingerprints are stored, never the content.
 
 Install:  guardlayer hook claude-code --print-config   (merge the output into .claude/settings.json)
+Faster:   guardlayer hook claude-code --server --print-config   (a long-running server; see `hookserver`)
 """
 
 from __future__ import annotations
@@ -161,6 +162,19 @@ def configure_guard(guard: GuardLayer, state_dir: str | Path | None = None) -> G
     return guard
 
 
+def failure_output(guard: GuardLayer, event: Mapping[str, Any], exc: BaseException) -> dict[str, Any] | None:
+    """What to answer when handling an event failed: deny a tool call if the guard fails closed, else no opinion."""
+    if guard.policy.fail_closed and event.get("hook_event_name") == "PreToolUse":
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": f"GuardLayer failed closed: {type(exc).__name__}",
+            }
+        }
+    return None
+
+
 def run(guard: GuardLayer, *, block_prompts: bool = False, stdin: Any = None, stdout: Any = None) -> int:
     """Entry point for the hook: read one event from stdin, print the decision, exit 0."""
     stdin = stdin if stdin is not None else sys.stdin
@@ -172,15 +186,8 @@ def run(guard: GuardLayer, *, block_prompts: bool = False, stdin: Any = None, st
         output = handle_event(event, guard, block_prompts=block_prompts)
     except Exception as exc:  # a crashing hook must not wedge the session
         print(f"GuardLayer hook error: {type(exc).__name__}: {exc}", file=sys.stderr)
-        if guard.policy.fail_closed and event.get("hook_event_name") == "PreToolUse":
-            output = {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": f"GuardLayer failed closed: {type(exc).__name__}",
-                }
-            }
-        else:
+        output = failure_output(guard, event, exc)
+        if output is None:
             return 0
     if output is not None:
         stdout.write(json.dumps(output))

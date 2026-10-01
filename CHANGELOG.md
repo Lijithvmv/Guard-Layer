@@ -27,6 +27,14 @@ All notable changes to this project are documented here. The format follows
   outputs, 92 of 238 LLMail emails at 0.7), so it is **documented, not recommended** for blocking. See
   *Recipes → Other languages*.
 
+### Added
+- **Hook server for Claude Code** (`guardlayer hook claude-code --server`): a long-running local GuardLayer that
+  Claude Code calls through HTTP hooks, with the same checks as the command hook. Before a tool call: 608 ms → 10 ms
+  on Windows. `--print-config` with `--server` adds a `SessionStart` hook (`--ensure-server`) that starts it in the
+  background. Loopback only; refuses browser-style requests (Origin header, non-loopback Host, non-JSON body);
+  optional bearer token (`--token-env`); reloads an edited config. If it isn't running, Claude Code lets tool calls
+  through (documented; the command hook remains for where that matters).
+
 ### Added (simplification)
 - **`[tool.NAME]`: everything about one tool in one place** (`capabilities`, `output`, `output_data`,
   `accepts_untrusted`, `max_data`, `may_send`, `remote`, `arguments`, `destinations`). Until now the same facts were

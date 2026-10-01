@@ -42,9 +42,9 @@ Generated from the source docstrings. Everything here is importable from `guardl
 
 ::: guardlayer.verify_audit_log
 
-::: guardlayer.build_evidence
+::: guardlayer.compliance.build_evidence
 
-::: guardlayer.EvidencePack
+::: guardlayer.compliance.EvidencePack
 
 ## Integrations
 

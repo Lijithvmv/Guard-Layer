@@ -56,6 +56,8 @@ guardlayer --config pilot.toml hook claude-code --print-config
 
 The command in the output points at your pilot environment and config. In observe mode the hook never blocks or asks;
 Claude Code behaves exactly as before, apart from about a second per tool call on Windows (less on macOS and Linux).
+To remove that delay, add `--server` to the command above: a background GuardLayer answers in about 10 ms instead
+(see [the hook server](../integrations/claude-code.md#faster-the-hook-server), including its one trade-off).
 
 !!! tip "Repositories full of attack samples"
     If the project is a security tool with injection strings in its tests, add `[tool.Read]` and `[tool.Grep]` tables with

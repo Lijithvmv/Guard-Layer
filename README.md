@@ -51,7 +51,7 @@ guardlayer audit report pilot-audit.jsonl --since-days 1           # what it wou
 
 Nothing is blocked in `observe` mode. After a week of real work, switch the preset to `balanced`. The hook only
 ever tightens Claude Code's own permissions (it returns `deny` or `ask`, never `allow`). Each hook call starts a Python
-process: about 1 s on Windows, less on Linux and macOS. See the [pilot guide](https://lijithvmv.github.io/Guard-Layer/getting-started/pilot/).
+process (about 0.6 s on Windows); add `--server` for a background GuardLayer that answers in about 10 ms. See the [pilot guide](https://lijithvmv.github.io/Guard-Layer/getting-started/pilot/).
 
 ## Quickstart: your own agent
 
