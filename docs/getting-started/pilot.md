@@ -84,7 +84,19 @@ show. Misses matter as much as false alarms.
 
 Keep the log honest: `guardlayer audit verify pilot-audit.jsonl` checks nobody (including you) edited it.
 
-## Day 7: decide what to enforce
+## Day 7: describe your tools, then decide what to enforce
+
+A week of the audit log lists every tool the agent really used. Turn it into a draft of tool declarations:
+
+```bash
+guardlayer --config pilot.toml policy draft pilot-audit.jsonl --claude-code -o tools.toml
+```
+
+Each MCP server gets `output = "untrusted"` (whoever runs it writes what it returns), and each tool gets its guessed
+capabilities and what was seen in its output (secrets, personal data, injections), with lines marked `CHECK` where
+your judgement matters most. Correct it, remove any server you don't recognise, and paste the `[tool.*]` tables into
+`pilot.toml`. This is the step that makes GuardLayer both safer and quieter: without it, a malicious tool server looks
+exactly like a normal one.
 
 Enforce only what had no false alarms, and keep observing the rest:
 

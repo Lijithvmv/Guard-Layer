@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`guardlayer policy draft AUDIT.jsonl`**: drafts `[tool.NAME]` declarations from what the agent actually used. Every
+  MCP server gets `output = "untrusted"`; each tool gets its guessed capabilities, and `output_data` when secrets or
+  personal data were seen in its output, with lines marked `CHECK` where judgement is needed. Tools GuardLayer already
+  knows (Claude Code built-ins, your config) aren't redeclared. Adopting the draft never weakens a tool: a remote tool
+  given explicit read-only capabilities is kept remote (`remote = true`). Prompted by ADR-Bench, where undeclared,
+  malicious tool servers looked exactly like normal ones.
+
 ## [0.8.1] - 2026-10-02
 
 Fewer false alarms on real agent tool output. Replaying ADR-Bench (Uber: 303 recorded sessions with 134 MCP servers)

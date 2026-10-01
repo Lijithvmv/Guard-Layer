@@ -121,6 +121,11 @@ def main(argv: list[str] | None = None) -> int:
     pcheck.add_argument("--claude-code", action="store_true", help="Include Claude Code's built-in tools, as the hook sees them.")
     pcheck.add_argument("--strict", action="store_true", help="Exit 1 if there are warnings (for CI).")
     pcheck.add_argument("--json", action="store_true", help="Machine-readable output.")
+    pdraft = policy_sub.add_parser("draft", help="Draft [tool.NAME] declarations from audit logs (what the agent actually used).")
+    pdraft.add_argument("audit", nargs="+", help="Audit log(s) (JSONL) recorded with min_verdict = \"allow\".")
+    pdraft.add_argument("--claude-code", action="store_true", help="Skip Claude Code's built-in tools (already known).")
+    pdraft.add_argument("-o", "--output", help="Write the draft here instead of printing it.")
+    pdraft.add_argument("--force", action="store_true", help="Overwrite --output if it exists.")
 
     hook = sub.add_parser("hook", help="Run as an agent hook (reads the event JSON on stdin).")
     hook_sub = hook.add_subparsers(dest="hook_target", required=True)
@@ -169,6 +174,31 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "evidence":
         return _evidence(args)
+
+    if args.command == "policy" and args.policy_command == "draft":
+        from guardlayer.declare import draft, tool_usage
+
+        guard = build_guard(args.config)
+        if args.claude_code:
+            from guardlayer.integrations import claude_code
+
+            claude_code.configure_guard(guard)
+        usage = tool_usage(args.audit)
+        if not usage:
+            print("No tool calls or results in these audit logs (record with [audit] min_verdict = \"allow\").", file=sys.stderr)
+            return 1
+        known = [name for name in usage if guard.tool_policy._explicit(name)]
+        text = draft(usage, guard, known=known, source=", ".join(Path(a).name for a in args.audit))
+        if args.output:
+            out = Path(args.output)
+            if out.exists() and not args.force:
+                print(f"{out} exists; pass --force to overwrite it.", file=sys.stderr)
+                return 1
+            out.write_text(text, encoding="utf-8")
+            print(f"Wrote {out}: {len(usage) - len(known)} tool(s) to check.", file=sys.stderr)
+        else:
+            print(text, end="")
+        return 0
 
     if args.command == "policy":
         from guardlayer.policycheck import check_policy, configured_tools, format_report, to_json

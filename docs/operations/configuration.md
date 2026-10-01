@@ -43,6 +43,13 @@ output = "untrusted"
 | `arguments` | rules for argument values: `allow` / `deny` globs, `action` |
 | `destinations` | allow more data for some values: `{ argument, match, max_data }` |
 
+Don't know where to start? Record a few days in observe mode with an audit log (`min_verdict = "allow"`), then draft
+the declarations from what the agent actually used, and correct the draft:
+
+```bash
+guardlayer --config guardlayer.toml policy draft audit.jsonl --claude-code -o tools.toml
+```
+
 Check what you declared with `guardlayer --config guardlayer.toml policy check`: it lists every tool and what
 GuardLayer assumes about it.
 
