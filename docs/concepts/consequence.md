@@ -66,7 +66,9 @@ any other host is blocked.
   recognise the injection. With the detectors removed (a stand-in for an attacker who evades them), GuardLayer's
   defaults stopped **5 of 27** recorded attacks that had succeeded without a guard. The destination check
   (`[session] untrusted_destination = "outbound"`, off by default) doesn't need detection: with every tool result
-  treated as untrusted it stopped **21 of 27**, at the cost of interrupting about one ordinary task in four (one in ten without it).
+  treated as untrusted it stopped **19 of 27**, at the cost of interrupting about one ordinary task in four (one in ten without it).
+  The two attacks it lets through only make the agent *visit* the attacker's site: a visit carries nothing private,
+  so the check doesn't hold it (see below for what does).
   It compares a destination by what it names, so `https://www.site.example/x` and `site.example/x` are the same place,
   and it reads past encodings an agent undoes (base64, hex, HTML entities, invisible characters, look-alike letters).
 - **An address the agent has to rebuild.** Spelled out ("site dot net"), reversed, split across sentences, or a
@@ -75,8 +77,8 @@ any other host is blocked.
 - **Actions with no destination, and values the agent works out itself.** A password change, or "book the most
   expensive hotel", carries no address copied from the injected text, so the destination check can't see it. In
   experiments, asking a local model whether each *irreversible* action matches what you asked for (the model sees
-  only your messages and the action, never tool output) raised the figure above to 26 of 27, interrupting about one
-  ordinary task in three; a 7B model also refused some actions you had plainly asked for. It is not part of
+  only your messages and the action, never tool output), also asked about outbound actions that carry a link from
+  untrusted content, raised the figure above to 27 of 27, interrupting about one ordinary task in three; a 7B model also refused some actions you had plainly asked for. It is not part of
   GuardLayer yet.
 - **Sending your data to a place you named,** re-encoded so it doesn't match what was read.
 - **Small evidence.** The attack figures come from 27 recorded attacks with known templates on one 7B model.

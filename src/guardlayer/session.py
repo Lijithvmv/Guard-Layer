@@ -710,7 +710,7 @@ def _adds_nothing(arguments: Any, extra: Iterable[str], state: SessionState) -> 
         return False
     known = set(state.public_words)
     for value in destination_values(arguments, extra):
-        if not _URL_START.match(value):
+        if not (_URL_START.match(value) or ("@" not in value and " " not in value and places(value))):
             return False  # an address or account: sending to it at all is the act
         rest = re.sub(r"^\w+://", "", value)
         if any(fingerprint(w, "word") not in known for w in _words(rest)):

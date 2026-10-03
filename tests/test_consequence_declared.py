@@ -178,6 +178,7 @@ def test_untrusted_destination_judges_what_the_action_carries() -> None:
         return "untrusted_destination" in rules(s.scan_tool_call("http_get", {"url": url, **extra}))
 
     assert not held("https://code-host.net/repos/main/README.md")  # the link as written
+    assert not held("code-host.net/repos/main/README.md")  # written without a scheme
     assert not held("https://code-host.net/bobsmith/octo-tools/main/src/engine.py")  # page words + the user's words
     assert held("https://code-host.net/repos/main/README.md?q=zephyr9431")  # private data appended
     assert held("https://code-host.net/repos/main/README.md", body="report")  # anything else sent
