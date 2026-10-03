@@ -211,6 +211,9 @@ TOOL_KEYS = {
     "remote": "true: its arguments leave the machine even though it only reads (a search API)",
     "arguments": 'rules for argument values, e.g. [{ argument = "to", allow = ["*@me.com"] }]',
     "destinations": 'more data allowed for some values: [{ argument = "to", match = "*@me.com", max_data = "private" }]',
+    "destination_args": 'arguments that say where data goes, beyond the built-in names (to, url, channel, ...)',
+    "consequence": 'what using it does: "local" (recoverable), "outbound" (reaches another system) or "irreversible" '
+                   "(payments, deletion, publishing, access changes); overrides the guess from its name",
 }
 
 
@@ -235,6 +238,8 @@ def expand_tool_declarations(config: Mapping[str, Any]) -> dict[str, Any]:
     allow_egress = dict(session.get("allow_egress", {}))
     sources, sinks = dict(labels.get("sources", {})), dict(labels.get("sinks", {}))
     destinations = list(labels.get("destinations", []))
+    consequences = dict(session.get("consequences", {}))
+    destination_args = dict(session.get("destination_args", {}))
     for name, spec in declared.items():
         if not isinstance(spec, Mapping):
             raise ValueError(f"[tool.{name}] must be a table")
@@ -262,6 +267,10 @@ def expand_tool_declarations(config: Mapping[str, Any]) -> dict[str, Any]:
             allow_egress[name] = list(spec["may_send"])
         if spec.get("remote"):
             remote.append(name)
+        if "consequence" in spec:
+            consequences[name] = spec["consequence"]
+        if "destination_args" in spec:
+            destination_args[name] = list(spec["destination_args"])
         for rule in spec.get("arguments", []):
             arguments.append({"tool": name, **rule})
         for dest in spec.get("destinations", []):
@@ -272,7 +281,8 @@ def expand_tool_declarations(config: Mapping[str, Any]) -> dict[str, Any]:
     for key, value in (("capabilities", capabilities), ("arguments", arguments), ("remote_tools", remote)):
         if value:
             tools[key] = value
-    for key, value in (("trusted_tools", trusted), ("untrusted_tools", untrusted), ("allow_egress", allow_egress)):
+    for key, value in (("trusted_tools", trusted), ("untrusted_tools", untrusted), ("allow_egress", allow_egress),
+                       ("consequences", consequences), ("destination_args", destination_args)):
         if value:
             session[key] = value
     for key, value in (("sources", sources), ("sinks", sinks), ("destinations", destinations)):

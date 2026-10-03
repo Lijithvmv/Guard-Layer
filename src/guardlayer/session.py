@@ -51,7 +51,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from guardlayer.consequence import consequence, distinctive_values, file_consequence
+from guardlayer.consequence import consequence, destination_values, distinctive_values, file_consequence, phrases
 from guardlayer.labels import Confidentiality, Integrity, Label
 from guardlayer.labels import combine as combine_labels
 from guardlayer.models import Action, Category, Detection, ScanResult, Verdict
@@ -69,6 +69,7 @@ _NOT_SENSITIVE_PII = frozenset({"ip_address"})  # too common in logs to make a s
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_\-+/.@]{8,}")
 MAX_SOURCES = 50
 MAX_FINGERPRINTS = 1000
+MAX_PHRASES = 20_000
 MAX_SCAN_CHARS = 65_536  # bound on argument text searched for fingerprints
 SEAM_CHARS = 500  # how much of the previous untrusted content is kept to scan across the boundary with the next one
 _PREFIX = 8  # every fingerprinted value is at least this long (see _TOKEN_RE)
@@ -207,6 +208,8 @@ class SessionState:
     hostile_values: list[str] = field(default_factory=list)  # hashes of distinctive values seen in hostile content
     untrusted_values: list[str] = field(default_factory=list)  # hashes of distinctive values seen in untrusted content
     user_values: list[str] = field(default_factory=list)  # hashes of distinctive values in the user's messages and trusted content
+    hostile_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of hostile content (where a destination may come from)
+    user_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of the user's own messages
     sensitive_kinds: list[str] = field(default_factory=list)  # rules that found them (iban, credential_file, ...)
     task: str | None = None  # the task profile in force (see guardlayer.tasks)
     task_args: dict[str, Any] = field(default_factory=dict)  # values from the trusted request, for {task.NAME}
@@ -263,7 +266,7 @@ class SessionState:
         for name, cap in (("untrusted_sources", MAX_SOURCES), ("hostile_sources", MAX_SOURCES), ("sensitive_sources", MAX_SOURCES), ("private_sources", MAX_SOURCES),
                           ("fingerprints", MAX_FINGERPRINTS), ("sensitive_kinds", MAX_SOURCES),
                           ("hostile_values", MAX_FINGERPRINTS), ("user_values", MAX_FINGERPRINTS),
-                          ("untrusted_values", MAX_FINGERPRINTS)):
+                          ("untrusted_values", MAX_FINGERPRINTS), ("hostile_phrases", MAX_PHRASES), ("user_phrases", MAX_PHRASES)):
             setattr(self, name, _add(getattr(other, name), getattr(self, name), cap))
         self.created = min(self.created, other.created)
         self.updated = max(self.updated, other.updated)
@@ -477,6 +480,10 @@ class SessionPolicy:
     # whose arguments carry a value from untrusted content the user didn't name (where an attacker says to send the
     # data); "all" holds every network/exec action once the session is untrusted and sensitive.
     trifecta_scope: str = "destination"
+    # Declared consequence per tool (glob -> "local" | "outbound" | "irreversible"), from [tool.NAME] consequence = ...
+    consequences: dict[str, str] = field(default_factory=dict)
+    # Extra destination argument names per tool (beyond the built-in to/recipient/url/channel/user/...)
+    destination_args: dict[str, list[str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         merged = dict(DEFAULT_SESSION_ACTIONS)
@@ -490,6 +497,9 @@ class SessionPolicy:
             if isinstance(kinds, str) or not all(isinstance(k, str) for k in kinds):
                 raise ValueError(f"allow_egress[{pattern!r}] must be a list of data types, e.g. [\"iban\"]")
         self.allow_egress = {p: list(k) for p, k in self.allow_egress.items()}
+        for pattern, kind in self.consequences.items():
+            if kind not in ("local", "outbound", "irreversible"):
+                raise ValueError(f'consequences[{pattern!r}] must be "local", "outbound" or "irreversible", not {kind!r}')
         if self.trifecta_scope not in ("destination", "all"):
             raise ValueError('trifecta_scope must be "destination" or "all"')
         if self.after_injection_scope not in ("consequence", "all"):
@@ -521,6 +531,14 @@ class SessionPolicy:
 
     def _matches(self, tool: str | None, patterns: list[str]) -> bool:
         return tool is not None and any(fnmatch.fnmatchcase(tool, p) for p in patterns)
+
+    def declared_consequence(self, tool: str | None) -> str | None:
+        """The consequence declared for `tool` (the most severe matching glob), or None."""
+        if tool is None:
+            return None
+        order = {"local": 0, "outbound": 1, "irreversible": 2}
+        found = [k for p, k in self.consequences.items() if fnmatch.fnmatchcase(tool, p)]
+        return max(found, key=order.__getitem__) if found else None
 
     def is_trusted(self, tool: str | None) -> bool:
         return self._matches(tool, self.trusted_tools)
@@ -633,6 +651,7 @@ def observe_content(
     if hostile:
         state.hostile_sources = _add(state.hostile_sources, [source], MAX_SOURCES)
         state.hostile_values = _add(state.hostile_values, values, MAX_FINGERPRINTS)
+        state.hostile_phrases = _add(state.hostile_phrases, (fingerprint(p, "phrase") for p in phrases(text)), MAX_PHRASES)
     found = record_sensitive_values(state, text, result)
     # Secrets make a session sensitive (restricted). Personal data makes it private: its exact values are still
     # fingerprinted (sensitive_data_egress), but it doesn't turn every later network call into a review unless
@@ -714,6 +733,7 @@ def observe_input(state: SessionState, text: str, result: ScanResult) -> None:
     """User prompts are trusted, but secrets pasted into them are still sensitive data. Identifiers the user names
     (URLs, addresses, accounts) are remembered so a later action using them is never blamed on hostile content."""
     state.user_values = _add(state.user_values, (fingerprint(v, "hostile") for v in distinctive_values(text)), MAX_FINGERPRINTS)
+    state.user_phrases = _add(state.user_phrases, (fingerprint(p, "phrase") for p in phrases(text)), MAX_PHRASES)
     if any(d.category == Category.SECRET.value for d in result.detections):
         record_sensitive_values(state, text, result)
         state.sensitive_sources = _add(state.sensitive_sources, ["input"], MAX_SOURCES)
@@ -776,7 +796,8 @@ def taint_detections(
         out.append(Detection(SCANNER, rule, category, severity, message, metadata={"tool": tool, **metadata}, action=policy.actions[rule].value))
 
     allowed = policy.allowed_kinds(tool)
-    kind = consequence(tool, caps, tagged, arguments if arguments is not None else arguments_text, remote=bool(remote))
+    kind = consequence(tool, caps, tagged, arguments if arguments is not None else arguments_text, remote=bool(remote),
+                       declared=policy.declared_consequence(tool))
     classic = policy.trifecta_scope == "all"
     if leaves and state.fingerprints and (classic or kind != "local"):
         if contains_fingerprint(arguments_text, state.fingerprints, allowed_kinds=allowed):
@@ -807,6 +828,11 @@ def taint_detections(
                  hostile=state.hostile_sources[-5:])  # fmt: skip
         else:
             carried = _carried(arguments_text, state.hostile_values, state.user_values) if kind == "outbound" else []
+            if kind == "outbound" and not carried and state.hostile_phrases:
+                # a destination argument whose value was copied from the injected content, whatever its shape
+                hostile_p, user_p = set(state.hostile_phrases), set(state.user_phrases)
+                carried = [v[:80] for v in destination_values(arguments, policy.destination_args.get(tool, ()))
+                           if fingerprint(v, "phrase") in hostile_p and fingerprint(v, "phrase") not in user_p]  # fmt: skip
             if kind == "irreversible":
                 emit("after_injection", Category.PROMPT_INJECTION.value, 0.7,
                      "This session read content containing a prompt injection; this action can't be undone, so it needs approval.",

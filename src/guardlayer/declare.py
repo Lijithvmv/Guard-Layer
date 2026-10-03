@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from guardlayer.consequence import consequence
 from guardlayer.session import HOSTILE_CATEGORIES
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -145,6 +146,10 @@ def _tool_table(u: ToolUsage, guard: GuardLayer, *, trust: bool) -> list[str]:
         out.append(f'output_data = "private"             # personal data was seen in its output {u.personal} time(s)')
     if acts:
         out.append("# accepts_untrusted = false        # CHECK: uncomment if content from outside must never drive this tool")
+        kind = consequence(u.name, caps, tagged, None, remote=remote)
+        why = {"local": "recoverable on this machine", "outbound": "reaches another system",
+               "irreversible": "can't be taken back (payments, deletion, publishing, access changes)"}[kind]  # fmt: skip
+        out.append(f'consequence = "{kind}"{" " * (14 - len(kind))}# CHECK: guessed from the name: {why}')
     if u.reviewed_or_blocked:
         out.append(f"# held for review or refused {u.reviewed_or_blocked} time(s): {', '.join(sorted(u.rules)) or 'see the audit report'}")
     return [*out, ""]

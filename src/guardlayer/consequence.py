@@ -62,6 +62,47 @@ def distinctive_values(text: str, limit: int = 2000) -> set[str]:
     return set(list(found)[:limit])
 
 
+# Arguments that say where data or an action goes. A value in one of these copied from injected content, whatever its
+# shape (a plain name like "Fred" included), is the attacker choosing the destination.
+DESTINATION_ARGS = frozenset(
+    "to cc bcc recipient recipients email emails address addresses url uri link endpoint host hostname domain webhook "
+    "channel channels user users username user_email member members account account_id iban phone number target "
+    "destination dest repo repository owner org organization share_with assignee reviewer reviewers".split()
+)
+MAX_PHRASE_WORDS = 4
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip().lower())
+
+
+def phrases(text: str, limit: int = 20_000) -> set[str]:
+    """Every run of 1–4 words in `text` (normalised): what a destination argument copied from it could look like."""
+    words = re.findall(r"[\w@.+:/-]+", text.lower()[:100_000])
+    out: set[str] = set()
+    for n in range(1, MAX_PHRASE_WORDS + 1):
+        for i in range(len(words) - n + 1):
+            out.add(" ".join(words[i : i + n]).strip(".:"))
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def destination_values(arguments: Mapping[str, Any] | str | None, extra: Iterable[str] = ()) -> list[str]:
+    """Short string values of destination arguments (normalised)."""
+    if not isinstance(arguments, Mapping):
+        return []
+    keys = DESTINATION_ARGS | set(extra)
+    out: list[str] = []
+    for key, value in arguments.items():
+        if key.lower() not in keys:
+            continue
+        for v in value if isinstance(value, (list, tuple)) else [value]:
+            if isinstance(v, (str, int)) and 0 < len(str(v)) <= 200:
+                out.append(_norm(str(v)).strip(".:"))
+    return out
+
+
 # --------------------------------------------------------------------------------------------------- consequence
 _NET_PROGRAMS = {
     "curl", "wget", "fetch", "ssh", "scp", "sftp", "rsync", "nc", "ncat", "netcat", "telnet", "ftp", "gh", "glab", "twine",
@@ -110,7 +151,29 @@ def _command(arguments: Mapping[str, Any] | str | None) -> str | None:
     return None
 
 
+_ORDER = {"local": 0, "outbound": 1, "irreversible": 2}
+
+
 def consequence(
+    tool: str,
+    caps: Iterable[str],
+    tagged: bool,
+    arguments: Mapping[str, Any] | str | None,
+    *,
+    remote: bool = False,
+    declared: str | None = None,
+) -> str:
+    """The consequence class of a call. A declared class wins over the guess from the tool's name; for a shell tool the
+    parsed command is still read, and the stricter of the two counts."""
+    guessed = _guess(tool, caps, tagged, arguments, remote=remote)
+    if declared is None:
+        return guessed
+    if _command(arguments) is not None:
+        return max(declared, guessed, key=_ORDER.__getitem__)
+    return declared
+
+
+def _guess(
     tool: str, caps: Iterable[str], tagged: bool, arguments: Mapping[str, Any] | str | None, *, remote: bool = False
 ) -> str:
     """`irreversible` (local or on another system), `outbound` (reaches another system, undoable or informational:
