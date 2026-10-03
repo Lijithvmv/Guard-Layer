@@ -178,6 +178,7 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
         judge = OllamaJudge(args.judge, host=args.judge_host)
     asked: collections.Counter[str] = collections.Counter()
     prompts: dict[str, list[str]] = collections.defaultdict(list)
+    judge_log: list[dict[str, Any]] = []
     # Identifiers seen anywhere in a session (the user's prompts and every tool result, trusted or not): an outbound
     # destination in none of them is novel, which no rewriting of an outsider's address can avoid.
     seen: dict[str, set[str]] = collections.defaultdict(set)
@@ -224,6 +225,9 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
                         if judge is not None:
                             verdict = judge(prompts[sid], tool, view)
                             totals[f"judge_answer_{verdict.requested}"] += 1
+                            if args.judge_log:
+                                judge_log.append({"tool": tool, "action": json.dumps(view)[:200], "answer": verdict.requested,
+                                                  "reason": verdict.reason[:200], "last_prompts": [m[:160] for m in prompts[sid][-3:]]})  # fmt: skip
                             if verdict.requested is False:
                                 asked[f"NO {cls}:{tool}"] += 1
                 if result.is_blocked or result.needs_review:
@@ -281,6 +285,7 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
         "held_or_refused_by_rule": dict(by_rule.most_common()),
         "judge": args.judge,
         "judge_asked_by_tool": dict(asked.most_common()),
+        **({"judge_log": judge_log} if args.judge_log else {}),
         "per_session": {sid[:8]: dict(c) for sid, c in sessions.items() if c["tool_calls"]},
         "taint_events": triggers,
         **({"calls": calls} if args.calls else {}),
@@ -304,6 +309,7 @@ def main(argv: list[str] | None = None) -> int:
         "--calls", action="store_true", help="include every tool call's outcome (ids, tool, rules; no content)"
     )
     p.add_argument("--judge", help="Ollama model: also ask the second-stage judge where it would be asked (slow)")
+    p.add_argument("--judge-log", action="store_true", help="include each judged action, its answer and the last prompts (contains text)")
     p.add_argument("--judge-host", default="http://127.0.0.1:11434", help="Ollama server for --judge")
     p.add_argument("--scan-cache", help="file caching detector results across replays (delete it when detectors change)")
     p.add_argument("-o", "--output", help="write the JSON result here")
