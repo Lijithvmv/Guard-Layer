@@ -40,10 +40,14 @@ each tool. The hook server is a long-running GuardLayer that Claude Code calls o
 guardlayer --config pilot.toml hook claude-code --server --print-config    # merge into .claude/settings.json
 ```
 
-| Measured on Windows (laptop, best of runs) | Command hook | Hook server |
+| Measured on Windows (laptop, idle; medians) | Command hook | Hook server |
 |---|---|---|
 | Before a tool call (`PreToolUse`) | 608 ms | 10 ms (p95 31 ms) |
-| After a tool call, 4 KB file read (`PostToolUse`) | about 680 ms | 67 ms (the scan itself) |
+| After a tool call, 4 KB result (`PostToolUse`) | about 680 ms | 67 ms |
+
+GuardLayer's own handling inside the server, measured again 2026-10-04 with the destination check on (the default):
+a 1 KB result 27 ms, 4 KB 48 ms, 8 KB 75 ms; a tool call 5 ms on a long session. The detectors take about 5 ms per
+KB; the rest is session bookkeeping. On a loaded machine (builds, a local model) expect several times more.
 
 How it runs:
 
