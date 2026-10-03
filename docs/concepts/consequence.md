@@ -87,7 +87,7 @@ any other host is blocked.
 
 - **Interruptions:** on 17,316 real Claude Code calls, turning the destination check on added **2 holds** (786 vs 785
   of 7,572; 809 vs 808 of 9,744 on sessions never used for design). On AgentDojo's tasks, nearly all of which pay or
-  send right after reading untrusted content, it interrupts about one task in seven.
+  send right after reading untrusted content, the defaults hold about one task in four for approval.
 - **Time:** GuardLayer's handling of a 4 KB tool result is ~48 ms (about 11 ms of it this check) and of a tool call
   ~5 ms, on an idle laptop.
 
@@ -99,17 +99,24 @@ tasks. "Detectors removed" stands in for an attacker whose wording no detector r
 
 | | Attacks stopped | Ordinary tasks interrupted |
 |---|---|---|
-| detectors on | 672 / 707 (95%) | 78 / 644 |
-| detectors removed, destination check off | 308 / 707 (44%) | 78 / 644 |
-| detectors removed, **defaults** | **423 / 707 (60%)** | 106 / 644 |
-| detectors removed, every tool result treated as untrusted | 648 / 707 (92%) | 173 / 644 |
+| detectors on (defaults) | 674 / 707 (95%) | 173 / 644 |
+| detectors removed, destination check off, name-based trust (before 0.9) | 308 / 707 (44%) | 78 / 644 |
+| detectors removed, **defaults** | **648 / 707 (92%)** | 173 / 644 |
 
-The detectors-on row flatters: these are published attack templates, which the similarity detector can know. Read
-the detectors-removed rows. Treating every tool result as untrusted (`[session] default_integrity = "untrusted"`)
-is right when outsiders can write into most of what the agent reads (mail, chat, tickets); it costs more
-interruptions there, and on the real coding sessions above the default already treats web and remote tools as
-untrusted. AgentDojo's ordinary tasks nearly all pay, send or book right after reading such content, so their
-interruption rate is far above real coding work (2 extra holds in 17,316 calls).
+Read the detectors-removed rows: the detectors-on row flatters, since these are published attack templates the
+similarity detector can know. The plainest attack in the set (`direct`: the attacker's goal written as an ordinary
+instruction) shows why. The detectors catch 9 of 23 on GPT-4o and 8 of 34 on Llama 3.3; the defaults stop 22 of 23
+and 32 of 34, because they don't depend on how the instruction is worded.
+
+**Which results count as outsider content.** A tool's result is trusted only when its capabilities were declared
+(by you, or by an integration for its own tools, as Claude Code's Read, Grep and Glob are) or you named it in
+`trusted_tools` or `[labels] sources`, and it is local. A name can't establish trust: `read_file` on a shared drive,
+`get_channels`, a calendar, transactions or reviews carry text other people wrote; in these runs they delivered most
+of the injections that name-based trust let through. `[labels] default_integrity = "trusted"` restores name-based
+trust; `"untrusted"` distrusts every result.
+
+AgentDojo's ordinary tasks nearly all pay, send or book right after reading such content, so one in four is held for
+approval; on the real Claude Code sessions above the cost of these defaults was 2 holds in 17,316 calls.
 
 Not covered:
 

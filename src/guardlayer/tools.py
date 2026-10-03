@@ -468,6 +468,10 @@ class ToolPolicy:
             return False
         return any(fnmatch.fnmatchcase(name, p) for p in self.remote_tools)
 
+    def is_declared(self, tool: str) -> bool:
+        """Whether the tool's capabilities were declared (config, or an integration's own tools), not guessed."""
+        return tool in self.capabilities or any(fnmatch.fnmatchcase(tool, p) for p in self.capabilities)
+
     def resolve(self, tool: str) -> tuple[frozenset[str], bool]:
         """(capabilities, tagged). An explicit empty list tags a tool as harmless; untagged tools match every rule."""
         if tool in self.capabilities:

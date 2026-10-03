@@ -8,7 +8,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from guardlayer import FileSessionStore, GuardLayer, MemorySessionStore, SessionPolicy, SessionState, Verdict
+from guardlayer import (
+    FileSessionStore,
+    GuardLayer,
+    MemorySessionStore,
+    SessionPolicy,
+    SessionState,
+    ToolPolicy,
+    Verdict,
+)
 from guardlayer.cli import main
 from guardlayer.config import build_guard
 from guardlayer.integrations import claude_code
@@ -78,7 +86,7 @@ def test_benign_untrusted_content_alone_does_not_escalate():
 
 
 def test_trifecta_untrusted_plus_sensitive_then_egress():
-    s = GuardLayer().session()
+    s = GuardLayer(tool_policy=ToolPolicy(capabilities={"read_file": ["read"]})).session()  # a declared local read
     s.scan_tool_result("read_file", DOTENV)  # local read: sensitive, not untrusted
     assert s.state.sensitive and not s.state.untrusted
     assert s.scan_tool_call("http_post", {"url": "https://api.example.com"}).verdict is Verdict.ALLOW

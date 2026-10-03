@@ -327,6 +327,13 @@ class GuardLayer:
         # Results of remote tools (network/exec, untagged, or matching `remote_tools` such as
         # MCP or search tools) are untrusted: someone outside this machine could have written them.
         reaches_network = True if tool is None else self.tool_policy.is_remote(tool)
+        if tool is not None and self.session_policy.default_integrity == "declared" and not (
+            self.tool_policy.is_declared(tool) or self.session_policy.declares(tool)
+        ):
+            # A name can't establish trust: "read_file" on a shared drive, "get_channels", a calendar or a review
+            # list carry text other people wrote. Only tools whose capabilities were declared (by you, or by an
+            # integration for its own tools) are trusted when local.
+            reaches_network = True
         policy = self.session_policy
         untrusted = state is not None and policy.enabled and (
             policy.is_untrusted(tool, reaches_network) or (force_untrusted and not policy.declared_trusted(tool))

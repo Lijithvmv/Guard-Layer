@@ -581,8 +581,10 @@ class SessionPolicy:
       Declarations only *raise* the session label; content detections can raise it further.
     * `sinks`: tool-name glob -> what that tool accepts: `accepts_untrusted = false` (untrusted
       content must not drive it) and/or `max_confidentiality` (the most sensitive data it may receive).
-    * `default_integrity`: `"trusted"` (default: local, read-only tools are trusted) or
-      `"untrusted"` (every tool result is untrusted unless listed in `trusted_tools`).
+    * `default_integrity`: `"declared"` (default: a tool's result is trusted only if its capabilities were declared,
+      by you or by an integration for its own tools, or you named it in `trusted_tools` / `sources`, and it is local;
+      a name can't establish trust), `"trusted"` (tools inferred local from their names are trusted too; the
+      behaviour before 0.9), or `"untrusted"` (every tool result is untrusted unless listed in `trusted_tools`).
     * `trifecta_on_pii`: personal data found in tool output counts as sensitive for `trifecta` (as secrets always
       do). Off by default: it makes the session private instead; exact copies leaving are still caught.
     """
@@ -595,7 +597,7 @@ class SessionPolicy:
     allow_egress: dict[str, list[str]] = field(default_factory=dict)
     sources: dict[str, dict[str, Any]] = field(default_factory=dict)
     sinks: dict[str, dict[str, Any]] = field(default_factory=dict)
-    default_integrity: str = "trusted"
+    default_integrity: str = "declared"
     destinations: list[dict[str, Any]] = field(default_factory=list)
     tasks: dict[str, Any] = field(default_factory=dict)
     trifecta_on_pii: bool = False
@@ -636,8 +638,8 @@ class SessionPolicy:
             raise ValueError('trifecta_scope must be "destination" or "all"')
         if self.after_injection_scope not in ("consequence", "all"):
             raise ValueError('after_injection_scope must be "consequence" or "all"')
-        if self.default_integrity not in ("trusted", "untrusted"):
-            raise ValueError('default_integrity must be "trusted" or "untrusted"')
+        if self.default_integrity not in ("declared", "trusted", "untrusted"):
+            raise ValueError('default_integrity must be "declared", "trusted" or "untrusted"')
         for pattern, spec in self.sources.items():
             unknown = set(spec) - _SOURCE_KEYS
             if unknown:
@@ -732,6 +734,14 @@ class SessionPolicy:
             return cap
         known = [c for c in caps if c is not None]
         return min(known) if known else None
+
+    def declares(self, tool: str | None) -> bool:
+        """Whether the user named this tool in trusted_tools, untrusted_tools or [labels] sources: a known tool."""
+        if tool is None:
+            return False
+        return self.is_trusted(tool) or self._matches(tool, self.untrusted_tools) or any(
+            fnmatch.fnmatchcase(tool, p) for p in self.sources
+        )
 
     def is_untrusted(self, tool: str | None, can_reach_network: bool) -> bool:
         if tool is None:
