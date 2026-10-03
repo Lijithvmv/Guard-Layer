@@ -21,7 +21,7 @@ import uuid
 
 from guardlayer import __version__
 from guardlayer.config import build_guard
-from guardlayer.consequence import distinctive_values
+from guardlayer.consequence import distinctive_values, places
 
 
 def _text(content) -> str:  # type: ignore[no-untyped-def]
@@ -70,8 +70,10 @@ def _attacker_values(d: dict) -> set[str]:
 
 def replay(path: str, scope: str, evade_detection: bool = False, untrusted_destination: str = "off",
            untrusted_all: bool = False, judge_model: str | None = None, judge_on: str = "consequential",
-           judge_cache: str | None = None) -> dict:
+           judge_cache: str | None = None, delegate: bool = False) -> dict:
     session_cfg = {"after_injection_scope": scope, "untrusted_destination": untrusted_destination}
+    if delegate:  # content fetched from a place the user named counts as the user's context (experiment)
+        session_cfg["trusted_tools"] = ["__delegated__"]
     if untrusted_all:  # AgentDojo's threat model: any tool result may carry third-party text
         session_cfg["default_integrity"] = "untrusted"
     guard = build_guard({"session": session_cfg})
@@ -115,6 +117,9 @@ def replay(path: str, scope: str, evade_detection: bool = False, untrusted_desti
                 session.scan_input(_text(m.get("content")))
             elif role == "tool":
                 name = (m.get("tool_call") or {}).get("function", "tool")
+                named = places(" ".join(user_messages))
+                if delegate and named & places(json.dumps((m.get("tool_call") or {}).get("args") or {})):
+                    name = "__delegated__"
                 session.scan_tool_result(name, _text(m.get("content")))
                 seen_values |= distinctive_values(_text(m.get("content")))
             elif role == "assistant":
@@ -172,10 +177,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--judge", help="Ollama model for the second-stage judge (asked only about consequential actions)")
     p.add_argument("--judge-on", default="consequential", choices=["consequential", "irreversible", "irreversible+links"],
                    help="which actions the judge is asked about (after untrusted content, and only if the rules let them run)")
+    p.add_argument("--delegate", action="store_true",
+                   help="experiment: content fetched from a place the user named counts as the user's context")
     p.add_argument("--judge-cache", help="JSON file caching the judge's answers (temperature 0), so reruns don't re-ask")
     args = p.parse_args(argv)
     print(json.dumps(replay(args.logs, args.scope, args.evade_detection, args.untrusted_destination, args.untrusted_all,
-                            args.judge, args.judge_on, args.judge_cache), indent=2))
+                            args.judge, args.judge_on, args.judge_cache, args.delegate), indent=2))
     return 0
 
 
