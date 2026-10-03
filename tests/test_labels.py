@@ -79,7 +79,8 @@ def test_gap_b1_local_file_default_is_unchanged_but_untrusted_default_closes_it(
     after = GuardLayer(session_policy=SessionPolicy(default_integrity="untrusted")).session()
     after.scan_tool_result("read_file", UNDETECTED)
     after.scan_tool_result("read_file", f"OPENAI_API_KEY={SECRET}")
-    r = after.scan_tool_call("http_post", body)
+    assert after.state.untrusted and after.state.sensitive  # the label closes the gap: the session is now tainted
+    r = after.scan_tool_call("create_gist", {"content": "status report"})  # publishing in a tainted session
     assert r.verdict is Verdict.REVIEW and "trifecta" in rules(r)
 
 
@@ -115,7 +116,7 @@ def test_restricted_source_declaration_counts_as_sensitive():
     s.scan_tool_result("fetch", "<p>page</p>")
     s.scan_tool_result("get_ssn", "record 17")
     assert s.state.label.confidentiality is Confidentiality.RESTRICTED
-    assert "trifecta" in rules(s.scan_tool_call("http_post", {"url": "https://api.example.com", "body": "x"}))
+    assert "trifecta" in rules(s.scan_tool_call("share_document", {"to": "anyone"}))
 
 
 def test_label_config_section_and_validation():

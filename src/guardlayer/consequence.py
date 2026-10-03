@@ -19,6 +19,7 @@ run. Values are stored as salted hashes, like secret fingerprints.
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -91,9 +92,12 @@ _IRREVERSIBLE_ACTION = re.compile(
     r"(^|[_\-.])(send_?money|transfer|pay|payment|purchase|buy|order|checkout|book|reserve|reservation|refund|withdraw"
     r"|update_?password|change_?password|reset_?password|set_?password|password|credential|token|api_?key|secret"
     r"|delete|remove|destroy|drop|revoke|ban|kick|archive|invite|grant|add_?user|add_?member|share|permission|role"
-    r"|publish|deploy|release|merge|approve|sign)([_\-.]|$)",
+    r"|publish|deploy|release|merge|approve|sign|upload|pull_?request|pr|issue|comment|gist|push_?files?"
+    r"|create_or_update_file|fork)([_\-.]|$)",
     re.IGNORECASE,
 )
+# Tools whose verb only reads or looks up (get_issue, list_pull_requests): the noun doesn't make them act.
+_READ_VERB = re.compile(r"(^|__|[_\-.])(get|list|read|search|fetch|view|show|describe|find|query|lookup|check|count|search_?\w*)_", re.IGNORECASE)
 _LOCAL_WRITE_TOOL = re.compile(r"^(Write|Edit|MultiEdit|NotebookEdit)$|(^|_)(write|edit|create|append|save|patch)_?(file|notebook)s?$", re.IGNORECASE)
 _COMMAND_KEYS = ("command", "cmd", "script", "shell_command")
 
@@ -106,7 +110,9 @@ def _command(arguments: Mapping[str, Any] | str | None) -> str | None:
     return None
 
 
-def consequence(tool: str, caps: Iterable[str], tagged: bool, arguments: Mapping[str, Any] | str | None) -> str:
+def consequence(
+    tool: str, caps: Iterable[str], tagged: bool, arguments: Mapping[str, Any] | str | None, *, remote: bool = False
+) -> str:
     """`irreversible` (local or on another system), `outbound` (reaches another system, undoable or informational:
     messages, fetches, posts) or `local` for a proposed tool call."""
     caps = set(caps)
@@ -137,8 +143,50 @@ def consequence(tool: str, caps: Iterable[str], tagged: bool, arguments: Mapping
         return result
     if _LOCAL_WRITE_TOOL.search(tool):
         return "local"
+    reads_only = bool(_READ_VERB.search(tool)) and not re.search(r"(^|_)(and|or)_", tool)
+    if reads_only:
+        # a search query or a fetched URL leaves the machine even though the tool only reads
+        return "outbound" if remote or caps & {"network"} or not tagged else "local"
     if _IRREVERSIBLE_ACTION.search(tool) and (not tagged or caps & {"network", "write", "exec"}):
         return "irreversible"
-    if caps and not (caps & {"network", "write", "exec"}):
-        return "local"  # read-only tools (declared or inferred from the name)
+    if caps and not (caps & {"network", "write", "exec"}) and not remote:
+        return "local"  # read-only, local tools (declared or inferred from the name)
     return "outbound"  # messages, payments, posts, API calls: effects on another system
+
+
+MAX_SCRIPT_BYTES = 200_000
+
+
+def file_consequence(path: str) -> str:
+    """The consequence class of running a script file: the most severe of the commands it would execute.
+
+    Shell scripts are parsed with `guardlayer.shell`; Python with `ast` (network imports, or commands passed to
+    `os.system`/`subprocess`). A file that can't be read or parsed counts as `outbound` (fail safe)."""
+    from guardlayer.shell import _python_commands  # local import: shell owns the Python analysis
+
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read(MAX_SCRIPT_BYTES + 1)
+    except OSError:
+        return "outbound"
+    if len(raw) > MAX_SCRIPT_BYTES:
+        return "outbound"
+    text = raw.decode("utf-8", errors="replace")
+    if path.lower().endswith((".py", ".pyw")):
+        found = _python_commands(text)
+        if found is None:
+            return "outbound"
+        commands, _opened, network = found
+        if network:
+            return "outbound"
+        worst = "local"
+        for command in commands:
+            kind = consequence("Bash", {"exec"}, True, {"command": command}) if command != "__DYNAMIC__" else "outbound"
+            if kind == "irreversible":
+                return kind
+            if kind == "outbound":
+                worst = kind
+        return worst
+    if os.path.splitext(path)[1].lower() in (".sh", ".bash", ".zsh", ""):
+        return consequence("Bash", {"exec"}, True, {"command": text})
+    return "outbound"  # other interpreters (node, ruby, ...) aren't analysed yet

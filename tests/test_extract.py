@@ -52,7 +52,8 @@ def test_unreadable_image_makes_the_session_untrusted():
     assert r.verdict is Verdict.ALLOW and "unreadable_content" in rules(r)
     assert s.state.label.integrity is Integrity.UNTRUSTED
     s.scan_tool_result("read_file", f"OPENAI_API_KEY={SECRET}")
-    assert "trifecta" in rules(s.scan_tool_call("http_post", {"url": "https://api.example.com", "body": "x"}))
+    # untrusted + sensitive: publishing is held (data could go public with no attacker address at all)
+    assert "trifecta" in rules(s.scan_tool_call("create_gist", {"content": "notes"}))
 
 
 def test_declared_trusted_tool_stays_trusted():
