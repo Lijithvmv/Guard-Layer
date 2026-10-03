@@ -837,8 +837,11 @@ def taint_detections(
         kind == "irreversible" or (policy.untrusted_destination == "outbound" and kind == "outbound")
     ):
         seen, user_p = set(state.untrusted_phrases), set(state.user_phrases)
-        copied = [v[:80] for v in destination_values(arguments, policy.destination_args.get(tool, ()))
-                  if fingerprint(v, "phrase") in seen and fingerprint(v, "phrase") not in user_p]  # fmt: skip
+        dests = destination_values(arguments, policy.destination_args.get(tool, ()))
+        copied = [v[:80] for v in dests if fingerprint(v, "phrase") in seen and fingerprint(v, "phrase") not in user_p]
+        # The same destination written another way (a scheme or "www." added, a trailing slash) is still the same
+        # place: compare its normalised identifiers (URL, host, address) too.
+        copied += _carried(" ".join(v for v in dests if v[:80] not in copied), state.untrusted_values, state.user_values)
         if copied:
             emit("untrusted_destination", Category.PROMPT_INJECTION.value, 0.7,
                  "This action's destination was copied from content an outsider can write, not from the user.",

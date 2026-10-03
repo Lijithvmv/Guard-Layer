@@ -77,6 +77,19 @@ def test_untrusted_destination_needs_no_detection() -> None:
     assert "untrusted_destination" not in rules(s.scan_tool_call("send_direct_message", {"recipient": "Alice", "body": "x"}))
 
 
+def test_untrusted_destination_survives_rewriting_the_url() -> None:
+    """Adding a scheme or "www." doesn't make it a different place (found in a recorded AgentDojo run)."""
+    from guardlayer import SessionPolicy
+
+    s = GuardLayer(session_policy=SessionPolicy(untrusted_destination="outbound", default_integrity="untrusted")).session()
+    s.scan_input("Read the team update and summarise it for Alice")
+    s.scan_tool_result("read_email", UNDETECTED.replace(".example", ".net"))
+    for url in ("https://www.notes-collector.net/q3", "http://notes-collector.net/q3/", "notes-collector.net"):
+        assert "untrusted_destination" in rules(s.scan_tool_call("post_webpage", {"url": url, "content": "x"})), url
+    s.scan_input("Also post it to notes-collector.net/mine")
+    assert "untrusted_destination" not in rules(s.scan_tool_call("post_webpage", {"url": "https://notes-collector.net/mine", "content": "x"}))
+
+
 def test_untrusted_destination_is_off_by_default_and_validated() -> None:
     from guardlayer import SessionPolicy
 

@@ -61,9 +61,13 @@ any other host is blocked.
   defaults stopped **5 of 27** recorded attacks that had succeeded without a guard. The destination check
   (`[session] untrusted_destination = "outbound"`, off by default) doesn't need detection: with every tool result
   treated as untrusted it stopped **21 of 27**, at the cost of interrupting about one ordinary task in four (one in ten without it).
-- **Values the agent works out itself.** "Book the most expensive hotel" produces a value that appears nowhere in the
-  injected text. Only an irreversible action is held in that case; a judge that compares the action with your request
-  would be needed for the rest.
+  It compares a destination by what it names, so `https://www.site.example/x` and `site.example/x` are the same place.
+- **Actions with no destination, and values the agent works out itself.** A password change, or "book the most
+  expensive hotel", carries no address copied from the injected text, so the destination check can't see it. In
+  experiments, asking a local model whether each *irreversible* action matches what you asked for (the model sees
+  only your messages and the action, never tool output) raised the figure above to 26 of 27, interrupting about one
+  ordinary task in three; a 7B model also refused some actions you had plainly asked for. It is not part of
+  GuardLayer yet.
 - **Sending your data to a place you named,** re-encoded so it doesn't match what was read.
 - **Small evidence.** The attack figures come from 27 recorded attacks with known templates on one 7B model.
 

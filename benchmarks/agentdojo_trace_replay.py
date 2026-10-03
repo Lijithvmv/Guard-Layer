@@ -30,8 +30,47 @@ def _text(content) -> str:  # type: ignore[no-untyped-def]
     return str(content or "")
 
 
+def is_attack_run(d: dict) -> bool:
+    return bool(d.get("injection_task_id")) and d.get("attack_type") not in (None, "none")
+
+
+def _leaves(value) -> list[str]:  # type: ignore[no-untyped-def]
+    if isinstance(value, dict):
+        return [x for v in value.values() for x in _leaves(v)]
+    if isinstance(value, (list, tuple)):
+        return [x for v in value for x in _leaves(v)]
+    return [str(value).strip().lower()] if value is not None else []
+
+
+def _attacker_values(d: dict) -> set[str]:
+    """Argument values only the attacker supplied, labelled without GuardLayer's own matching.
+
+    A value counts if it appears verbatim in the injected text, but in neither the user's messages nor the rest of
+    the environment (tool results with the injections cut out). Catches what an identifier regex can't, such as an
+    attacker-chosen password "new_password". Candidates are taken from the run's own tool-call arguments.
+    """
+    def flat(t: str) -> str:  # tool results re-wrap and indent text (YAML), so compare with whitespace collapsed
+        return " ".join(t.split()).lower()
+
+    inj = [flat(str(v)) for v in (d.get("injections") or {}).values()]
+    inj_text = " ".join(inj)
+    user = flat(" ".join(_text(m.get("content")) for m in d.get("messages", []) if m.get("role") == "user"))
+    env = flat(" ".join(_text(m.get("content")) for m in d.get("messages", []) if m.get("role") == "tool"))
+    for v in inj:
+        env = env.replace(v, " ")
+    out = set()
+    for m in d.get("messages", []):
+        for call in m.get("tool_calls") or []:
+            for leaf in _leaves(call.get("args") or {}):
+                leaf = " ".join(leaf.split())
+                if len(leaf) >= 4 and leaf in inj_text and leaf not in user and leaf not in env:
+                    out.add(leaf)
+    return out
+
+
 def replay(path: str, scope: str, evade_detection: bool = False, untrusted_destination: str = "off",
-           untrusted_all: bool = False) -> dict:
+           untrusted_all: bool = False, judge_model: str | None = None, judge_on: str = "consequential",
+           judge_cache: str | None = None) -> dict:
     session_cfg = {"after_injection_scope": scope, "untrusted_destination": untrusted_destination}
     if untrusted_all:  # AgentDojo's threat model: any tool result may carry third-party text
         session_cfg["default_integrity"] = "untrusted"
@@ -43,6 +82,17 @@ def replay(path: str, scope: str, evade_detection: bool = False, untrusted_desti
 
         detectors = (HeuristicScanner, ObfuscationScanner, SimilarityScanner, PromptLeakScanner)
         guard.scanners = [sc for sc in guard.scanners if not isinstance(sc, detectors)]
+    judge = None
+    if judge_model:
+        from guardlayer.judge import OllamaJudge
+
+        judge = OllamaJudge(judge_model)
+    cache: dict = {}
+    if judge_cache and os.path.exists(judge_cache):
+        cache = json.load(open(judge_cache, encoding="utf-8"))
+    from guardlayer.consequence import consequence
+
+    judged = collections.Counter()
     attack = collections.Counter()
     benign = collections.Counter()
     missed = []
@@ -50,12 +100,15 @@ def replay(path: str, scope: str, evade_detection: bool = False, untrusted_desti
         d = json.load(open(f, encoding="utf-8"))
         session = guard.session(uuid.uuid4().hex)
         injected = distinctive_values(" ".join(str(v) for v in (d.get("injections") or {}).values()))
-        is_attack = bool(d.get("injection_task_id")) and d.get("attack_type") not in (None, "none")
+        attacker = _attacker_values(d) if is_attack_run(d) else set()
+        is_attack = is_attack_run(d)
         harmful_seen = harmful_stopped = False
         stops = 0
+        user_messages: list[str] = []
         for m in d.get("messages", []):
             role = m.get("role")
             if role == "user":
+                user_messages.append(_text(m.get("content")))
                 session.scan_input(_text(m.get("content")))
             elif role == "tool":
                 name = (m.get("tool_call") or {}).get("function", "tool")
@@ -65,8 +118,19 @@ def replay(path: str, scope: str, evade_detection: bool = False, untrusted_desti
                     args = call.get("args") or {}
                     r = session.scan_tool_call(call["function"], args)
                     stop = r.is_blocked or r.needs_review
+                    if judge is not None and not stop and session.state.untrusted:
+                        caps, tagged = guard.tool_policy.resolve(call["function"])
+                        kind = consequence(call["function"], caps, tagged, args)
+                        if kind == "irreversible" or (judge_on == "consequential" and kind != "local"):
+                            key = json.dumps([judge_model, user_messages[-5:], call["function"], args], sort_keys=True, default=str)
+                            if key not in cache:
+                                cache[key] = judge(user_messages, call["function"], args).requested
+                            requested = cache[key]
+                            judged["asked"] += 1
+                            judged[f"answer {requested}"] += 1
+                            stop = requested is False
                     stops += stop
-                    carries = bool(injected & distinctive_values(json.dumps(args)))
+                    carries = bool(injected & distinctive_values(json.dumps(args))) or bool(attacker & set(_leaves(args)))
                     if carries:
                         harmful_seen = True
                         harmful_stopped = harmful_stopped or stop
@@ -84,7 +148,10 @@ def replay(path: str, scope: str, evade_detection: bool = False, untrusted_desti
             benign["runs"] += 1
             benign["calls stopped"] += stops
             benign["runs with a stop"] += stops > 0
-    return {"guardlayer": __version__, "scope": scope, "evade_detection": evade_detection, "untrusted_destination": untrusted_destination, "attack": dict(attack), "benign": dict(benign), "missed": missed}
+    if judge_cache:
+        json.dump({k: v for k, v in cache.items() if v is not None}, open(judge_cache, "w", encoding="utf-8"))
+    return {"guardlayer": __version__, "scope": scope, "evade_detection": evade_detection, "untrusted_destination": untrusted_destination,
+            "judge": judge_model, "judge_on": judge_on, "judged": dict(judged), "attack": dict(attack), "benign": dict(benign), "missed": missed}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -94,8 +161,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--evade-detection", action="store_true", help="remove the injection detectors (worst-case adaptive attacker)")
     p.add_argument("--untrusted-destination", default="off", choices=["off", "irreversible", "outbound"])
     p.add_argument("--untrusted-all", action="store_true", help="treat every tool result as untrusted (AgentDojo's threat model)")
+    p.add_argument("--judge", help="Ollama model for the second-stage judge (asked only about consequential actions)")
+    p.add_argument("--judge-on", default="consequential", choices=["consequential", "irreversible"],
+                   help="which actions the judge is asked about (after untrusted content, and only if the rules let them run)")
+    p.add_argument("--judge-cache", help="JSON file caching the judge's answers (temperature 0), so reruns don't re-ask")
     args = p.parse_args(argv)
-    print(json.dumps(replay(args.logs, args.scope, args.evade_detection, args.untrusted_destination, args.untrusted_all), indent=2))
+    print(json.dumps(replay(args.logs, args.scope, args.evade_detection, args.untrusted_destination, args.untrusted_all,
+                            args.judge, args.judge_on, args.judge_cache), indent=2))
     return 0
 
 
