@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 from guardlayer.canary import Canary, CanaryManager
+from guardlayer.credentials import credential_flow
 from guardlayer.extract import DEFAULT_EXTRACTORS, Extractor, extract, media_parts
 from guardlayer.filelabels import FileLabelStore, written_paths
 from guardlayer.intent import NEUTRAL_TASK, IntentCheck, Replay
@@ -429,6 +430,8 @@ class GuardLayer:
         rule_text = flatten_arguments(rule_arguments)
         payload = rule_arguments if isinstance(rule_arguments, str) else json.dumps(rule_arguments or {}, ensure_ascii=False, default=str)
         extra = self.tool_policy.evaluate(tool_name, rule_arguments)
+        if view is not None and any(d.rule == "credential_access" for d in extra):
+            extra = self._bind_credentials(tool_name, str(arguments[view[0]]), extra)  # type: ignore[index]
         metadata = {
             **dict(context_fields.pop("metadata", {}) or {}),
             "tool": tool_name,
@@ -530,6 +533,30 @@ class GuardLayer:
             metadata["session_id"] = state.id
         payload = arguments if isinstance(arguments, str) else json.dumps(arguments or {}, ensure_ascii=False, default=str)
         return self._run(payload, ScanContext(direction="output", metadata=metadata, **context_fields), extra=detections, content=False)
+
+    def _bind_credentials(self, tool_name: str, command: str, extra: list[Detection]) -> list[Detection]:
+        """Judge a fetched credential by where it goes (`guardlayer.credentials`): kept in a variable and used only
+        toward its own service is fine; printed into the transcript or sent elsewhere is not."""
+        flow = credential_flow(command)
+        if flow in ("", "unknown"):
+            return extra
+        rest = [d for d in extra if d.rule != "credential_access"]
+        if flow == "bound":
+            rest.append(Detection("tool_policy", "credential_bound", Category.POLICY.value, 0.1,
+                                  "A credential was fetched into a variable and used only toward its own service.",
+                                  metadata={"tool": tool_name}))  # fmt: skip
+        elif flow == "printed":
+            rest.append(Detection("tool_policy", "credential_exposed", Category.DATA_EXFILTRATION.value, 0.9,
+                                  "This prints a live credential into the agent's context. Capture it in a variable "
+                                  "(TOKEN=$(...)) and use it only toward its own service.",
+                                  metadata={"tool": tool_name},
+                                  action=self.tool_policy.rule_actions.get("credential_exposed", Action.BLOCK).value))  # fmt: skip
+        else:
+            rest.append(Detection("tool_policy", "credential_exfiltration", Category.DATA_EXFILTRATION.value, 1.0,
+                                  "A fetched credential is being sent to a host other than the service it belongs to.",
+                                  metadata={"tool": tool_name},
+                                  action=self.tool_policy.rule_actions.get("credential_exfiltration", Action.BLOCK).value))  # fmt: skip
+        return rest
 
     def _secrets_in_egress(self, tool_name: str, arguments_text: str) -> list[Detection]:
         """A secret in the arguments of a call that leaves the machine needs a human.

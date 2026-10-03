@@ -147,14 +147,33 @@ def _extract_substitutions(src: str) -> tuple[str, list[str]]:
     return "".join(out), subs
 
 
+_OPERATORS = ("<<<", "&>>", "&&", "||", "|&", ";;", ">>", "<<", ">&", "<&", "&>", ">|", "<>", ";", "&", "|", "(", ")", "<", ">", "\n")
+
+
+def _split_operators(tok: str) -> list[str]:
+    """shlex returns a run of punctuation as one token (';\\n', '|\\n'): split it into shell operators."""
+    out, i = [], 0
+    while i < len(tok):
+        op = next((o for o in _OPERATORS if tok.startswith(o, i)), tok[i])
+        out.append(op)
+        i += len(op)
+    return out
+
+
 def _tokens(src: str) -> list[str]:
-    lex = shlex.shlex(src, posix=True, punctuation_chars=";&|()<>")
-    lex.whitespace = " \t\r"  # newlines separate commands
+    # A newline ends a command just like ';'. It must be a punctuation character, not whitespace: shlex otherwise glues
+    # the next line onto a word that ends in a quote ('echo "a"\\nrm -rf /' became one echo argument).
+    src = re.sub(r"\\\r?\n", " ", src)  # line continuations join lines
+    lex = shlex.shlex(src, posix=True, punctuation_chars=";&|()<>\n")
+    lex.whitespace = " \t\r"
     lex.whitespace_split = True
     lex.commenters = "#"
     toks: list[str] = []
     for tok in lex:
-        toks.append(tok)
+        for part in _split_operators(tok) if tok and all(ch in ";&|()<>\n" for ch in tok) else [tok]:
+            if part == "\n" and toks and toks[-1] in ("|", "|&", "&&", "||", "\n"):
+                continue  # a newline after a pipe or && / || continues the command
+            toks.append(part)
     return toks
 
 
@@ -295,8 +314,11 @@ def _data_args(prog: str, args: list[str]) -> list[str]:
     return args
 
 
-def analyse(command: str, *, depth: int = 0) -> ShellView | None:
-    """The executed structure of a shell command, or None if it can't be parsed."""
+def analyse(command: str, *, depth: int = 0, keep_data: bool = False) -> ShellView | None:
+    """The executed structure of a shell command, or None if it can't be parsed.
+
+    `keep_data=True` keeps arguments that are data for the action rules (echo text, commit messages, patterns), for
+    analyses that follow values rather than actions (where a credential variable is printed)."""
     if not command or len(command) > MAX_COMMAND or depth > MAX_DEPTH:
         return None
     try:
@@ -352,7 +374,7 @@ def analyse(command: str, *, depth: int = 0) -> ShellView | None:
             elif body is not None:
                 script = body
             if script is not None:
-                inner = analyse(script, depth=depth + 1)
+                inner = analyse(script, depth=depth + 1, keep_data=keep_data)
                 if inner is None:
                     return None
                 nested.extend(inner.commands)
@@ -376,7 +398,7 @@ def analyse(command: str, *, depth: int = 0) -> ShellView | None:
                     if c == "__DYNAMIC__":
                         nested.append([Command(["__dynamic_command__"])])
                         continue
-                    inner = analyse(c, depth=depth + 1)
+                    inner = analyse(c, depth=depth + 1, keep_data=keep_data)
                     if inner is None:
                         nested.append([Command([c])])
                     else:
@@ -386,7 +408,7 @@ def analyse(command: str, *, depth: int = 0) -> ShellView | None:
             # A heredoc printed or piped onward (perhaps into an interpreter) stays visible; one written to a file is
             # file content, judged when (if ever) that file is run.
             nested.append([Command(["__stdin_script__", body])])
-        return Command([argv[0], *_data_args(prog, args)], [r for r in reds if r[0] != "<<"], upstream)
+        return Command([argv[0], *(args if keep_data else _data_args(prog, args))], [r for r in reds if r[0] != "<<"], upstream)
 
     while i < len(toks):
         tok = toks[i]
@@ -409,7 +431,7 @@ def analyse(command: str, *, depth: int = 0) -> ShellView | None:
     if not flush(True):
         return None
     for sub in subs:
-        inner = analyse(sub, depth=depth + 1)
+        inner = analyse(sub, depth=depth + 1, keep_data=keep_data)
         if inner is None:
             return None
         nested.extend(inner.commands)
