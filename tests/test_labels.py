@@ -343,3 +343,19 @@ def test_claude_code_label_defaults_yield_to_config(tmp_path):
 
     g = claude_code.configure_guard(build_guard({"labels": {"sources": {"Task": {"integrity": "trusted"}}}}), state_dir=tmp_path)
     assert not g.session_policy.is_untrusted("Task", can_reach_network=False)
+
+
+def test_public_sink_is_judged_by_what_the_call_carries():
+    """Reading a private record used to hold every later post to a public place, "Done." included. Now only a call
+    carrying the record's identifiers, names or a verbatim run is held; paraphrase passes (documented limit)."""
+    policy = SessionPolicy(sources={"get_customer": {"confidentiality": "private"}},
+                           sinks={"post_status": {"max_confidentiality": "public"}})  # fmt: skip
+    s = GuardLayer(session_policy=policy).session()
+    s.scan_input("Update the customer file and post a short status")
+    s.scan_tool_result("get_customer", CUSTOMER + ". Renewal terms for the northern region stay confidential until March.")
+    held = lambda body: "confidentiality_exceeds_sink" in rules(s.scan_tool_call("post_status", {"body": body}))  # noqa: E731
+    assert not held("Customer file updated. Done.")
+    assert held("Updated account 4411")
+    assert held("asha menon is updated")
+    assert held("balance now 91200")
+    assert held("terms for the northern region stay confidential")

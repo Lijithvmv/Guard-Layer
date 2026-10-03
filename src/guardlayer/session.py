@@ -225,6 +225,8 @@ class SessionState:
     user_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of the user's own messages
     untrusted_places: list[str] = field(default_factory=list)  # hashes of places (host/path, address) untrusted content named
     user_places: list[str] = field(default_factory=list)  # hashes of places the user or trusted content named
+    private_marks: list[str] = field(default_factory=list)  # hashes of identifiers and 6-word runs from declared-private sources
+    unmarked_private: bool = False  # private data entered without text to mark (a labelled file): judge session-wide
     public_words: list[str] = field(default_factory=list)  # hashes of words in untrusted content and user prompts: not private, so sending them leaks nothing
     sensitive_kinds: list[str] = field(default_factory=list)  # rules that found them (iban, credential_file, ...)
     task: str | None = None  # the task profile in force (see guardlayer.tasks)
@@ -283,7 +285,7 @@ class SessionState:
                           ("fingerprints", MAX_FINGERPRINTS), ("sensitive_kinds", MAX_SOURCES),
                           ("hostile_values", MAX_FINGERPRINTS), ("user_values", MAX_FINGERPRINTS),
                           ("untrusted_values", MAX_FINGERPRINTS), ("hostile_phrases", MAX_PHRASES), ("user_phrases", MAX_PHRASES),
-                          ("untrusted_phrases", MAX_PHRASES), ("untrusted_places", MAX_PHRASES), ("user_places", MAX_PHRASES),
+                          ("untrusted_phrases", MAX_PHRASES), ("untrusted_places", MAX_PHRASES), ("user_places", MAX_PHRASES), ("private_marks", MAX_PHRASES),
                           ("public_words", MAX_PHRASES)):
             setattr(self, name, _add(getattr(other, name), getattr(self, name), cap))
         self.created = min(self.created, other.created)
@@ -805,6 +807,8 @@ def observe_content(
             state.sensitive_kinds = _add(state.sensitive_kinds, [f"declared:{tool}"], MAX_SOURCES)
         elif declared.confidentiality is Confidentiality.PRIVATE:
             state.private_sources = _add(state.private_sources, [source], MAX_SOURCES)
+        if declared.confidentiality >= Confidentiality.PRIVATE:
+            state.private_marks = _add(state.private_marks, (fingerprint(m, "private") for m in _marks(text)), MAX_PHRASES)
     _touch(state)
 
 
@@ -830,6 +834,41 @@ def task_detections(policy: SessionPolicy, state: SessionState, tool: str, argum
     return out
 
 
+_SHINGLE = 6
+_NAME = re.compile(r"\b[A-Z][a-zA-Z-]{2,}\b")
+_GROUPED = re.compile(r"\d[\d,._ ]{2,}\d")
+_ID = re.compile(r"\b(?:(?=[a-z_-]*\d)(?=[\d_-]*[a-z])[a-z0-9_-]{4,}|\d{4,}|[\w.+-]+@[\w-]+(?:\.[\w-]+)+)\b")
+
+
+def _marks(text: str) -> set[str]:
+    """What identifies content from a private source: identifiers (IDs, numbers, addresses), names (capitalised
+    words), and every run of 6 words (a verbatim copy). Plain lower-case words don't count: a status note may share them."""
+    low = text.lower()[:200_000]
+    words = re.findall(r"\w+", low)
+    runs = {" ".join(words[i : i + _SHINGLE]) for i in range(max(0, len(words) - _SHINGLE + 1))}
+    names = {w.lower() for w in _NAME.findall(text[:200_000])}
+    numbers = {re.sub(r"[,._ ]", "", n) for n in _GROUPED.findall(low)}
+    ids = set(_ID.findall(low)) | {n for n in numbers if len(n) >= 4}
+    return set(distinctive_values(text)) | ids | names | set(list(runs)[:MAX_PHRASES])
+
+
+def _carries_private(state: SessionState, arguments: Any) -> bool:
+    """Whether an action carries content from a declared-private source (rather than merely following one).
+
+    Without this, reading one private file held every later post to a public place, including "Done.". Values the
+    user typed are theirs to send. Paraphrase is not detected: a summary in new words passes (documented limit).
+    Private data that entered without text to mark (a labelled file) keeps the session-wide judgement.
+    """
+    if state.unmarked_private or (not state.private_marks and (state.private_sources or state.sensitive_sources)):
+        return True
+    text = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False, default=str)
+    marks, public = set(state.private_marks), set(state.public_words)
+    for m in _marks(text) | set(re.findall(r"[a-z0-9-]{3,}", text.lower())):
+        if fingerprint(m, "private") in marks and not all(fingerprint(w, "word") in public for w in _words(m)):
+            return True
+    return False
+
+
 def observe_label(state: SessionState, label: Label, source: str) -> None:
     """Raise the session's label to `label` (e.g. from a labelled file the call mentions)."""
     if label.integrity is Integrity.HOSTILE:
@@ -840,6 +879,8 @@ def observe_label(state: SessionState, label: Label, source: str) -> None:
         state.sensitive_sources = _add(state.sensitive_sources, [source], MAX_SOURCES)
     elif label.confidentiality is Confidentiality.PRIVATE:
         state.private_sources = _add(state.private_sources, [source], MAX_SOURCES)
+    if label.confidentiality >= Confidentiality.PRIVATE:
+        state.unmarked_private = True
 
 
 def file_label_detections(
@@ -1012,7 +1053,7 @@ def taint_detections(
         emit("untrusted_to_protected_sink", Category.PROMPT_INJECTION.value, 0.8,
              f"This tool doesn't accept untrusted input, and the session has read {context.integrity.value} content.",
              label=context.to_dict(), untrusted=state.untrusted_sources[-5:], hostile=state.hostile_sources[-5:])  # fmt: skip
-    if cap is not None and context.confidentiality > cap:
+    if cap is not None and context.confidentiality > cap and _carries_private(state, arguments):
         emit("confidentiality_exceeds_sink", Category.DATA_EXFILTRATION.value, 0.8,
              f"The session holds {context.confidentiality.value} data; this tool accepts at most {cap.value}.",
              label=context.to_dict(), max_confidentiality=cap.value,

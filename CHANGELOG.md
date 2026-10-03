@@ -12,6 +12,11 @@ All notable changes to this project are documented here. The format follows
   no injection detection. Measured with detectors removed: recorded attacks stopped by the defaults 5/27 -> 12/27;
   extra holds on 17,316 real Claude Code calls: 2. Following links, opening files a page listed, and opening this
   machine's dev servers or files are not held. Hold messages name the recipient and where it came from.
+- **An outsider's address can't be laundered through a file**: trusted content that repeats an address an outsider
+  already supplied no longer makes it "known"; only your own messages can.
+- **`confidentiality_exceeds_sink` judges what a call carries**: after reading a declared-private source, a call to a
+  public sink is held when it carries that source's identifiers, names or a verbatim run, not for every call ("Done."
+  now runs). Paraphrase is not detected.
 - New docs page *What's stable*: which features are core, which are add-ons, and which are experimental (task profiles,
   file labels, split-instruction detection, extraction, behavioural check). Experimental modules say so in their first
   lines. A dead-code scan (vulture, counting tests and examples as users) found nothing to remove.
