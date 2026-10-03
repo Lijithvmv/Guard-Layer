@@ -718,6 +718,24 @@ def _adds_nothing(arguments: Any, extra: Iterable[str], state: SessionState) -> 
     return True
 
 
+_THIS_MACHINE = re.compile(
+    r"^(?:file:|(?:\w+://)?(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\]|[\w.-]+\.localhost)(?::\d+)?(?:[/?#]|$))",
+    re.IGNORECASE,
+)
+
+
+def _outside_place(value: str) -> bool:
+    """Whether a destination value can be somewhere off this machine.
+
+    Data sent to localhost or a local file never leaves the machine, so it can't be exfiltration (acting on a local
+    service is an action risk, judged by consequence, not this check). Browser commands passed where a URL goes
+    ("back", "reload") aren't addresses. A plain name is kept: it can be a recipient.
+    """
+    if _THIS_MACHINE.match(value):
+        return False
+    return not re.fullmatch(r"back|forward|reload|refresh|home|about:blank", value)
+
+
 _URL_START = re.compile(r"^(?:https?|wss?|ftps?)://", re.IGNORECASE)
 
 
@@ -943,7 +961,7 @@ def taint_detections(
         kind == "irreversible" or (policy.untrusted_destination == "outbound" and kind == "outbound")
     ):
         seen, user_p = set(state.untrusted_phrases), set(state.user_phrases)
-        dests = destination_values(arguments, policy.destination_args.get(tool, ()))
+        dests = [v for v in destination_values(arguments, policy.destination_args.get(tool, ())) if _outside_place(v)]
         copied = [v[:80] for v in dests if fingerprint(v, "phrase") in seen and fingerprint(v, "phrase") not in user_p]
         # The same destination written another way (a scheme or "www." added, data appended as a query) is still the
         # same place: compare places (host/path and its parents, or an address), not text.

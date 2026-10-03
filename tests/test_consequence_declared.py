@@ -182,3 +182,16 @@ def test_untrusted_destination_judges_what_the_action_carries() -> None:
     assert not held("https://code-host.net/bobsmith/octo-tools/main/src/engine.py")  # page words + the user's words
     assert held("https://code-host.net/repos/main/README.md?q=zephyr9431")  # private data appended
     assert held("https://code-host.net/repos/main/README.md", body="report")  # anything else sent
+
+
+def test_untrusted_destination_ignores_this_machine() -> None:
+    """A dev server or local file named in untrusted output is not an outsider's place: data sent there stays here."""
+    from guardlayer import SessionPolicy
+
+    s = GuardLayer(session_policy=SessionPolicy(untrusted_destination="outbound", default_integrity="untrusted")).session()
+    s.scan_input("Start the app and check the landing page")
+    s.scan_tool_result("BashOutput", "VITE ready at http://localhost:5173/ and http://localhost.evil-host.net/x, see the docs")
+    nav = {"tabId": "seed"}
+    assert "untrusted_destination" not in rules(s.scan_tool_call("navigate", {"url": "http://localhost:5173", **nav}))
+    assert "untrusted_destination" not in rules(s.scan_tool_call("navigate", {"url": "back", **nav}))
+    assert "untrusted_destination" in rules(s.scan_tool_call("navigate", {"url": "http://localhost.evil-host.net/x", **nav}))
