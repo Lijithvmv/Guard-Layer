@@ -51,6 +51,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from guardlayer.consequence import consequence, distinctive_values
 from guardlayer.labels import Confidentiality, Integrity, Label
 from guardlayer.labels import combine as combine_labels
 from guardlayer.models import Action, Category, Detection, ScanResult, Verdict
@@ -203,6 +204,8 @@ class SessionState:
     sensitive_sources: list[str] = field(default_factory=list)  # where sensitive data was seen
     private_sources: list[str] = field(default_factory=list)  # sources declared private (business data, not secrets)
     fingerprints: list[str] = field(default_factory=list)  # hashes of sensitive values
+    hostile_values: list[str] = field(default_factory=list)  # hashes of distinctive values seen in hostile content
+    user_values: list[str] = field(default_factory=list)  # hashes of distinctive values in the user's own messages
     sensitive_kinds: list[str] = field(default_factory=list)  # rules that found them (iban, credential_file, ...)
     task: str | None = None  # the task profile in force (see guardlayer.tasks)
     task_args: dict[str, Any] = field(default_factory=dict)  # values from the trusted request, for {task.NAME}
@@ -257,7 +260,8 @@ class SessionState:
     def merge(self, other: SessionState) -> None:
         """Union another copy of this session into this one (state only grows, so merging is safe)."""
         for name, cap in (("untrusted_sources", MAX_SOURCES), ("hostile_sources", MAX_SOURCES), ("sensitive_sources", MAX_SOURCES), ("private_sources", MAX_SOURCES),
-                          ("fingerprints", MAX_FINGERPRINTS), ("sensitive_kinds", MAX_SOURCES)):
+                          ("fingerprints", MAX_FINGERPRINTS), ("sensitive_kinds", MAX_SOURCES),
+                          ("hostile_values", MAX_FINGERPRINTS), ("user_values", MAX_FINGERPRINTS)):
             setattr(self, name, _add(getattr(other, name), getattr(self, name), cap))
         self.created = min(self.created, other.created)
         self.updated = max(self.updated, other.updated)
@@ -464,6 +468,9 @@ class SessionPolicy:
     destinations: list[dict[str, Any]] = field(default_factory=list)
     tasks: dict[str, Any] = field(default_factory=dict)
     trifecta_on_pii: bool = False
+    # After an injection: "consequence" holds irreversible actions and outbound ones carrying values from the hostile
+    # content (see guardlayer.consequence); "all" holds every action that can write, execute or reach the network.
+    after_injection_scope: str = "consequence"
 
     def __post_init__(self) -> None:
         merged = dict(DEFAULT_SESSION_ACTIONS)
@@ -477,6 +484,8 @@ class SessionPolicy:
             if isinstance(kinds, str) or not all(isinstance(k, str) for k in kinds):
                 raise ValueError(f"allow_egress[{pattern!r}] must be a list of data types, e.g. [\"iban\"]")
         self.allow_egress = {p: list(k) for p, k in self.allow_egress.items()}
+        if self.after_injection_scope not in ("consequence", "all"):
+            raise ValueError('after_injection_scope must be "consequence" or "all"')
         if self.default_integrity not in ("trusted", "untrusted"):
             raise ValueError('default_integrity must be "trusted" or "untrusted"')
         for pattern, spec in self.sources.items():
@@ -606,6 +615,7 @@ def observe_content(
         state.untrusted_sources = _add(state.untrusted_sources, [source], MAX_SOURCES)
     if not trusted and result.effective_verdict >= policy.hostile_min_verdict and HOSTILE_CATEGORIES & set(result.categories):
         state.hostile_sources = _add(state.hostile_sources, [source], MAX_SOURCES)
+        state.hostile_values = _add(state.hostile_values, (fingerprint(v, "hostile") for v in distinctive_values(text)), MAX_FINGERPRINTS)
     found = record_sensitive_values(state, text, result)
     # Secrets make a session sensitive (restricted). Personal data makes it private: its exact values are still
     # fingerprinted (sensitive_data_egress), but it doesn't turn every later network call into a review unless
@@ -676,7 +686,9 @@ def file_label_detections(
 
 
 def observe_input(state: SessionState, text: str, result: ScanResult) -> None:
-    """User prompts are trusted, but secrets pasted into them are still sensitive data."""
+    """User prompts are trusted, but secrets pasted into them are still sensitive data. Identifiers the user names
+    (URLs, addresses, accounts) are remembered so a later action using them is never blamed on hostile content."""
+    state.user_values = _add(state.user_values, (fingerprint(v, "hostile") for v in distinctive_values(text)), MAX_FINGERPRINTS)
     if any(d.category == Category.SECRET.value for d in result.detections):
         record_sensitive_values(state, text, result)
         state.sensitive_sources = _add(state.sensitive_sources, ["input"], MAX_SOURCES)
@@ -738,9 +750,27 @@ def taint_detections(
              "This session has read untrusted content and sensitive data; network/exec actions need approval.",
              untrusted=state.untrusted_sources[-5:], sensitive=state.sensitive_sources[-5:])  # fmt: skip
     if acts and state.hostile:
-        emit("after_injection", Category.PROMPT_INJECTION.value, 0.7,
-             "This session read content containing a prompt injection; side-effecting actions need approval.",
-             hostile=state.hostile_sources[-5:])  # fmt: skip
+        if policy.after_injection_scope == "all":
+            emit("after_injection", Category.PROMPT_INJECTION.value, 0.7,
+                 "This session read content containing a prompt injection; side-effecting actions need approval.",
+                 hostile=state.hostile_sources[-5:])  # fmt: skip
+        else:
+            kind = consequence(tool, caps, tagged, arguments if arguments is not None else arguments_text)
+            carried = []
+            if kind == "outbound" and state.hostile_values:
+                hostile, user = set(state.hostile_values), set(state.user_values)
+                for value in distinctive_values(arguments_text):
+                    fp = fingerprint(value, "hostile")
+                    if fp in hostile and fp not in user:
+                        carried.append(value[:80])
+            if kind == "irreversible":
+                emit("after_injection", Category.PROMPT_INJECTION.value, 0.7,
+                     "This session read content containing a prompt injection; this action can't be undone, so it needs approval.",
+                     hostile=state.hostile_sources[-5:], consequence=kind)  # fmt: skip
+            elif carried:
+                emit("after_injection", Category.PROMPT_INJECTION.value, 0.8,
+                     "This action sends a value that came from content containing a prompt injection, not from the user.",
+                     hostile=state.hostile_sources[-5:], consequence=kind, values=carried[:5])  # fmt: skip
     accepts_untrusted, _ = policy.sink(tool)
     cap = policy.call_cap(tool, arguments)
     context = state.label

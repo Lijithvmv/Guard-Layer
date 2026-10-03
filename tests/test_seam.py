@@ -23,7 +23,7 @@ def test_split_instruction_is_caught_and_marks_the_session_hostile():
     r = s.scan_tool_result("read_email", PART_2)
     assert "split_injection" in rules(r) and r.verdict >= Verdict.FLAG
     assert s.state.hostile
-    assert s.scan_tool_call("bash", {"cmd": "pytest -q"}).verdict is Verdict.REVIEW  # after_injection
+    assert s.scan_tool_call("bash", {"cmd": "rm -r build"}).verdict is Verdict.REVIEW  # after_injection: irreversible
 
 
 def test_ordinary_consecutive_content_stays_clean():
