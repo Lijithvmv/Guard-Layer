@@ -70,7 +70,7 @@ def _attacker_values(d: dict) -> set[str]:
 
 def replay(path: str, scope: str, evade_detection: bool = False, untrusted_destination: str = "off",
            untrusted_all: bool = False, judge_model: str | None = None, judge_on: str = "consequential",
-           judge_cache: str | None = None, delegate: bool = False) -> dict:
+           judge_cache: str | None = None, delegate: bool = False, judge_host: str = "http://127.0.0.1:11434") -> dict:
     session_cfg = {"after_injection_scope": scope, "untrusted_destination": untrusted_destination}
     if delegate:  # content fetched from a place the user named counts as the user's context (experiment)
         session_cfg["trusted_tools"] = ["__delegated__"]
@@ -88,7 +88,7 @@ def replay(path: str, scope: str, evade_detection: bool = False, untrusted_desti
     if judge_model:
         from guardlayer.judge import OllamaJudge
 
-        judge = OllamaJudge(judge_model)
+        judge = OllamaJudge(judge_model, host=judge_host)
     cache: dict = {}
     if judge_cache and os.path.exists(judge_cache):
         cache = json.load(open(judge_cache, encoding="utf-8"))
@@ -177,12 +177,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--judge", help="Ollama model for the second-stage judge (asked only about consequential actions)")
     p.add_argument("--judge-on", default="consequential", choices=["consequential", "irreversible", "irreversible+links"],
                    help="which actions the judge is asked about (after untrusted content, and only if the rules let them run)")
+    p.add_argument("--judge-host", default="http://127.0.0.1:11434", help="Ollama server for --judge")
     p.add_argument("--delegate", action="store_true",
                    help="experiment: content fetched from a place the user named counts as the user's context")
     p.add_argument("--judge-cache", help="JSON file caching the judge's answers (temperature 0), so reruns don't re-ask")
     args = p.parse_args(argv)
     print(json.dumps(replay(args.logs, args.scope, args.evade_detection, args.untrusted_destination, args.untrusted_all,
-                            args.judge, args.judge_on, args.judge_cache, args.delegate), indent=2))
+                            args.judge, args.judge_on, args.judge_cache, args.delegate, args.judge_host), indent=2))
     return 0
 
 

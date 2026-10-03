@@ -175,7 +175,7 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
     if args.judge:
         from guardlayer.judge import OllamaJudge
 
-        judge = OllamaJudge(args.judge)
+        judge = OllamaJudge(args.judge, host=args.judge_host)
     asked: collections.Counter[str] = collections.Counter()
     prompts: dict[str, list[str]] = collections.defaultdict(list)
     # Identifiers seen anywhere in a session (the user's prompts and every tool result, trusted or not): an outbound
@@ -304,6 +304,7 @@ def main(argv: list[str] | None = None) -> int:
         "--calls", action="store_true", help="include every tool call's outcome (ids, tool, rules; no content)"
     )
     p.add_argument("--judge", help="Ollama model: also ask the second-stage judge where it would be asked (slow)")
+    p.add_argument("--judge-host", default="http://127.0.0.1:11434", help="Ollama server for --judge")
     p.add_argument("--scan-cache", help="file caching detector results across replays (delete it when detectors change)")
     p.add_argument("-o", "--output", help="write the JSON result here")
     args = p.parse_args(argv)
