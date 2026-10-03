@@ -46,7 +46,8 @@ from guardlayer import __version__
 from guardlayer.config import build_guard
 from guardlayer.integrations.claude_code import _scan_output_of, configure_guard, handle_event, policy_view
 from guardlayer.models import Category, Verdict
-from guardlayer.session import HOSTILE_CATEGORIES
+from guardlayer.consequence import consequence
+from guardlayer.session import HOSTILE_CATEGORIES, _carried
 from guardlayer.tools import flatten_arguments
 
 _PATH_TOOLS = {"Read": "file_path", "Grep": "path", "Glob": "path", "WebFetch": "url", "WebSearch": "query"}
@@ -127,6 +128,13 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
     triggers: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
     sessions: dict[str, dict[str, int]] = {}
+    judge = None
+    if args.judge:
+        from guardlayer.judge import OllamaJudge
+
+        judge = OllamaJudge(args.judge)
+    asked: collections.Counter[str] = collections.Counter()
+    prompts: dict[str, list[str]] = collections.defaultdict(list)
     for path in paths:
         for when, event in events(path):
             if (since and when < since) or (until and when >= until):
@@ -135,6 +143,8 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
             per = sessions.setdefault(sid, collections.Counter())
             session = guard.session(sid)
             kind = event["hook_event_name"]
+            if kind == "UserPromptSubmit":
+                prompts[sid].append(str(event.get("prompt") or ""))
             if kind == "PreToolUse":
                 tool = event["tool_name"]
                 meta = {
@@ -148,6 +158,23 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
                 rules = sorted({d.rule for d in result.detections if d.action in ("review", "block")})
                 calls.append({"tool_use_id": event["tool_use_id"], "tool": tool, "rules": rules,
                               "outcome": "refused" if result.is_blocked else "held" if result.needs_review else "ok"})  # fmt: skip
+                if not (result.is_blocked or result.needs_review) and session.state.untrusted:
+                    # Would the second-stage judge be asked? Irreversible actions, and outbound ones carrying a link
+                    # that came from untrusted content and not from the user (see judge.py).
+                    view = policy_view(tool, event["tool_input"])
+                    caps, tagged = guard.tool_policy.resolve(tool)
+                    cls = consequence(tool, caps, tagged, view)
+                    text = json.dumps(view, default=str)
+                    links = [v for v in _carried(text, session.state.untrusted_values, session.state.user_values)
+                             if "." in v and "@" not in v]  # fmt: skip
+                    if cls == "irreversible" or (cls == "outbound" and links):
+                        asked[f"{cls}:{tool}"] += 1
+                        totals["judge_asked"] += 1
+                        if judge is not None:
+                            verdict = judge(prompts[sid], tool, view)
+                            totals[f"judge_answer_{verdict.requested}"] += 1
+                            if verdict.requested is False:
+                                asked[f"NO {cls}:{tool}"] += 1
                 if result.is_blocked or result.needs_review:
                     outcome = "refused" if result.is_blocked else "held"
                     totals[outcome] += 1
@@ -197,6 +224,8 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
         "sessions": len([s for s in sessions.values() if s["tool_calls"]]),
         "totals": dict(totals),
         "held_or_refused_by_rule": dict(by_rule.most_common()),
+        "judge": args.judge,
+        "judge_asked_by_tool": dict(asked.most_common()),
         "per_session": {sid[:8]: dict(c) for sid, c in sessions.items() if c["tool_calls"]},
         "taint_events": triggers,
         **({"calls": calls} if args.calls else {}),
@@ -219,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--calls", action="store_true", help="include every tool call's outcome (ids, tool, rules; no content)"
     )
+    p.add_argument("--judge", help="Ollama model: also ask the second-stage judge where it would be asked (slow)")
     p.add_argument("-o", "--output", help="write the JSON result here")
     args = p.parse_args(argv)
     paths: list[Path] = []

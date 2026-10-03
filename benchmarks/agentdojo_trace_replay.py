@@ -105,14 +105,18 @@ def replay(path: str, scope: str, evade_detection: bool = False, untrusted_desti
         harmful_seen = harmful_stopped = False
         stops = 0
         user_messages: list[str] = []
+        seen_values: set[str] = set()  # identifiers in tool results (all untrusted under AgentDojo's threat model)
+        user_values: set[str] = set()
         for m in d.get("messages", []):
             role = m.get("role")
             if role == "user":
                 user_messages.append(_text(m.get("content")))
+                user_values |= distinctive_values(_text(m.get("content")))
                 session.scan_input(_text(m.get("content")))
             elif role == "tool":
                 name = (m.get("tool_call") or {}).get("function", "tool")
                 session.scan_tool_result(name, _text(m.get("content")))
+                seen_values |= distinctive_values(_text(m.get("content")))
             elif role == "assistant":
                 for call in m.get("tool_calls") or []:
                     args = call.get("args") or {}
@@ -121,7 +125,11 @@ def replay(path: str, scope: str, evade_detection: bool = False, untrusted_desti
                     if judge is not None and not stop and session.state.untrusted:
                         caps, tagged = guard.tool_policy.resolve(call["function"])
                         kind = consequence(call["function"], caps, tagged, args)
-                        if kind == "irreversible" or (judge_on == "consequential" and kind != "local"):
+                        links = {v for v in distinctive_values(json.dumps(args)) if "." in v and "@" not in v}
+                        untrusted_link = bool((links & seen_values) - user_values)
+                        if kind == "irreversible" or (judge_on == "consequential" and kind != "local") or (
+                            judge_on == "irreversible+links" and kind == "outbound" and untrusted_link
+                        ):
                             key = json.dumps([judge_model, user_messages[-5:], call["function"], args], sort_keys=True, default=str)
                             if key not in cache:
                                 cache[key] = judge(user_messages, call["function"], args).requested
@@ -162,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--untrusted-destination", default="off", choices=["off", "irreversible", "outbound"])
     p.add_argument("--untrusted-all", action="store_true", help="treat every tool result as untrusted (AgentDojo's threat model)")
     p.add_argument("--judge", help="Ollama model for the second-stage judge (asked only about consequential actions)")
-    p.add_argument("--judge-on", default="consequential", choices=["consequential", "irreversible"],
+    p.add_argument("--judge-on", default="consequential", choices=["consequential", "irreversible", "irreversible+links"],
                    help="which actions the judge is asked about (after untrusted content, and only if the rules let them run)")
     p.add_argument("--judge-cache", help="JSON file caching the judge's answers (temperature 0), so reruns don't re-ask")
     args = p.parse_args(argv)
