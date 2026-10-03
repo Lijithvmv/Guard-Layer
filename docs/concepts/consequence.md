@@ -42,7 +42,7 @@ destination_args = ["payee"]     # arguments that say where things go, beyond to
 
 ## Where a value came from
 
-GuardLayer remembers, as salted hashes, the identifiers and short phrases it saw in content from outside and in your
+GuardLayer remembers, as hashes (keyed for phrases; see SECURITY.md), the identifiers and short phrases it saw in content from outside and in your
 own messages. When an action is about to leave the machine, it asks one question of its destination arguments: **did
 this value come from content an outsider could write, and never from you?** A plain name counts as much as a URL:
 if a web page says "send the summary to Fred" and you never mentioned Fred, a message to Fred is held; a message to

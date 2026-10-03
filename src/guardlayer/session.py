@@ -35,10 +35,12 @@ check runs in a new process, as with Claude Code hooks.
 
 from __future__ import annotations
 
+import base64
 import fnmatch
 import hashlib
 import html
 import json
+import logging
 import os
 import re
 import tempfile
@@ -48,7 +50,7 @@ import uuid
 import zlib
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import unquote
@@ -272,11 +274,29 @@ class SessionState:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        # A shallow copy: fields are str, number, bool, None, lists of str, or task_args (asdict copies element by element)
+        data = {name: (type(v)(v) if isinstance(v := getattr(self, name), (list, dict)) else v) for name in self.__dataclass_fields__}
+        for name in _PACKED:  # one base64 string instead of tens of thousands of JSON strings per save
+            data[name] = {"packed": base64.b64encode(bytes.fromhex("".join(data[name]))).decode("ascii")}
+        return data
+
+    def copy(self) -> SessionState:
+        """An independent copy (lists and dicts copied; their items are immutable)."""
+        return SessionState(**{name: (type(v)(v) if isinstance(v := getattr(self, name), (list, dict)) else v)
+                               for name in self.__dataclass_fields__})  # fmt: skip
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> SessionState:
         known = set(cls.__dataclass_fields__)
+        data = dict(data)
+        for name in _PACKED:
+            value = data.get(name)
+            if isinstance(value, Mapping):
+                raw = base64.b64decode(value.get("packed", ""))
+                hexed, w = raw.hex(), 2 * _H_BYTES
+                data[name] = [hexed[i : i + w] for i in range(0, len(hexed), w)]
+            elif isinstance(value, list):  # an older format: those hashes no longer match; start these lists afresh
+                data[name] = [v for v in value if isinstance(v, str) and len(v) == 2 * _H_BYTES]
         return cls(**{k: v for k, v in data.items() if k in known})
 
     def merge(self, other: SessionState) -> None:
@@ -294,6 +314,55 @@ class SessionState:
         if other.task_version > self.task_version:
             self.task, self.task_args, self.task_tools = other.task, dict(other.task_args), other.task_tools
             self.task_version, self.task_log = other.task_version, list(other.task_log)
+
+
+logger = logging.getLogger("guardlayer")
+
+_H_BYTES = 8
+# Lists only ever tested for membership: kept as short hashes and saved packed.
+_PACKED = ("untrusted_phrases", "hostile_phrases", "user_phrases", "untrusted_places", "user_places", "private_marks",
+           "public_words")
+
+
+_KEY: bytes | None = None
+
+
+def _hash_key() -> bytes:
+    """The installation's key for membership hashes, shared by every GuardLayer process (hook server, CLI, replays).
+
+    Short phrases are guessable, so an unkeyed hash of "send to fred" is as good as the text. The key lives in
+    `~/.guardlayer/hash.key` (or `GUARDLAYER_HASH_KEY_FILE`), readable only by the user: someone who can read both
+    the session files and the key can still test guesses. If the key can't be stored, hashes are unkeyed (with a
+    warning) rather than random per process, which would stop separate hook processes recognising each other's state.
+    """
+    global _KEY
+    if _KEY is not None:
+        return _KEY
+    path = Path(os.environ.get("GUARDLAYER_HASH_KEY_FILE", "~/.guardlayer/hash.key")).expanduser()
+    try:
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(os.urandom(32))
+            except FileExistsError:
+                pass  # another process created it first
+        key = path.read_bytes()
+        if len(key) < 16:
+            raise ValueError("hash key file too short")
+        _KEY = key[:32]
+    except (OSError, ValueError) as exc:
+        logger.warning("GuardLayer: no hash key (%s); membership hashes are unkeyed", exc)
+        _KEY = b""
+    return _KEY
+
+
+def _h(value: str, kind: str) -> str:
+    """A keyed 64-bit hash for membership lists (phrases, places, words, private marks). A chance collision among
+    20,000 entries is ~1e-11. Values are never stored in clear."""
+    data = f"{kind}\0{value}".encode("utf-8", "replace")
+    return hashlib.blake2b(data, digest_size=_H_BYTES, key=_hash_key()).hexdigest()
 
 
 def _add(existing: list[str], new: Iterable[str], cap: int) -> list[str]:
@@ -360,6 +429,25 @@ class FileSessionStore:
         self.dir = Path(directory).expanduser()
         self.ttl = ttl_seconds
         self.stale_lock_seconds = stale_lock_seconds
+        # The state this process last read or wrote, by file version (mtime, size). A state loaded from the file's
+        # current version needs no merge when saved; an unchanged file needs no re-read. ~40 ms a call on a full
+        # session. Anything else (another process wrote, or the state wasn't loaded from this version) merges as before.
+        self._known: dict[Path, tuple[tuple[int, int], SessionState]] = {}
+
+    @staticmethod
+    def _version(path: Path) -> tuple[int, int] | None:
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
+    def _remember(self, path: Path, state: SessionState) -> None:
+        version = self._version(path)
+        if version is None:
+            self._known.pop(path, None)
+        else:
+            self._known[path] = (version, state.copy())
 
     def _path(self, session_id: str) -> Path:
         return self.dir / f"{hashlib.sha256(session_id.encode('utf-8')).hexdigest()[:32]}.json"
@@ -405,9 +493,18 @@ class FileSessionStore:
                 time.sleep(0.005)
 
     def get(self, session_id: str) -> SessionState | None:
-        state = self._read(self._path(session_id))
+        path = self._path(session_id)
+        known = self._known.get(path)
+        version = self._version(path)
+        if known is not None and known[0] == version:
+            state: SessionState | None = known[1].copy()
+        else:
+            state = self._read(path)
+            if state is not None:
+                self._remember(path, state)
         if state is None or state.id != session_id:
             return None
+        state._loaded_from = version  # lineage: saving it back over this same version needs no merge
         if self.ttl is not None and time.time() - state.updated > self.ttl:
             return None
         return state
@@ -417,14 +514,19 @@ class FileSessionStore:
         path = self._path(state.id)
         lock = self._lock(path)
         try:
-            current = self._read(path)
-            if current is not None and current.id == state.id:
-                state.merge(current)
+            version = self._version(path)
+            if version is not None and getattr(state, "_loaded_from", None) != version:
+                known = self._known.get(path)
+                current = known[1].copy() if known is not None and known[0] == version else self._read(path)
+                if current is not None and current.id == state.id:
+                    state.merge(current)
             fd, tmp = tempfile.mkstemp(dir=self.dir, prefix=".tmp-", suffix=".json")
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                    json.dump(state.to_dict(), fh)
+                    fh.write(json.dumps(state.to_dict()))  # json.dump streams through the slow pure-Python path
                 self._replace(tmp, path)
+                self._remember(path, state)
+                state._loaded_from = self._version(path)
             except BaseException:
                 Path(tmp).unlink(missing_ok=True)
                 raise
@@ -433,7 +535,9 @@ class FileSessionStore:
                 lock.unlink(missing_ok=True)
 
     def delete(self, session_id: str) -> None:
-        self._path(session_id).unlink(missing_ok=True)
+        path = self._path(session_id)
+        self._known.pop(path, None)
+        path.unlink(missing_ok=True)
 
 
 # ------------------------------------------------------------------------------------- policy
@@ -715,7 +819,7 @@ def _adds_nothing(arguments: Any, extra: Iterable[str], state: SessionState) -> 
         if not (_URL_START.match(value) or ("@" not in value and " " not in value and places(value))):
             return False  # an address or account: sending to it at all is the act
         rest = re.sub(r"^\w+://", "", value)
-        if any(fingerprint(w, "word") not in known for w in _words(rest)):
+        if any(_h(w, "word") not in known for w in _words(rest)):
             return False
     return True
 
@@ -774,9 +878,9 @@ def observe_content(
         state.untrusted_sources = _add(state.untrusted_sources, [source], MAX_SOURCES)
         state.untrusted_values = _add(state.untrusted_values, values, MAX_FINGERPRINTS)
         if policy.untrusted_destination != "off":
-            state.untrusted_phrases = _add(state.untrusted_phrases, (fingerprint(p, "phrase") for p in phrases(text)), MAX_PHRASES)
-            state.untrusted_places = _add(state.untrusted_places, (fingerprint(p, "place") for p in places(text)), MAX_PHRASES)
-            state.public_words = _add(state.public_words, (fingerprint(w, "word") for w in _words(text)), MAX_PHRASES)
+            state.untrusted_phrases = _add(state.untrusted_phrases, (_h(p, "phrase") for p in phrases(text)), MAX_PHRASES)
+            state.untrusted_places = _add(state.untrusted_places, (_h(p, "place") for p in places(text)), MAX_PHRASES)
+            state.public_words = _add(state.public_words, (_h(w, "word") for w in _words(text)), MAX_PHRASES)
     elif not injected:
         # Identifiers in trusted content (the user's own files and tools) are known context: an action using them
         # is never blamed on untrusted or hostile content that repeats them. Content holding an injection never
@@ -784,11 +888,11 @@ def observe_content(
         # after reading untrusted content is read back as untrusted (see Guard.scan_tool_result `arguments`), so an
         # outsider's address can't be laundered through it.
         state.user_values = _add(state.user_values, values, MAX_FINGERPRINTS)
-        state.user_places = _add(state.user_places, (fingerprint(p, "place") for p in places(text)), MAX_PHRASES)
+        state.user_places = _add(state.user_places, (_h(p, "place") for p in places(text)), MAX_PHRASES)
     if hostile:
         state.hostile_sources = _add(state.hostile_sources, [source], MAX_SOURCES)
         state.hostile_values = _add(state.hostile_values, values, MAX_FINGERPRINTS)
-        state.hostile_phrases = _add(state.hostile_phrases, (fingerprint(p, "phrase") for p in phrases(text)), MAX_PHRASES)
+        state.hostile_phrases = _add(state.hostile_phrases, (_h(p, "phrase") for p in phrases(text)), MAX_PHRASES)
     found = record_sensitive_values(state, text, result)
     # Secrets make a session sensitive (restricted). Personal data makes it private: its exact values are still
     # fingerprinted (sensitive_data_egress), but it doesn't turn every later network call into a review unless
@@ -806,7 +910,7 @@ def observe_content(
         elif declared.confidentiality is Confidentiality.PRIVATE:
             state.private_sources = _add(state.private_sources, [source], MAX_SOURCES)
         if declared.confidentiality >= Confidentiality.PRIVATE:
-            state.private_marks = _add(state.private_marks, (fingerprint(m, "private") for m in _marks(text)), MAX_PHRASES)
+            state.private_marks = _add(state.private_marks, (_h(m, "private") for m in _marks(text)), MAX_PHRASES)
     _touch(state)
 
 
@@ -862,7 +966,7 @@ def _carries_private(state: SessionState, arguments: Any) -> bool:
     text = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False, default=str)
     marks, public = set(state.private_marks), set(state.public_words)
     for m in _marks(text) | set(re.findall(r"[a-z0-9-]{3,}", text.lower())):
-        if fingerprint(m, "private") in marks and not all(fingerprint(w, "word") in public for w in _words(m)):
+        if _h(m, "private") in marks and not all(_h(w, "word") in public for w in _words(m)):
             return True
     return False
 
@@ -909,11 +1013,11 @@ def observe_input(state: SessionState, text: str, result: ScanResult) -> None:
     """User prompts are trusted, but secrets pasted into them are still sensitive data. Identifiers the user names
     (URLs, addresses, accounts) are remembered so a later action using them is never blamed on hostile content."""
     state.user_values = _add(state.user_values, (fingerprint(v, "hostile") for v in distinctive_values(text)), MAX_FINGERPRINTS)
-    state.user_phrases = _add(state.user_phrases, (fingerprint(p, "phrase") for p in phrases(text)), MAX_PHRASES)
-    state.user_places = _add(state.user_places, (fingerprint(p, "place") for p in places(text)), MAX_PHRASES)
+    state.user_phrases = _add(state.user_phrases, (_h(p, "phrase") for p in phrases(text)), MAX_PHRASES)
+    state.user_places = _add(state.user_places, (_h(p, "place") for p in places(text)), MAX_PHRASES)
     # Words the user typed are theirs to send (a search term, a repository they named): not private data. Secrets
     # pasted here are still caught by fingerprint rules.
-    state.public_words = _add(state.public_words, (fingerprint(w, "word") for w in _words(text)), MAX_PHRASES)
+    state.public_words = _add(state.public_words, (_h(w, "word") for w in _words(text)), MAX_PHRASES)
     if any(d.category == Category.SECRET.value for d in result.detections):
         record_sensitive_values(state, text, result)
         state.sensitive_sources = _add(state.sensitive_sources, ["input"], MAX_SOURCES)
@@ -1006,14 +1110,14 @@ def taint_detections(
     ):
         seen, user_p = set(state.untrusted_phrases), set(state.user_phrases)
         dests = [v for v in destination_values(arguments, policy.destination_args.get(tool, ())) if _outside_place(v)]
-        copied = [v[:80] for v in dests if fingerprint(v, "phrase") in seen and fingerprint(v, "phrase") not in user_p]
+        copied = [v[:80] for v in dests if _h(v, "phrase") in seen and _h(v, "phrase") not in user_p]
         # The same destination written another way (a scheme or "www." added, data appended as a query) is still the
         # same place: compare places (host/path and its parents, or an address), not text.
         outside, known = set(state.untrusted_places), set(state.user_places)
         for v in dests:
             if v[:80] in copied:
                 continue
-            fps = {fingerprint(p, "place") for p in destination_places(v) | destination_places(_canonical(v))}
+            fps = {_h(p, "place") for p in destination_places(v) | destination_places(_canonical(v))}
             if fps & outside and not fps & known:
                 copied.append(v[:80])
         if copied and kind == "outbound" and _adds_nothing(arguments, policy.destination_args.get(tool, ()), state):
@@ -1035,7 +1139,7 @@ def taint_detections(
                 # a destination argument whose value was copied from the injected content, whatever its shape
                 hostile_p, user_p = set(state.hostile_phrases), set(state.user_phrases)
                 carried = [v[:80] for v in destination_values(arguments, policy.destination_args.get(tool, ()))
-                           if fingerprint(v, "phrase") in hostile_p and fingerprint(v, "phrase") not in user_p]  # fmt: skip
+                           if _h(v, "phrase") in hostile_p and _h(v, "phrase") not in user_p]  # fmt: skip
             if kind == "irreversible":
                 emit("after_injection", Category.PROMPT_INJECTION.value, 0.7,
                      "This session read content containing a prompt injection; this action can't be undone, so it needs approval.",
