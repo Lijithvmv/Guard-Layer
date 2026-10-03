@@ -777,9 +777,14 @@ def observe_content(
     elif not injected:
         # Identifiers in trusted content (the user's own files and tools) are known context: an action using them
         # is never blamed on untrusted or hostile content that repeats them. Content holding an injection never
-        # counts as known context, whatever its source (a poisoned README is a local file).
-        state.user_values = _add(state.user_values, values, MAX_FINGERPRINTS)
-        state.user_places = _add(state.user_places, (fingerprint(p, "place") for p in places(text)), MAX_PHRASES)
+        # counts as known context, whatever its source (a poisoned README is a local file). The first provenance
+        # wins: what an outsider already supplied stays theirs when trusted content repeats it (an agent can write
+        # an outsider's address into a file and read it back); only the user's own messages can vouch for it.
+        outside_v, outside_p = set(state.untrusted_values), set(state.untrusted_places)
+        state.user_values = _add(state.user_values, (v for v in values if v not in outside_v), MAX_FINGERPRINTS)
+        state.user_places = _add(
+            state.user_places, (f for f in (fingerprint(p, "place") for p in places(text)) if f not in outside_p), MAX_PHRASES
+        )
     if hostile:
         state.hostile_sources = _add(state.hostile_sources, [source], MAX_SOURCES)
         state.hostile_values = _add(state.hostile_values, values, MAX_FINGERPRINTS)
