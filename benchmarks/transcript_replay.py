@@ -44,7 +44,7 @@ from typing import Any
 
 from guardlayer import __version__
 from guardlayer.config import build_guard
-from guardlayer.consequence import consequence
+from guardlayer.consequence import consequence, distinctive_values
 from guardlayer.integrations.claude_code import _scan_output_of, configure_guard, handle_event, policy_view
 from guardlayer.models import Category, Verdict
 from guardlayer.session import HOSTILE_CATEGORIES, _carried
@@ -135,6 +135,9 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
         judge = OllamaJudge(args.judge)
     asked: collections.Counter[str] = collections.Counter()
     prompts: dict[str, list[str]] = collections.defaultdict(list)
+    # Identifiers seen anywhere in a session (the user's prompts and every tool result, trusted or not): an outbound
+    # destination in none of them is novel, which no rewriting of an outsider's address can avoid.
+    seen: dict[str, set[str]] = collections.defaultdict(set)
     for path in paths:
         for when, event in events(path):
             if (since and when < since) or (until and when >= until):
@@ -145,6 +148,7 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
             kind = event["hook_event_name"]
             if kind == "UserPromptSubmit":
                 prompts[sid].append(str(event.get("prompt") or ""))
+                seen[sid] |= distinctive_values(str(event.get("prompt") or ""))
             if kind == "PreToolUse":
                 tool = event["tool_name"]
                 meta = {
@@ -167,6 +171,10 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
                     text = json.dumps(view, default=str)
                     links = [v for v in _carried(text, session.state.untrusted_values, session.state.user_values)
                              if "." in v and "@" not in v]  # fmt: skip
+                    hosts = {v for v in distinctive_values(text) if "." in v and "@" not in v and "/" not in v}
+                    if cls == "outbound" and hosts - seen[sid]:
+                        totals["novel_destination"] += 1
+                        asked[f"novel:{tool}"] += 1
                     if cls == "irreversible" or (cls == "outbound" and links):
                         asked[f"{cls}:{tool}"] += 1
                         totals["judge_asked"] += 1
@@ -192,6 +200,7 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
             if not _scan_output_of(guard, tool):
                 continue
             meta = {k: event[k] for k in ("cwd", "tool_use_id") if event.get(k)}
+            seen[sid] |= distinctive_values(flatten_arguments(event.get("tool_response"))[:200_000])
             result = session.scan_tool_result(
                 tool, flatten_arguments(event.get("tool_response")), metadata={**meta, "source": "replay"}
             )

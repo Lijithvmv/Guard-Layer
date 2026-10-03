@@ -51,8 +51,18 @@ from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
+from urllib.parse import unquote
 
-from guardlayer.consequence import consequence, destination_values, distinctive_values, file_consequence, phrases
+from guardlayer.consequence import (
+    DESTINATION_ARGS,
+    consequence,
+    destination_places,
+    destination_values,
+    distinctive_values,
+    file_consequence,
+    phrases,
+    places,
+)
 from guardlayer.labels import Confidentiality, Integrity, Label
 from guardlayer.labels import combine as combine_labels
 from guardlayer.models import Action, Category, Detection, ScanResult, Verdict
@@ -213,6 +223,9 @@ class SessionState:
     untrusted_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of untrusted content
     hostile_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of hostile content (where a destination may come from)
     user_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of the user's own messages
+    untrusted_places: list[str] = field(default_factory=list)  # hashes of places (host/path, address) untrusted content named
+    user_places: list[str] = field(default_factory=list)  # hashes of places the user or trusted content named
+    public_words: list[str] = field(default_factory=list)  # hashes of words in untrusted content and user prompts: not private, so sending them leaks nothing
     sensitive_kinds: list[str] = field(default_factory=list)  # rules that found them (iban, credential_file, ...)
     task: str | None = None  # the task profile in force (see guardlayer.tasks)
     task_args: dict[str, Any] = field(default_factory=dict)  # values from the trusted request, for {task.NAME}
@@ -270,7 +283,8 @@ class SessionState:
                           ("fingerprints", MAX_FINGERPRINTS), ("sensitive_kinds", MAX_SOURCES),
                           ("hostile_values", MAX_FINGERPRINTS), ("user_values", MAX_FINGERPRINTS),
                           ("untrusted_values", MAX_FINGERPRINTS), ("hostile_phrases", MAX_PHRASES), ("user_phrases", MAX_PHRASES),
-                          ("untrusted_phrases", MAX_PHRASES)):
+                          ("untrusted_phrases", MAX_PHRASES), ("untrusted_places", MAX_PHRASES), ("user_places", MAX_PHRASES),
+                          ("public_words", MAX_PHRASES)):
             setattr(self, name, _add(getattr(other, name), getattr(self, name), cap))
         self.created = min(self.created, other.created)
         self.updated = max(self.updated, other.updated)
@@ -674,6 +688,39 @@ def _readable(text: str) -> str:
     return "\n".join([text, *views]) if views else text
 
 
+_WORD = re.compile(r"[a-z0-9]{3,40}")
+
+
+def _words(text: str) -> set[str]:
+    return set(_WORD.findall(unquote(text).lower()))
+
+
+def _adds_nothing(arguments: Any, extra: Iterable[str], state: SessionState) -> bool:
+    """True when an outbound action carries nothing an outsider didn't already have.
+
+    Data leaves only in what an action carries: a body, message or other argument, or words in the URL. Opening a
+    page at an address built only from words in content the outsider wrote (following a link, or a file listed in a
+    repository) tells them nothing; appending the user's contacts or a file's contents to their URL does. (Opening an
+    outsider's page brings more untrusted content in; that is judged when it is read.)
+    """
+    if not isinstance(arguments, Mapping) or not arguments:
+        return False
+    keys = DESTINATION_ARGS | set(extra)
+    if any(str(k).lower() not in keys and v not in (None, "", [], {}) for k, v in arguments.items()):
+        return False
+    known = set(state.public_words)
+    for value in destination_values(arguments, extra):
+        if not _URL_START.match(value):
+            return False  # an address or account: sending to it at all is the act
+        rest = re.sub(r"^\w+://", "", value)
+        if any(fingerprint(w, "word") not in known for w in _words(rest)):
+            return False
+    return True
+
+
+_URL_START = re.compile(r"^(?:https?|wss?|ftps?)://", re.IGNORECASE)
+
+
 def _decode_token(token: str) -> str | None:
     import base64
     import binascii
@@ -707,11 +754,14 @@ def observe_content(
         state.untrusted_values = _add(state.untrusted_values, values, MAX_FINGERPRINTS)
         if policy.untrusted_destination != "off":
             state.untrusted_phrases = _add(state.untrusted_phrases, (fingerprint(p, "phrase") for p in phrases(text)), MAX_PHRASES)
+            state.untrusted_places = _add(state.untrusted_places, (fingerprint(p, "place") for p in places(text)), MAX_PHRASES)
+            state.public_words = _add(state.public_words, (fingerprint(w, "word") for w in _words(text)), MAX_PHRASES)
     elif not injected:
         # Identifiers in trusted content (the user's own files and tools) are known context: an action using them
         # is never blamed on untrusted or hostile content that repeats them. Content holding an injection never
         # counts as known context, whatever its source (a poisoned README is a local file).
         state.user_values = _add(state.user_values, values, MAX_FINGERPRINTS)
+        state.user_places = _add(state.user_places, (fingerprint(p, "place") for p in places(text)), MAX_PHRASES)
     if hostile:
         state.hostile_sources = _add(state.hostile_sources, [source], MAX_SOURCES)
         state.hostile_values = _add(state.hostile_values, values, MAX_FINGERPRINTS)
@@ -798,6 +848,10 @@ def observe_input(state: SessionState, text: str, result: ScanResult) -> None:
     (URLs, addresses, accounts) are remembered so a later action using them is never blamed on hostile content."""
     state.user_values = _add(state.user_values, (fingerprint(v, "hostile") for v in distinctive_values(text)), MAX_FINGERPRINTS)
     state.user_phrases = _add(state.user_phrases, (fingerprint(p, "phrase") for p in phrases(text)), MAX_PHRASES)
+    state.user_places = _add(state.user_places, (fingerprint(p, "place") for p in places(text)), MAX_PHRASES)
+    # Words the user typed are theirs to send (a search term, a repository they named): not private data. Secrets
+    # pasted here are still caught by fingerprint rules.
+    state.public_words = _add(state.public_words, (fingerprint(w, "word") for w in _words(text)), MAX_PHRASES)
     if any(d.category == Category.SECRET.value for d in result.detections):
         record_sensitive_values(state, text, result)
         state.sensitive_sources = _add(state.sensitive_sources, ["input"], MAX_SOURCES)
@@ -891,10 +945,17 @@ def taint_detections(
         seen, user_p = set(state.untrusted_phrases), set(state.user_phrases)
         dests = destination_values(arguments, policy.destination_args.get(tool, ()))
         copied = [v[:80] for v in dests if fingerprint(v, "phrase") in seen and fingerprint(v, "phrase") not in user_p]
-        # The same destination written another way (a scheme or "www." added, a trailing slash) is still the same
-        # place: compare its normalised identifiers (URL, host, address) too.
-        rest = " ".join(v for v in dests if v[:80] not in copied)
-        copied += _carried(f"{rest} {_canonical(rest)}", state.untrusted_values, state.user_values)
+        # The same destination written another way (a scheme or "www." added, data appended as a query) is still the
+        # same place: compare places (host/path and its parents, or an address), not text.
+        outside, known = set(state.untrusted_places), set(state.user_places)
+        for v in dests:
+            if v[:80] in copied:
+                continue
+            fps = {fingerprint(p, "place") for p in destination_places(v) | destination_places(_canonical(v))}
+            if fps & outside and not fps & known:
+                copied.append(v[:80])
+        if copied and kind == "outbound" and _adds_nothing(arguments, policy.destination_args.get(tool, ()), state):
+            copied = []
         if copied:
             emit("untrusted_destination", Category.PROMPT_INJECTION.value, 0.7,
                  "This action's destination was copied from content an outsider can write, not from the user.",

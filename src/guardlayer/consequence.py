@@ -88,6 +88,43 @@ def phrases(text: str, limit: int = 20_000) -> set[str]:
     return out
 
 
+def places(text: str, limit: int = 2000) -> set[str]:
+    """The places a text names, as a destination check needs them (normalised, lower-case).
+
+    A URL names host + path (no scheme, "www." or query: data appended to an outsider's URL still goes to that
+    place) and its parent paths down to the first segment, which on shared hosts (code hosts, raw-file hosts, cloud
+    storage) is usually the owner, and the host itself, whose operator reads what is sent to it. Whether sending to
+    it matters is decided by what the action carries (see session._adds_nothing). E-mail addresses name themselves.
+    """
+    found: set[str] = set()
+    text = text[:200_000]
+    named = [m.group(0) for m in _URL.finditer(text)]
+    named += [m.group(0) for m in _DOMAIN.finditer(_EMAIL.sub(" ", _URL.sub(" ", text)))]
+    for raw in named:
+        base = re.sub(r"^\w+://", "", raw.rstrip(".,;:!?").lower())
+        base = re.split(r"[?#]", base, maxsplit=1)[0].rstrip("/")
+        host, _, path = base.partition("/")
+        host = re.sub(r"^www\.", "", host.split("@")[-1].split(":")[0])
+        if "." not in host:
+            continue
+        parts = [p for p in path.split("/") if p]
+        found.add(host)  # whoever runs the host reads what is sent to it
+        for i in range(len(parts), 0, -1):
+            found.add("/".join([host, *parts[:i]]))
+        if len(found) >= limit:
+            break
+    found.update(v.lower() for v in _EMAIL.findall(text))
+    return found
+
+
+def destination_places(value: str) -> set[str]:
+    """Every place a destination value could be matched at: itself, its parent paths, and its bare host."""
+    out = places(value) or set()
+    for p in list(out):
+        out.add(p.split("/")[0])
+    return out or {value}
+
+
 def destination_values(arguments: Mapping[str, Any] | str | None, extra: Iterable[str] = ()) -> list[str]:
     """Short string values of destination arguments (normalised)."""
     if not isinstance(arguments, Mapping):

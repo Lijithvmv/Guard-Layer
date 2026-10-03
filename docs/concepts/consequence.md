@@ -48,6 +48,12 @@ this value come from content an outsider could write, and never from you?** A pl
 if a web page says "send the summary to Fred" and you never mentioned Fred, a message to Fred is held; a message to
 the colleague you named runs.
 
+What matters is what the action **carries** to that place. Opening a page at an address built only from words the
+outsider wrote, or that you typed (following a link, opening a file a repository page listed), tells them nothing,
+so it runs. Appending anything else to their URL (your contacts, a file's contents) or sending a body, message or
+other argument to them is held. Replaying one research session (297 calls, mostly reading GitHub pages), this took
+the check from 58 holds to 0, while the recorded attacks it stops stayed the same.
+
 ## Credentials
 
 A credential the agent fetches is judged by where it goes: kept in a shell variable and used only toward its own
