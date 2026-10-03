@@ -105,14 +105,15 @@ def test_untrusted_destination_survives_rewriting_the_url() -> None:
     )
 
 
-def test_untrusted_destination_is_off_by_default_and_validated() -> None:
+def test_untrusted_destination_is_on_by_default_can_be_turned_off_and_is_validated() -> None:
     from guardlayer import SessionPolicy
 
-    s = GuardLayer(session_policy=SessionPolicy(default_integrity="untrusted")).session()
-    s.scan_tool_result("read_email", UNDETECTED)
-    assert "untrusted_destination" not in rules(
-        s.scan_tool_call("send_direct_message", {"recipient": "Fred", "body": "x"})
-    )
+    for setting, held in ((None, True), ("off", False)):
+        extra = {} if setting is None else {"untrusted_destination": setting}
+        s = GuardLayer(session_policy=SessionPolicy(default_integrity="untrusted", **extra)).session()
+        s.scan_tool_result("read_email", UNDETECTED)
+        got = "untrusted_destination" in rules(s.scan_tool_call("send_direct_message", {"recipient": "Fred", "body": "x"}))
+        assert got is held
     with pytest.raises(ValueError):
         SessionPolicy(untrusted_destination="sometimes")
 

@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **The destination check is on by default** (`[session] untrusted_destination = "outbound"`; set `"off"` to
+  disable). An outbound action whose destination came from content an outsider can write is held when it carries
+  something private (a body or message, or URL words that are in neither that content nor your prompts). It needs
+  no injection detection. Measured with detectors removed: recorded attacks stopped by the defaults 5/27 -> 12/27;
+  extra holds on 17,316 real Claude Code calls: 2. Following links, opening files a page listed, and opening this
+  machine's dev servers or files are not held. Hold messages name the recipient and where it came from.
 - New docs page *What's stable*: which features are core, which are add-ons, and which are experimental (task profiles,
   file labels, split-instruction detection, extraction, behavioural check). Experimental modules say so in their first
   lines. A dead-code scan (vulture, counting tests and examples as users) found nothing to remove.

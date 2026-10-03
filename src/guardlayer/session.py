@@ -507,7 +507,7 @@ class SessionPolicy:
     # Detection-independent: hold an action whose destination argument was copied from untrusted content and never
     # named by the user. "irreversible" (payments, access changes, publishing), "outbound" (also messages and posts)
     # or "off". An injection that evades every detector still has to name its destination somewhere the agent read.
-    untrusted_destination: str = "off"
+    untrusted_destination: str = "outbound"
 
     def __post_init__(self) -> None:
         merged = dict(DEFAULT_SESSION_ACTIONS)

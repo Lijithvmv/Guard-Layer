@@ -63,10 +63,13 @@ any other host is blocked.
 ## What this does not protect against (measured)
 
 - **An attack nobody detects.** The rule that reacts to injected content (`after_injection`) needs a detector to
-  recognise the injection. With the detectors removed (a stand-in for an attacker who evades them), GuardLayer's
-  defaults stopped **5 of 27** recorded attacks that had succeeded without a guard. The destination check
-  (`[session] untrusted_destination = "outbound"`, off by default) doesn't need detection: with every tool result
-  treated as untrusted it stopped **19 of 27**, at the cost of interrupting about one ordinary task in four (one in ten without it).
+  recognise the injection. With the detectors removed (a stand-in for an attacker who evades them), the
+  injection rules alone stopped **5 of 27** recorded attacks that had succeeded without a guard. The destination
+  check (`[session] untrusted_destination = "outbound"`, on by default; `"off"` disables it) doesn't need detection:
+  with it, the defaults stop **12 of 27**, and with every tool result treated as untrusted **19 of 27**. Its cost on
+  17,316 real Claude Code calls: **2 extra holds** (one per project set), because following links and opening local
+  pages carry nothing private. On AgentDojo's tasks, nearly all of which pay or send after reading untrusted content,
+  it interrupts about one task in seven by default, one in four with every result untrusted.
   The two attacks it lets through only make the agent *visit* the attacker's site: a visit carries nothing private,
   so the check doesn't hold it (see below for what does).
   It compares a destination by what it names, so `https://www.site.example/x` and `site.example/x` are the same place,
