@@ -30,8 +30,19 @@ def _text(content) -> str:  # type: ignore[no-untyped-def]
     return str(content or "")
 
 
-def replay(path: str, scope: str) -> dict:
-    guard = build_guard({"session": {"after_injection_scope": scope}})
+def replay(path: str, scope: str, evade_detection: bool = False, untrusted_destination: str = "off",
+           untrusted_all: bool = False) -> dict:
+    session_cfg = {"after_injection_scope": scope, "untrusted_destination": untrusted_destination}
+    if untrusted_all:  # AgentDojo's threat model: any tool result may carry third-party text
+        session_cfg["default_integrity"] = "untrusted"
+    guard = build_guard({"session": session_cfg})
+    if evade_detection:
+        # Worst case for detection: an adaptive attacker whose injection no scanner recognises. Only the
+        # injection detectors are removed; tool policy, secrets, personal data, links and session rules stay.
+        from guardlayer.scanners import HeuristicScanner, ObfuscationScanner, PromptLeakScanner, SimilarityScanner
+
+        detectors = (HeuristicScanner, ObfuscationScanner, SimilarityScanner, PromptLeakScanner)
+        guard.scanners = [sc for sc in guard.scanners if not isinstance(sc, detectors)]
     attack = collections.Counter()
     benign = collections.Counter()
     missed = []
@@ -73,15 +84,18 @@ def replay(path: str, scope: str) -> dict:
             benign["runs"] += 1
             benign["calls stopped"] += stops
             benign["runs with a stop"] += stops > 0
-    return {"guardlayer": __version__, "scope": scope, "attack": dict(attack), "benign": dict(benign), "missed": missed}
+    return {"guardlayer": __version__, "scope": scope, "evade_detection": evade_detection, "untrusted_destination": untrusted_destination, "attack": dict(attack), "benign": dict(benign), "missed": missed}
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("logs", help="directory of an undefended AgentDojo run's logs")
     p.add_argument("--scope", default="consequence", choices=["consequence", "all"])
+    p.add_argument("--evade-detection", action="store_true", help="remove the injection detectors (worst-case adaptive attacker)")
+    p.add_argument("--untrusted-destination", default="off", choices=["off", "irreversible", "outbound"])
+    p.add_argument("--untrusted-all", action="store_true", help="treat every tool result as untrusted (AgentDojo's threat model)")
     args = p.parse_args(argv)
-    print(json.dumps(replay(args.logs, args.scope), indent=2))
+    print(json.dumps(replay(args.logs, args.scope, args.evade_detection, args.untrusted_destination, args.untrusted_all), indent=2))
     return 0
 
 

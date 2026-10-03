@@ -208,6 +208,7 @@ class SessionState:
     hostile_values: list[str] = field(default_factory=list)  # hashes of distinctive values seen in hostile content
     untrusted_values: list[str] = field(default_factory=list)  # hashes of distinctive values seen in untrusted content
     user_values: list[str] = field(default_factory=list)  # hashes of distinctive values in the user's messages and trusted content
+    untrusted_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of untrusted content
     hostile_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of hostile content (where a destination may come from)
     user_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of the user's own messages
     sensitive_kinds: list[str] = field(default_factory=list)  # rules that found them (iban, credential_file, ...)
@@ -266,7 +267,8 @@ class SessionState:
         for name, cap in (("untrusted_sources", MAX_SOURCES), ("hostile_sources", MAX_SOURCES), ("sensitive_sources", MAX_SOURCES), ("private_sources", MAX_SOURCES),
                           ("fingerprints", MAX_FINGERPRINTS), ("sensitive_kinds", MAX_SOURCES),
                           ("hostile_values", MAX_FINGERPRINTS), ("user_values", MAX_FINGERPRINTS),
-                          ("untrusted_values", MAX_FINGERPRINTS), ("hostile_phrases", MAX_PHRASES), ("user_phrases", MAX_PHRASES)):
+                          ("untrusted_values", MAX_FINGERPRINTS), ("hostile_phrases", MAX_PHRASES), ("user_phrases", MAX_PHRASES),
+                          ("untrusted_phrases", MAX_PHRASES)):
             setattr(self, name, _add(getattr(other, name), getattr(self, name), cap))
         self.created = min(self.created, other.created)
         self.updated = max(self.updated, other.updated)
@@ -421,6 +423,8 @@ DEFAULT_SESSION_ACTIONS: dict[str, Action] = {
     "sensitive_data_egress": Action.BLOCK,
     "trifecta": Action.REVIEW,
     "after_injection": Action.REVIEW,
+    # A destination argument copied from untrusted content (not from the user), without needing detection.
+    "untrusted_destination": Action.REVIEW,
     # Label rules (0.7): only fire for tools declared as sinks in `sinks`.
     "untrusted_to_protected_sink": Action.REVIEW,
     "confidentiality_exceeds_sink": Action.REVIEW,
@@ -484,6 +488,10 @@ class SessionPolicy:
     consequences: dict[str, str] = field(default_factory=dict)
     # Extra destination argument names per tool (beyond the built-in to/recipient/url/channel/user/...)
     destination_args: dict[str, list[str]] = field(default_factory=dict)
+    # Detection-independent: hold an action whose destination argument was copied from untrusted content and never
+    # named by the user. "irreversible" (payments, access changes, publishing), "outbound" (also messages and posts)
+    # or "off". An injection that evades every detector still has to name its destination somewhere the agent read.
+    untrusted_destination: str = "off"
 
     def __post_init__(self) -> None:
         merged = dict(DEFAULT_SESSION_ACTIONS)
@@ -500,6 +508,8 @@ class SessionPolicy:
         for pattern, kind in self.consequences.items():
             if kind not in ("local", "outbound", "irreversible"):
                 raise ValueError(f'consequences[{pattern!r}] must be "local", "outbound" or "irreversible", not {kind!r}')
+        if self.untrusted_destination not in ("off", "irreversible", "outbound"):
+            raise ValueError('untrusted_destination must be "off", "irreversible" or "outbound"')
         if self.trifecta_scope not in ("destination", "all"):
             raise ValueError('trifecta_scope must be "destination" or "all"')
         if self.after_injection_scope not in ("consequence", "all"):
@@ -643,6 +653,8 @@ def observe_content(
     if policy.is_untrusted(tool, can_reach_network):
         state.untrusted_sources = _add(state.untrusted_sources, [source], MAX_SOURCES)
         state.untrusted_values = _add(state.untrusted_values, values, MAX_FINGERPRINTS)
+        if policy.untrusted_destination != "off":
+            state.untrusted_phrases = _add(state.untrusted_phrases, (fingerprint(p, "phrase") for p in phrases(text)), MAX_PHRASES)
     elif not injected:
         # Identifiers in trusted content (the user's own files and tools) are known context: an action using them
         # is never blamed on untrusted or hostile content that repeats them. Content holding an injection never
@@ -821,6 +833,16 @@ def taint_detections(
                 emit("trifecta", Category.DATA_EXFILTRATION.value, 0.75,
                      "This session holds sensitive data, and this action sends to a destination that came from untrusted content.",
                      untrusted=state.untrusted_sources[-5:], sensitive=state.sensitive_sources[-5:], values=carried[:5])  # fmt: skip
+    if policy.untrusted_destination != "off" and state.untrusted_phrases and (
+        kind == "irreversible" or (policy.untrusted_destination == "outbound" and kind == "outbound")
+    ):
+        seen, user_p = set(state.untrusted_phrases), set(state.user_phrases)
+        copied = [v[:80] for v in destination_values(arguments, policy.destination_args.get(tool, ()))
+                  if fingerprint(v, "phrase") in seen and fingerprint(v, "phrase") not in user_p]  # fmt: skip
+        if copied:
+            emit("untrusted_destination", Category.PROMPT_INJECTION.value, 0.7,
+                 "This action's destination was copied from content an outsider can write, not from the user.",
+                 consequence=kind, values=copied[:5], untrusted=state.untrusted_sources[-5:])  # fmt: skip
     if acts and state.hostile:
         if policy.after_injection_scope == "all":
             emit("after_injection", Category.PROMPT_INJECTION.value, 0.7,
