@@ -398,7 +398,11 @@ DEFAULT_RULES: list[Rule] = [
     ),
     Rule(
         "remote_script_pipe",
-        r"\b(curl|wget|iwr|Invoke-WebRequest)\b[^|\n]{0,200}\|\s*(sudo\s+)?(ba|z|da|k)?sh\b|\b(curl|wget)\b[^|\n]{0,200}\|\s*(python3?|perl|ruby|node|iex)\b",
+        # An interpreter runs downloaded code only when it reads its program from stdin: not with inline code (-c/-e),
+        # a module (-m) or a script file, where the downloaded bytes are just input data.
+        r"\b(curl|wget|iwr|Invoke-WebRequest)\b[^|\n]{0,200}\|\s*(sudo\s+)?(ba|z|da|k)?sh\b(?!\s+-c\b)"
+        r"|\b(curl|wget)\b[^|\n]{0,200}\|\s*(python3?|perl|ruby|node)\b(?!\s+-[cemE]\b)(?!\s+[^\s|;&-]\S*\.(py|pl|rb|js|mjs|cjs)\b)"
+        r"|\b(iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^|\n]{0,200}\|\s*(iex|Invoke-Expression)\b",
         CMD, 0.7, "Pipes a remote script straight into an interpreter.", _OUT_CTX,
     ),
     Rule(

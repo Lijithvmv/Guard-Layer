@@ -185,6 +185,36 @@ DEFAULT_TOOL_RULES: tuple[ToolRule, ...] = (
         message="Access to a credential store (SSH keys, cloud credentials, password stores or system secrets).",
     ),
     ToolRule(
+        "remote_code_execution",
+        Action.REVIEW,
+        # Downloaded bytes run as code: a fetcher piped into a shell, or into an interpreter that reads its program
+        # from stdin (no inline -c/-e code, no module, no script file: those treat the download as input data).
+        r"\b(curl|wget|fetch|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^|\n]{0,300}\|\s*(sudo\s+)?(ba|z|da|k)?sh\b(?!\s+-c\b)"
+        r"|\b(curl|wget|fetch)\b[^|\n]{0,300}\|\s*(sudo\s+)?(python[0-9.]*|perl|ruby|node|php)\b(?!\s+-[cemEr]\b)"
+        r"(?!\s+[^\s|;&-]\S*\.(py|pl|rb|js|mjs|cjs|php)\b)"
+        r"|\b(iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^|\n]{0,300}\|\s*(iex|Invoke-Expression)\b"
+        r"|\b(bash|sh|zsh)\s+<\(\s*(curl|wget)\b|\b(source|\.)\s+<\(\s*(curl|wget)\b",
+        capabilities=_EXEC,
+        severity=0.8,
+        message="Downloads code and runs it straight away.",
+    ),
+    ToolRule(
+        "credential_access",
+        Action.REVIEW,
+        # Commands whose job is to hand out a stored secret: the agent then holds the credential itself.
+        r"\bgit\s+credential(-\w+)?\s+(fill|get)\b|\bgit\s+config\b[^;&|\n]*\bcredential\.[\w.-]*(helper|token|password)"
+        r"|\bgh\s+auth\s+(token\b|status\b[^;&|\n]*--show-token)|\bglab\s+auth\s+status\b[^;&|\n]*\s-t\b"
+        r"|\bgcloud\s+auth\s+(application-default\s+)?print-(access|identity)-token\b|\baz\s+account\s+get-access-token\b"
+        r"|\baws\s+(configure\s+get\s+[\w.]*(secret|session_token|access_key)|sts\s+get-session-token|ecr\s+get-login-password"
+        r"|codeartifact\s+get-authorization-token)\b"
+        r"|\bkubectl\s+config\s+view\b[^;&|\n]*--raw|\bsecurity\s+find-(generic|internet)-password\b|\bsecret-tool\s+lookup\b"
+        r"|(^|[;&|]\s*|\n)pass\s+(show\s+)?[\w/.-]+|\bop\s+(read|item\s+get)\b|\bbw\s+get\s+(password|item)\b"
+        r"|\bvault\s+(kv\s+get|read)\b|\bcmdkey\s+/list\b|\bGet-StoredCredential\b|\bkeyring\s+get\b|\bnpm\s+token\s+list\b",
+        capabilities=_EXEC,
+        severity=0.8,
+        message="Retrieves a stored credential, which puts the secret in the agent's hands.",
+    ),
+    ToolRule(
         "dotenv_file",
         Action.REVIEW,
         r"(^|[/\\\s\"'=@])\.env(\.(?!example\b|sample\b|template\b|dist\b)[a-z0-9_-]+)?" + _STOP,

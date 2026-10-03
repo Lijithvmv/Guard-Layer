@@ -64,6 +64,7 @@ from guardlayer.session import (
     taint_detections,
     task_detections,
 )
+from guardlayer.shell import command_view
 from guardlayer.tools import ToolPolicy, flatten_arguments
 
 logger = logging.getLogger("guardlayer")
@@ -419,19 +420,24 @@ class GuardLayer:
         tagged read-only (`scan_content=None`, the default), whose arguments cannot cause harm.
         A REVIEW verdict means: ask a human first.
         """
-        payload = arguments if isinstance(arguments, str) else json.dumps(arguments or {}, ensure_ascii=False, default=str)
         caps, tagged = self.tool_policy.resolve(tool_name)
         remote = self.tool_policy.is_remote(tool_name)
-        arguments_text = flatten_arguments(arguments)
-        extra = self.tool_policy.evaluate(tool_name, arguments)
+        arguments_text = flatten_arguments(arguments)  # original text: file labels and secret fingerprints use it
+        # Rules judge what a shell command executes, not every string in it (see `guardlayer.shell`).
+        view = command_view(tool_name, arguments) if (not tagged or "exec" in caps) else None
+        rule_arguments = {**arguments, view[0]: view[1]} if view is not None and isinstance(arguments, Mapping) else arguments
+        rule_text = flatten_arguments(rule_arguments)
+        payload = rule_arguments if isinstance(rule_arguments, str) else json.dumps(rule_arguments or {}, ensure_ascii=False, default=str)
+        extra = self.tool_policy.evaluate(tool_name, rule_arguments)
         metadata = {
             **dict(context_fields.pop("metadata", {}) or {}),
             "tool": tool_name,
             "capabilities": sorted(caps),
             "remote": remote,
+            "command_view": "parsed" if view is not None else "text",
         }
         if remote:
-            extra += self._secrets_in_egress(tool_name, arguments_text)
+            extra += self._secrets_in_egress(tool_name, rule_text)
         state = self._load_session(session)
         if state is not None:
             metadata["session_id"] = state.id
