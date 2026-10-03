@@ -824,6 +824,24 @@ def _adds_nothing(arguments: Any, extra: Iterable[str], state: SessionState) -> 
     return True
 
 
+def _argument_values(arguments: Any) -> list[str]:
+    """Every short string or number in the arguments (normalised as destination values are)."""
+    out: list[str] = []
+
+    def walk(v: Any) -> None:
+        if isinstance(v, Mapping):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                walk(x)
+        elif isinstance(v, (str, int)) and not isinstance(v, bool) and 0 < len(str(v)) <= 200:
+            out.append(re.sub(r"\s+", " ", str(v).strip().lower()).strip(".:"))
+
+    walk(arguments)
+    return out[:50]
+
+
 _THIS_MACHINE = re.compile(
     r"^(?:file:|(?:\w+://)?(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\]|[\w.-]+\.localhost)(?::\d+)?(?:[/?#]|$))",
     re.IGNORECASE,
@@ -1109,7 +1127,12 @@ def taint_detections(
         kind == "irreversible" or (policy.untrusted_destination == "outbound" and kind == "outbound")
     ):
         seen, user_p = set(state.untrusted_phrases), set(state.user_phrases)
-        dests = [v for v in destination_values(arguments, policy.destination_args.get(tool, ())) if _outside_place(v)]
+        if kind == "irreversible":
+            # What gets deleted, booked or changed is as much the attacker's choice as where things go: every
+            # argument counts (irreversible actions are rare, and holding one costs a single approval).
+            dests = [v for v in _argument_values(arguments) if _outside_place(v)]
+        else:
+            dests = [v for v in destination_values(arguments, policy.destination_args.get(tool, ())) if _outside_place(v)]
         copied = [v[:80] for v in dests if _h(v, "phrase") in seen and _h(v, "phrase") not in user_p]
         # The same destination written another way (a scheme or "www." added, data appended as a query) is still the
         # same place: compare places (host/path and its parents, or an address), not text.

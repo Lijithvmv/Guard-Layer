@@ -70,7 +70,8 @@ def _attacker_values(d: dict) -> set[str]:
 
 def replay(path: str, scope: str, evade_detection: bool = False, untrusted_destination: str = "off",
            untrusted_all: bool = False, judge_model: str | None = None, judge_on: str = "consequential",
-           judge_cache: str | None = None, delegate: bool = False, judge_host: str = "http://127.0.0.1:11434") -> dict:
+           judge_cache: str | None = None, delegate: bool = False, judge_host: str = "http://127.0.0.1:11434",
+           attack_types: set[str] | None = None) -> dict:
     session_cfg = {"after_injection_scope": scope, "untrusted_destination": untrusted_destination}
     if delegate:  # content fetched from a place the user named counts as the user's context (experiment)
         session_cfg["trusted_tools"] = ["__delegated__"]
@@ -100,6 +101,8 @@ def replay(path: str, scope: str, evade_detection: bool = False, untrusted_desti
     missed = []
     for f in sorted(glob.glob(os.path.join(path, "**", "*.json"), recursive=True)):
         d = json.load(open(f, encoding="utf-8"))
+        if attack_types and d.get("attack_type") not in (None, "none") and d.get("attack_type") not in attack_types:
+            continue
         session = guard.session(uuid.uuid4().hex)
         injected = distinctive_values(" ".join(str(v) for v in (d.get("injections") or {}).values()))
         attacker = _attacker_values(d) if is_attack_run(d) else set()
@@ -178,12 +181,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--judge-on", default="consequential", choices=["consequential", "irreversible", "irreversible+links"],
                    help="which actions the judge is asked about (after untrusted content, and only if the rules let them run)")
     p.add_argument("--judge-host", default="http://127.0.0.1:11434", help="Ollama server for --judge")
+    p.add_argument("--attack-types", help="comma-separated attack types to include (benign runs are always included)")
     p.add_argument("--delegate", action="store_true",
                    help="experiment: content fetched from a place the user named counts as the user's context")
     p.add_argument("--judge-cache", help="JSON file caching the judge's answers (temperature 0), so reruns don't re-ask")
     args = p.parse_args(argv)
     print(json.dumps(replay(args.logs, args.scope, args.evade_detection, args.untrusted_destination, args.untrusted_all,
-                            args.judge, args.judge_on, args.judge_cache, args.delegate, args.judge_host), indent=2))
+                            args.judge, args.judge_on, args.judge_cache, args.delegate, args.judge_host,
+                            set(args.attack_types.split(",")) if args.attack_types else None), indent=2))
     return 0
 
 

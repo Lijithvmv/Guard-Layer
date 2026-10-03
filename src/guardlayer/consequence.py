@@ -67,7 +67,8 @@ def distinctive_values(text: str, limit: int = 2000) -> set[str]:
 DESTINATION_ARGS = frozenset(
     "to cc bcc recipient recipients email emails address addresses url uri link endpoint host hostname domain webhook "
     "channel channels user users username user_email member members account account_id iban phone number target "
-    "destination dest repo repository owner org organization share_with assignee reviewer reviewers".split()
+    "destination dest repo repository owner org organization share_with assignee reviewer reviewers "
+    "participant participants attendee attendees invitee invitees guest guests".split()
 )
 MAX_PHRASE_WORDS = 4
 

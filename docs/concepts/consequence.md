@@ -23,7 +23,7 @@ something to a place named in the injected text** (the attacker's account number
 |---|---|---|
 | **local** | edit or write a file, build, run tests | runs |
 | **outbound** | send a message, fetch a URL, post to an API | held only if it sends something private to a place an outsider named (below) |
-| **irreversible** | delete, rewrite history, publish (`git push`, `npm publish`), pay, book, change a password or access | held when an injection was detected, when the session also holds secrets, or when an outsider named its destination |
+| **irreversible** | delete, rewrite history, publish (`git push`, `npm publish`), pay, book, change a password or access | held when an injection was detected, when the session also holds secrets, or when an outsider chose its destination or its object (the file to delete, the hotel to book) |
 
 Shell commands are [parsed](agents.md), so the class comes from what the command actually runs (`curl … | jq` is
 outbound, `rm -r build` is irreversible, `pytest` is local), not from words that appear in it.
@@ -93,28 +93,38 @@ any other host is blocked.
 
 ## What it stops, and what it does not (measured)
 
-With GuardLayer's injection detectors removed, a stand-in for an attacker who evades them, on 27 recorded attacks
-that had succeeded without a guard:
+On AgentDojo's published runs for five frontier models (Claude 3.7 Sonnet, Claude 3.5 Sonnet, GPT-4o, Gemini 2.0
+Flash, Llama 3.3 70B; the `important_instructions` attack, no defense): 707 attacks that succeeded, and 644 ordinary
+tasks. "Detectors removed" stands in for an attacker whose wording no detector recognises.
 
-| | Attacks stopped | Ordinary AgentDojo tasks interrupted |
+| | Attacks stopped | Ordinary tasks interrupted |
 |---|---|---|
-| injection rules alone | 5 / 27 | 12 / 113 |
-| with the destination check (default) | **12 / 27** | 17 / 113 |
-| with every tool result treated as untrusted | 19 / 27 | 28 / 113 |
+| detectors on | 672 / 707 (95%) | 78 / 644 |
+| detectors removed, destination check off | 308 / 707 (44%) | 78 / 644 |
+| detectors removed, **defaults** | **423 / 707 (60%)** | 106 / 644 |
+| detectors removed, every tool result treated as untrusted | 648 / 707 (92%) | 173 / 644 |
 
-With the detectors in place, all 27 are stopped either way. Not covered:
+The detectors-on row flatters: these are published attack templates, which the similarity detector can know. Read
+the detectors-removed rows. Treating every tool result as untrusted (`[session] default_integrity = "untrusted"`)
+is right when outsiders can write into most of what the agent reads (mail, chat, tickets); it costs more
+interruptions there, and on the real coding sessions above the default already treats web and remote tools as
+untrusted. AgentDojo's ordinary tasks nearly all pay, send or book right after reading such content, so their
+interruption rate is far above real coding work (2 extra holds in 17,316 calls).
+
+Not covered:
 
 - **Actions with no destination, and values the agent works out itself.** A password change, or "book the most
   expensive hotel", names no outsider's place. Only an irreversible action is held, and only when an injection was
   detected or secrets are present. In experiments a local model asked "did the user request this?" (shown only your
   messages and the action) closed this on AgentDojo, but on real sessions a 7B model refused 91% of actions it was
   asked about, so it is not part of GuardLayer.
-- **Visiting an outsider's page.** It carries nothing private, so it runs; two of the recorded attacks only do this.
+- **Visiting an outsider's page.** It carries nothing private, so it runs. On the frontier-model runs this "visit the
+  phishing link" goal is most of what remains when every tool result is treated as untrusted.
 - **An address the agent has to rebuild:** spelled out ("site dot net"), reversed, split across sentences, or another
   subdomain of the same site. Matching covers copying, not transformation.
 - **Paraphrase:** private data rewritten in new words isn't recognised when it goes to a public place.
-- **Small evidence:** 27 recorded attacks with known templates on one 7B model; no adaptive attacker has been run
-  against these rules beyond the cases above.
+- **Evidence limits:** recorded runs of one published attack family; no adaptive attacker has been run against these
+  rules beyond the cases above.
 
 ## Where this comes from
 
