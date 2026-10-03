@@ -958,7 +958,9 @@ def taint_detections(
             copied = []
         if copied:
             emit("untrusted_destination", Category.PROMPT_INJECTION.value, 0.7,
-                 "This action's destination was copied from content an outsider can write, not from the user.",
+                 f"This action sends to {', '.join(repr(v[:60]) for v in copied[:2])}, which came from content an "
+                 f"outsider can write ({', '.join(str(x)[:60] for x in state.untrusted_sources[-2:]) or 'untrusted content'}), "
+                 "not from you. Approve only if you meant this recipient.",
                  consequence=kind, values=copied[:5], untrusted=state.untrusted_sources[-5:])  # fmt: skip
     if acts and state.hostile:
         if policy.after_injection_scope == "all":
