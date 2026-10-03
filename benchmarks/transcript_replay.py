@@ -116,11 +116,54 @@ def where(tool: str, tool_input: dict[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(json.dumps(tool_input, sort_keys=True).encode()).hexdigest()[:12]
 
 
+class _ScanCache:
+    """Detector results cached on disk across replays.
+
+    What a detector finds in a text doesn't depend on the session rules being evaluated, so re-running the detectors
+    on 17k tool results for every rule change only costs time (~45 min a replay). Session rules still run in full.
+    Delete the cache file whenever a detector or its configuration changes.
+    """
+
+    def __init__(self, path: str) -> None:
+        import pickle
+
+        self.path, self.pickle = Path(path), pickle
+        self.data: dict[tuple[str, str, str, str], list[Any]] = {}
+        if self.path.exists():
+            self.data = pickle.loads(self.path.read_bytes())
+        self.hits = self.misses = 0
+
+    def wrap(self, guard: Any) -> None:
+        import copy
+
+        for scanner in guard.scanners:
+            original = scanner.scan
+
+            def scan(text: str, ctx: Any, _orig: Any = original, _name: str = scanner.name) -> list[Any]:
+                key = (_name, ctx.direction, str((ctx.metadata or {}).get("tool", "")),
+                       hashlib.sha256(text.encode("utf-8", "replace")).hexdigest())  # fmt: skip
+                if key in self.data:
+                    self.hits += 1
+                    return copy.deepcopy(self.data[key])
+                self.misses += 1
+                found = _orig(text, ctx)
+                self.data[key] = copy.deepcopy(found)
+                return found
+
+            scanner.scan = scan
+
+    def save(self) -> None:
+        self.path.write_bytes(self.pickle.dumps(self.data))
+
+
 def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
     state_dir = tempfile.mkdtemp(prefix="gl-replay-")
     guard = configure_guard(
         build_guard(args.config) if args.config else build_guard({"preset": args.preset}), state_dir
     )
+    cache = _ScanCache(args.scan_cache) if args.scan_cache else None
+    if cache is not None:
+        cache.wrap(guard)
     since = parse_time(args.since) if args.since else None
     until = parse_time(args.until) if args.until else None
     totals: collections.Counter[str] = collections.Counter()
@@ -222,6 +265,9 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
                     guard.sessions.put(last)
                     totals["clears"] += 1
                     per["clears"] += 1
+    if cache is not None:
+        cache.save()
+        totals["scan_cache_hits"], totals["scan_cache_misses"] = cache.hits, cache.misses
     return {
         "guardlayer": __version__,
         "preset": None if args.config else args.preset,
@@ -258,6 +304,7 @@ def main(argv: list[str] | None = None) -> int:
         "--calls", action="store_true", help="include every tool call's outcome (ids, tool, rules; no content)"
     )
     p.add_argument("--judge", help="Ollama model: also ask the second-stage judge where it would be asked (slow)")
+    p.add_argument("--scan-cache", help="file caching detector results across replays (delete it when detectors change)")
     p.add_argument("-o", "--output", help="write the JSON result here")
     args = p.parse_args(argv)
     paths: list[Path] = []

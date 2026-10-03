@@ -761,7 +761,8 @@ def _decode_token(token: str) -> str | None:
 
 
 def observe_content(
-    policy: SessionPolicy, state: SessionState, text: str, result: ScanResult, *, source: str, tool: str | None, can_reach_network: bool
+    policy: SessionPolicy, state: SessionState, text: str, result: ScanResult, *, source: str, tool: str | None,
+    can_reach_network: bool, untrusted: bool = False,
 ) -> None:
     """Update taint after the agent read `text` (a tool result or other third-party content)."""
     trusted = policy.is_trusted(tool)
@@ -769,7 +770,7 @@ def observe_content(
     values = [fingerprint(v, "hostile") for v in distinctive_values(text)]
     injected = result.effective_verdict >= policy.hostile_min_verdict and bool(HOSTILE_CATEGORIES & set(result.categories))
     hostile = injected and not trusted
-    if policy.is_untrusted(tool, can_reach_network):
+    if untrusted or policy.is_untrusted(tool, can_reach_network):
         state.untrusted_sources = _add(state.untrusted_sources, [source], MAX_SOURCES)
         state.untrusted_values = _add(state.untrusted_values, values, MAX_FINGERPRINTS)
         if policy.untrusted_destination != "off":
@@ -779,14 +780,11 @@ def observe_content(
     elif not injected:
         # Identifiers in trusted content (the user's own files and tools) are known context: an action using them
         # is never blamed on untrusted or hostile content that repeats them. Content holding an injection never
-        # counts as known context, whatever its source (a poisoned README is a local file). The first provenance
-        # wins: what an outsider already supplied stays theirs when trusted content repeats it (an agent can write
-        # an outsider's address into a file and read it back); only the user's own messages can vouch for it.
-        outside_v, outside_p = set(state.untrusted_values), set(state.untrusted_places)
-        state.user_values = _add(state.user_values, (v for v in values if v not in outside_v), MAX_FINGERPRINTS)
-        state.user_places = _add(
-            state.user_places, (f for f in (fingerprint(p, "place") for p in places(text)) if f not in outside_p), MAX_PHRASES
-        )
+        # counts as known context, whatever its source (a poisoned README is a local file). A file the agent wrote
+        # after reading untrusted content is read back as untrusted (see Guard.scan_tool_result `arguments`), so an
+        # outsider's address can't be laundered through it.
+        state.user_values = _add(state.user_values, values, MAX_FINGERPRINTS)
+        state.user_places = _add(state.user_places, (fingerprint(p, "place") for p in places(text)), MAX_PHRASES)
     if hostile:
         state.hostile_sources = _add(state.hostile_sources, [source], MAX_SOURCES)
         state.hostile_values = _add(state.hostile_values, values, MAX_FINGERPRINTS)

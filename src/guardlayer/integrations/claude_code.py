@@ -164,7 +164,7 @@ def handle_event(
         if not _scan_output_of(guard, tool):
             return None
         text = flatten_arguments(event.get("tool_response"))
-        result = session.scan_tool_result(tool, text, metadata={**meta, "source": "claude-code"})
+        result = session.scan_tool_result(tool, text, arguments=event.get("tool_input"), metadata={**meta, "source": "claude-code"})
         hostile = result.verdict >= Verdict.FLAG and bool(HOSTILE_CATEGORIES & set(result.categories))
         if hostile:
             # `decision: block` only adds the reason next to the result: Claude still sees the output (Claude Code
