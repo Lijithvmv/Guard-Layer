@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import html
 import json
 import os
 import re
@@ -55,7 +56,7 @@ from guardlayer.consequence import consequence, destination_values, distinctive_
 from guardlayer.labels import Confidentiality, Integrity, Label
 from guardlayer.labels import combine as combine_labels
 from guardlayer.models import Action, Category, Detection, ScanResult, Verdict
-from guardlayer.normalize import decode_payloads
+from guardlayer.normalize import decode_payloads, despace, normalize
 
 if TYPE_CHECKING:  # pragma: no cover
     from guardlayer.pipeline import GuardLayer
@@ -646,14 +647,50 @@ def record_sensitive_values(state: SessionState, text: str, result: ScanResult) 
 _WRAPPED_B64 = re.compile(r"(?<=[A-Za-z0-9+/]{16})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9+/]{4})")
 
 
+def _canonical(text: str) -> str:
+    """The form an agent reads past: HTML entities, invisible characters, look-alike letters, s-p-a-c-e-d letters."""
+    return despace(normalize(html.unescape(text), collapse_whitespace=False))
+
+
 def _readable(text: str) -> str:
     """`text` plus what an agent could decode from it.
 
     An address hidden in base64 is still an address the agent read: the attacker can tell it to decode and use it.
-    Mail and MIME wrap base64 across lines, so wrapped runs are joined before decoding.
+    Mail and MIME wrap base64 across lines, so wrapped runs are joined before decoding. A decoded token counts when it
+    is readable text or holds an identifier (a bare URL has no spaces). Transformations an agent can undo but no
+    canonical form captures (an address spelled out, reversed, or split across words) are out of reach of matching;
+    see docs/concepts/consequence.md.
     """
-    decoded = [d for _, d in decode_payloads(_WRAPPED_B64.sub("", text[:200_000]))]
-    return "\n".join([text, *decoded]) if decoded else text
+    text = text[:200_000]
+    canon = _canonical(text)
+    joined = _WRAPPED_B64.sub("", canon)  # may also glue a short last line to the next one: decode both forms
+    views = [d for _, d in decode_payloads(joined)]
+    for form in {canon, joined}:
+        for token in _ENCODED.findall(form)[:16] + _HEX.findall(form)[:16]:
+            decoded = _decode_token(token)
+            if decoded and decoded not in views and distinctive_values(decoded):
+                views.append(decoded)
+    views = [v for v in (canon if canon != text else "", *views) if v]
+    return "\n".join([text, *views]) if views else text
+
+
+def _decode_token(token: str) -> str | None:
+    import base64
+    import binascii
+
+    if re.fullmatch(r"(?:[0-9a-fA-F]{2})+", token):
+        try:
+            return _printable(bytes.fromhex(token))
+        except ValueError:
+            return None
+    for decode in (base64.b64decode, base64.urlsafe_b64decode):
+        try:
+            out = _printable(decode(token + "=" * (-len(token) % 4)))
+        except (binascii.Error, ValueError):
+            out = None
+        if out:
+            return out
+    return None
 
 
 def observe_content(
@@ -856,7 +893,8 @@ def taint_detections(
         copied = [v[:80] for v in dests if fingerprint(v, "phrase") in seen and fingerprint(v, "phrase") not in user_p]
         # The same destination written another way (a scheme or "www." added, a trailing slash) is still the same
         # place: compare its normalised identifiers (URL, host, address) too.
-        copied += _carried(" ".join(v for v in dests if v[:80] not in copied), state.untrusted_values, state.user_values)
+        rest = " ".join(v for v in dests if v[:80] not in copied)
+        copied += _carried(f"{rest} {_canonical(rest)}", state.untrusted_values, state.user_values)
         if copied:
             emit("untrusted_destination", Category.PROMPT_INJECTION.value, 0.7,
                  "This action's destination was copied from content an outsider can write, not from the user.",

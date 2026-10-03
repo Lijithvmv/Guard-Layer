@@ -61,7 +61,11 @@ any other host is blocked.
   defaults stopped **5 of 27** recorded attacks that had succeeded without a guard. The destination check
   (`[session] untrusted_destination = "outbound"`, off by default) doesn't need detection: with every tool result
   treated as untrusted it stopped **21 of 27**, at the cost of interrupting about one ordinary task in four (one in ten without it).
-  It compares a destination by what it names, so `https://www.site.example/x` and `site.example/x` are the same place.
+  It compares a destination by what it names, so `https://www.site.example/x` and `site.example/x` are the same place,
+  and it reads past encodings an agent undoes (base64, hex, HTML entities, invisible characters, look-alike letters).
+- **An address the agent has to rebuild.** Spelled out ("site dot net"), reversed, split across sentences, or a
+  different subdomain of the same site: the agent can reassemble it, but no matching can. The check covers copying,
+  not transformation.
 - **Actions with no destination, and values the agent works out itself.** A password change, or "book the most
   expensive hotel", carries no address copied from the injected text, so the destination check can't see it. In
   experiments, asking a local model whether each *irreversible* action matches what you asked for (the model sees

