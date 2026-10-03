@@ -44,9 +44,9 @@ from typing import Any
 
 from guardlayer import __version__
 from guardlayer.config import build_guard
+from guardlayer.consequence import consequence
 from guardlayer.integrations.claude_code import _scan_output_of, configure_guard, handle_event, policy_view
 from guardlayer.models import Category, Verdict
-from guardlayer.consequence import consequence
 from guardlayer.session import HOSTILE_CATEGORIES, _carried
 from guardlayer.tools import flatten_arguments
 
