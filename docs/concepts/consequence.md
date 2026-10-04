@@ -147,8 +147,9 @@ them pages on this machine (no longer asked). It is asked only about an outbound
 **link** (an untrusted recipient is the destination check's job) and an irreversible one, except a delete whose
 every target is a file the agent itself created. Measured end to end with a 30-second limit, it held **20 of 14,534**
 real calls: 19 of 7,572 on the sessions used to design it (2 of them too slow) and 1 of 6,962 from other projects.
-On the recorded AgentDojo attacks it stops 27 of 27 with every tool result untrusted, where the rules alone stop 25,
-and holds 52 of 113 ordinary tasks there (40 without it). It stays off by default and experimental: one local
+On the recorded AgentDojo attacks it stops 27 of 27 with every tool result untrusted, where the rules alone stop 25:
+on 27 samples that difference is not statistically meaningful (95% intervals 88–100% and 77–98%), so its benefit on
+attacks is not yet demonstrated. It holds 52 of 113 ordinary tasks there (40 without it). It stays off by default and experimental: one local
 model, one machine, and 8–40 s per question.
 
 With a judge, the session file keeps those five prompts in clear (up to 1,500 characters each), because the model
