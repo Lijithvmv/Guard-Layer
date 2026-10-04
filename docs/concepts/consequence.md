@@ -142,8 +142,10 @@ in time, holds the call for your approval.
 The question matters more than the model. Asked "did the user request this action?", a 7B and a 14B model both
 refused 84 of 92 actions on real Claude Code sessions: an agent takes many steps nobody named (opening a page's
 images, deleting its own scratch files). Asked whose goal the action serves, the 14B model refused 31 of 87, 13 of
-them pages on this machine (no longer asked), so an estimated 1 call in 400 is held (measured through the replay; see the changelog for the end-to-end figure). On the recorded AgentDojo attacks it
-stops 26 of 27 with every tool result untrusted, where the rules alone stop 25.
+them pages on this machine (no longer asked). Measured end to end with a 30-second limit, the judge held **64 of
+14,534** real calls: 53 of 7,572 on the sessions used to design it (44 "no", 9 too slow) and 11 of 6,962 from other
+projects. On the recorded AgentDojo attacks it stops 26 of 27 with every tool result untrusted, where the rules
+alone stop 25. That is why it is off by default and experimental.
 
 With a judge, the session file keeps those five prompts in clear (up to 1,500 characters each), because the model
 needs your words; see SECURITY.md.
