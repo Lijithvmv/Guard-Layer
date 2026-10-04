@@ -41,7 +41,7 @@ Optional; each has a cost or a dependency, described on its page.
 | File labels (`untrusted_file_executed`) | not yet used outside tests and benchmarks |
 | Split-instruction detection (`split_injection`) | catches only splits across two consecutive contents |
 | PDF and image extraction (`extract`, `ocr` extras) | the extractor interface may change |
-| Action judge (`[judge]`) | measured on real sessions with one local 14B model: 64 holds in 14,534 calls (1 in 140 to 1 in 630 by project), 8–40 s per question; see [consequence](../concepts/consequence.md) |
+| Action judge (`[judge]`) | measured on real sessions with one local 14B model: 20 holds in 14,534 calls, 8–40 s per question; see [consequence](../concepts/consequence.md) |
 | Behavioural check (`check_intent`) | flagged nothing on AgentDojo with a local 7B model; may need a stronger model, or may be removed |
 
 Each experimental module says so in its first lines, so it shows in your editor and in the API reference.
