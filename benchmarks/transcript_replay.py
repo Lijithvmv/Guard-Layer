@@ -35,6 +35,8 @@ import argparse
 import collections
 import hashlib
 import json
+import os
+import re
 import sys
 import tempfile
 from collections.abc import Iterator
@@ -44,10 +46,11 @@ from typing import Any
 
 from guardlayer import __version__
 from guardlayer.config import build_guard
-from guardlayer.consequence import consequence, distinctive_values
+from guardlayer.consequence import consequence, destination_places, destination_values, distinctive_values
+from guardlayer.filelabels import looks_like_path, normalise, written_paths
 from guardlayer.integrations.claude_code import _scan_output_of, configure_guard, handle_event, policy_view
 from guardlayer.models import Category, Verdict
-from guardlayer.session import HOSTILE_CATEGORIES, _carried
+from guardlayer.session import HOSTILE_CATEGORIES, _carried, _h, _outside_place
 from guardlayer.tools import flatten_arguments
 
 _PATH_TOOLS = {"Read": "file_path", "Grep": "path", "Glob": "path", "WebFetch": "url", "WebSearch": "query"}
@@ -156,6 +159,35 @@ class _ScanCache:
         self.path.write_bytes(self.pickle.dumps(self.data))
 
 
+_DELETE = re.compile(r"^\s*(?:cd\s+[^;&|]+(?:&&|;)\s*)?(?:rm|rmdir|unlink|del|Remove-Item)\b", re.IGNORECASE)
+
+
+def _deletes_only_own_files(view: dict[str, Any], written: set[str]) -> bool:
+    """A shell delete whose every path argument is a file the agent wrote earlier in this session."""
+    command = str(view.get("command") or "")
+    if not command or not _DELETE.match(command) or any(op in command for op in ("|", ">", "`", "$(")):
+        return False
+    command = re.sub(r"^\s*cd\s+[^;&|]+(?:&&|;)\s*", "", command)  # the directory changed into isn't deleted
+    paths = [t.strip("\"'") for t in re.findall(r"[\"']?[\w~./\\:-]*[./\\][\w~./\\:*-]+[\"']?", command)]
+    paths = [t for t in paths if looks_like_path(t)]
+    return bool(paths) and all(_own(t, written) for t in paths)
+
+
+def _own(token: str, written: set[str]) -> bool:
+    """Whether a path in a command is one of the files written, by full path or (relative paths) by its tail."""
+    t = re.sub(r"^/([a-zA-Z])/", r":/", token)  # Git Bash /d/x -> d:/x
+    if normalise(t) in written:
+        return True
+    tail = os.path.normcase(t.replace("/", os.sep)).lstrip("." + os.sep)
+    return bool(tail) and any(w.endswith(os.sep + tail) for w in written)
+
+
+def _user_place(view: dict[str, Any], state: Any) -> bool:
+    """Whether a destination in the call is under a place the user (or trusted content) named."""
+    known = set(state.user_places)
+    return any(_h(p, "place") in known for v in destination_values(view) for p in destination_places(v))
+
+
 def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
     state_dir = tempfile.mkdtemp(prefix="gl-replay-")
     guard = configure_guard(
@@ -175,13 +207,14 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
     if args.judge:
         from guardlayer.judge import OllamaJudge
 
-        judge = OllamaJudge(args.judge, host=args.judge_host)
+        judge = OllamaJudge(args.judge, host=args.judge_host, timeout=180, question=args.judge_question)
     asked: collections.Counter[str] = collections.Counter()
     prompts: dict[str, list[str]] = collections.defaultdict(list)
     judge_log: list[dict[str, Any]] = []
     # Identifiers seen anywhere in a session (the user's prompts and every tool result, trusted or not): an outbound
     # destination in none of them is novel, which no rewriting of an outsider's address can avoid.
     seen: dict[str, set[str]] = collections.defaultdict(set)
+    written: dict[str, set[str]] = collections.defaultdict(set)  # paths the agent wrote in each session
     for path in paths:
         for when, event in events(path):
             if (since and when < since) or (until and when >= until):
@@ -219,6 +252,13 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
                     if cls == "outbound" and hosts - seen[sid]:
                         totals["novel_destination"] += 1
                         asked[f"novel:{tool}"] += 1
+                    if args.judge_trigger == "scoped":
+                        if cls == "irreversible" and _deletes_only_own_files(view, written[sid]):
+                            cls = "local"  # removing what the agent itself created this session loses none of the user's data
+                        if links and _user_place(view, session.state):
+                            links = []  # a page under a place the user named is the user's
+                        if not any(_outside_place(v) for v in destination_values(view)):
+                            links = []  # this machine (localhost, files) is not an outsider's place
                     if cls == "irreversible" or (cls == "outbound" and links):
                         asked[f"{cls}:{tool}"] += 1
                         totals["judge_asked"] += 1
@@ -247,6 +287,7 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
             if not _scan_output_of(guard, tool):
                 continue
             meta = {k: event[k] for k in ("cwd", "tool_use_id") if event.get(k)}
+            written[sid] |= {normalise(p) for p in written_paths(event.get("tool_input"))}
             seen[sid] |= distinctive_values(flatten_arguments(event.get("tool_response"))[:200_000])
             result = session.scan_tool_result(
                 tool, flatten_arguments(event.get("tool_response")), metadata={**meta, "source": "replay"}
@@ -309,6 +350,9 @@ def main(argv: list[str] | None = None) -> int:
         "--calls", action="store_true", help="include every tool call's outcome (ids, tool, rules; no content)"
     )
     p.add_argument("--judge", help="Ollama model: also ask the second-stage judge where it would be asked (slow)")
+    p.add_argument("--judge-question", default="goal", choices=["goal", "requested"], help="what the judge is asked")
+    p.add_argument("--judge-trigger", default="scoped", choices=["scoped", "all"],
+                   help="scoped: not for deleting the agent's own files or for pages under places the user named")
     p.add_argument("--judge-log", action="store_true", help="include each judged action, its answer and the last prompts (contains text)")
     p.add_argument("--judge-host", default="http://127.0.0.1:11434", help="Ollama server for --judge")
     p.add_argument("--scan-cache", help="file caching detector results across replays (delete it when detectors change)")

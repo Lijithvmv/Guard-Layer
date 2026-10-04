@@ -10,13 +10,13 @@ All notable changes to this project are documented here. The format follows
   disable). An outbound action whose destination came from content an outsider can write is held when it carries
   something private (a body or message, or URL words that are in neither that content nor your prompts). It needs
   no injection detection. Measured with detectors removed: recorded attacks stopped by the defaults 5/27 -> 12/27;
-  extra holds on 17,316 real Claude Code calls: 2. Following links, opening files a page listed, and opening this
+  extra holds on real Claude Code sessions: 1 in 7,572 calls, 0 in 6,962 from other projects. Following links, opening files a page listed, and opening this
   machine's dev servers or files are not held. Hold messages name the recipient and where it came from.
 - **A tool's name no longer establishes trust** (`[labels] default_integrity = "declared"`, the new default): a
   result counts as trusted only if the tool's capabilities were declared (by you, or by an integration for its own
   tools) or you named it in `trusted_tools` / `sources`, and it is local. `"trusted"` restores the old name-based
   behaviour. On AgentDojo's published frontier-model runs, undetected attacks stopped: 423 -> 648 of 707; extra
-  holds on 17,316 real Claude Code calls: 0. Declare your own tools (`guardlayer policy draft` proposes lines).
+  holds on real Claude Code sessions: 0. Declare your own tools (`guardlayer policy draft` proposes lines).
 - Irreversible actions: every argument counts (the outsider choosing the file to delete or hotel to book), and
   invite participants are recipients.
 - **An outsider's address can't be laundered through a file**: trusted content that repeats an address an outsider

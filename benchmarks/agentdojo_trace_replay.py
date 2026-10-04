@@ -89,7 +89,7 @@ def replay(path: str, scope: str, evade_detection: bool = False, untrusted_desti
     if judge_model:
         from guardlayer.judge import OllamaJudge
 
-        judge = OllamaJudge(judge_model, host=judge_host)
+        judge = OllamaJudge(judge_model, host=judge_host, timeout=180)
     cache: dict = {}
     if judge_cache and os.path.exists(judge_cache):
         cache = json.load(open(judge_cache, encoding="utf-8"))

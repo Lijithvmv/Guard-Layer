@@ -11,7 +11,7 @@
 Because almost everything an agent does is local and recoverable, and holding it all teaches people to approve
 without reading. Replaying 12 real Claude Code sessions (7,572 tool calls) through the earlier, session-wide rules,
 about **70% of all calls** were held; about two thirds of those were edits, writes and tests, and the sessions held no
-attack at all. On sessions never used to design the rules (9,744 calls), it was 67%.
+attack at all. On sessions from other projects, never used to design the rules (6,962 calls), it was 76%.
 
 At the same time, in recorded [AgentDojo](../evaluation.md#agentdojo) runs, every attack that got past detection did
 its harm through an action that was either **irreversible** (a payment, a password change, a booking) or **sent
@@ -85,8 +85,9 @@ any other host is blocked.
 
 ## What it costs (measured)
 
-- **Interruptions:** on 17,316 real Claude Code calls, turning the destination check on added **2 holds** (786 vs 785
-  of 7,572; 809 vs 808 of 9,744 on sessions never used for design). On AgentDojo's tasks, nearly all of which pay or
+- **Interruptions:** on real Claude Code sessions, today's defaults (the destination check, and trust only for
+  declared tools) added **1 hold in 7,572 calls** on the sessions used to design them, and **none in 6,962 calls**
+  from other projects never used for design. On AgentDojo's tasks, nearly all of which pay or
   send right after reading untrusted content, the defaults hold about one task in four for approval.
 - **Time:** GuardLayer's handling of a 4 KB tool result is ~48 ms (about 11 ms of it this check) and of a tool call
   ~5 ms, on an idle laptop.
@@ -116,7 +117,7 @@ of the injections that name-based trust let through. `[labels] default_integrity
 trust; `"untrusted"` distrusts every result.
 
 AgentDojo's ordinary tasks nearly all pay, send or book right after reading such content, so one in four is held for
-approval; on the real Claude Code sessions above the cost of these defaults was 2 holds in 17,316 calls.
+approval; on the real Claude Code sessions above these defaults added 1 hold in 14,534 calls.
 
 Not covered:
 
