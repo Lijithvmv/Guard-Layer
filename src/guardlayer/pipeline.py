@@ -38,7 +38,6 @@ from guardlayer.filelabels import FileLabelStore, written_paths
 from guardlayer.intent import NEUTRAL_TASK, IntentCheck, Replay
 from guardlayer.intent import acheck as _intent_acheck
 from guardlayer.intent import check as _intent_check
-from guardlayer.labels import BOTTOM as _BOTTOM_LABEL
 from guardlayer.labels import Integrity, Label
 from guardlayer.models import DIRECTIONS, Action, Category, Detection, Direction, ScanContext, ScanResult, Verdict
 from guardlayer.scanners.base import Scanner
@@ -417,7 +416,7 @@ class GuardLayer:
         """
         state = self._load_session(session)
         caps, tagged = self.tool_policy.resolve(tool_name)
-        if state is not None and (not tagged or "write" in caps) and state.label != _BOTTOM_LABEL:
+        if state is not None and (not tagged or "write" in caps):
             self.file_labels.record(written_paths(arguments), state.label)
 
     def scan_tool_call(
@@ -480,7 +479,7 @@ class GuardLayer:
             observe_tool_call(state, tool_name, result)
             # Record only what runs without a human in between; a reviewed write is recorded after it ran
             # (`record_written`), because a refused one never happened.
-            if result.verdict < Verdict.REVIEW and (not tagged or "write" in caps) and state.label != _BOTTOM_LABEL:
+            if result.verdict < Verdict.REVIEW and (not tagged or "write" in caps):
                 self.file_labels.record(written_paths(arguments), state.label)
             self.sessions.put(state)
         return result
@@ -492,7 +491,9 @@ class GuardLayer:
         """Ask the second-stage judge about a call the rules let through, where they can't see the harm."""
         kind = consequence(tool_name, caps, tagged, arguments if arguments is not None else payload, remote=remote,
                            declared=self.session_policy.declared_consequence(tool_name))  # fmt: skip
-        why = judge_trigger(self.session_policy, state, tool_name, kind, arguments, refs)
+        cwd = str((ctx.metadata or {}).get("cwd") or "")
+        why = judge_trigger(self.session_policy, state, tool_name, kind, arguments,
+                            lambda p: self.file_labels.get(p) is not None, cwd)  # fmt: skip
         if why is None:
             return result
         verdict = self.judge(state.user_prompts, tool_name, arguments)  # type: ignore[misc]

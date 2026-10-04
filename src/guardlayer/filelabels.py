@@ -80,9 +80,11 @@ class FileLabelStore:
         return Label.from_dict(entry) if entry else None
 
     def record(self, paths: Iterable[str], label: Label) -> None:
-        """Remember `label` for each path (combined with any label it already has)."""
-        if label == BOTTOM:
-            return
+        """Remember `label` for each path (combined with any label it already has).
+
+        A file written in a clean context is recorded with the neutral label: it marks the file as one the agent
+        created (so deleting it loses none of the user's data) and changes no rule, which act only on untrusted
+        or confidential labels."""
         with self._lock:
             data = dict(self._load())
             for p in paths:

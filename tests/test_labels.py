@@ -234,11 +234,13 @@ def test_file_label_crosses_sessions_and_raises_the_reader(tmp_path):
     assert g.session("runner").state.label.integrity is Integrity.UNTRUSTED  # it effectively read the file
 
 
-def test_clean_context_writes_are_not_labelled(tmp_path):
+def test_clean_context_writes_are_recorded_neutral_and_trigger_nothing(tmp_path):
+    from guardlayer.labels import BOTTOM
+
     g, script = _guard(), str(tmp_path / "build.sh")
     s = g.session()
     s.scan_tool_call("write_file", {"path": script, "content": "make"})
-    assert g.file_labels.get(script) is None
+    assert g.file_labels.get(script) == BOTTOM  # known as the agent's own file, nothing more
     assert "untrusted_file_executed" not in rules(s.scan_tool_call("bash", {"cmd": f"bash {script}"}))
 
 

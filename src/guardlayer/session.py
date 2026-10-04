@@ -49,7 +49,7 @@ import time
 import uuid
 import zlib
 from collections import OrderedDict
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -1091,9 +1091,27 @@ def remember_prompt(state: SessionState, prompt: str) -> None:
 _DELETE_COMMAND = re.compile(r"^\s*(?:cd\s+[^;&|]+(?:&&|;)\s*)?(?:rm|rmdir|unlink|del|Remove-Item)\b", re.IGNORECASE)
 
 
+def _delete_targets(command: str, cwd: str) -> list[str] | None:
+    """The paths a plain delete command removes (resolved against `cwd` and a leading `cd`), or None if it isn't one."""
+    m = re.match(r"^\s*(?:cd\s+(\"[^\"]+\"|'[^']+'|\S+)\s*(?:&&|;)\s*)?(?:rm|rmdir|unlink|del|Remove-Item)\b(.*)$", command,
+                 re.IGNORECASE | re.DOTALL)  # fmt: skip
+    if not m or any(op in m.group(2) for op in ("|", "&&", ";", ">", "`", "$(", "\n")):
+        return None
+    base = (m.group(1) or "").strip("\"'")
+    base = re.sub(r"^/([a-zA-Z])/", r"\1:/", base) if base else cwd
+    out = []
+    for token in re.findall(r"\"[^\"]+\"|'[^']+'|\S+", m.group(2)):
+        token = token.strip("\"'")
+        if token.startswith("-") or not token:
+            continue
+        token = re.sub(r"^/([a-zA-Z])/", r"\1:/", token)
+        out.append(token if os.path.isabs(token) or not base else os.path.join(base, token))
+    return out or None
+
+
 def judge_trigger(
     policy: SessionPolicy, state: SessionState, tool: str, kind: str, arguments: Mapping[str, Any] | str | None,
-    refs: list[tuple[str, Any]],
+    agent_wrote: Callable[[str], bool], cwd: str = "",
 ) -> str | None:
     """Why the second-stage judge should be asked about this call, or None.
 
@@ -1105,12 +1123,15 @@ def judge_trigger(
         return None
     if kind == "irreversible":
         command = str(arguments.get("command") or "") if isinstance(arguments, Mapping) else ""
-        if command and _DELETE_COMMAND.match(command) and refs:
-            return None  # deleting files the agent itself wrote in this context
+        targets = _delete_targets(command, cwd) if command else None
+        if targets and all(agent_wrote(t) for t in targets):
+            return None  # deleting only files the agent itself created loses none of the user's data
         return "irreversible"
     if kind == "outbound":
         text = json.dumps(arguments, ensure_ascii=False, default=str) if not isinstance(arguments, str) else arguments
-        carried = _carried(text, state.untrusted_values, state.user_values)
+        # Links only: an untrusted recipient is the destination check's job; the judge's is a foreign payload (a
+        # phishing link) sent to a legitimate recipient, and visits.
+        carried = [v for v in _carried(text, state.untrusted_values, state.user_values) if "." in v and "@" not in v]
         if not carried:
             return None
         dests = destination_values(arguments, policy.destination_args.get(tool, ()))
