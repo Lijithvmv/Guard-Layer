@@ -64,6 +64,7 @@ from guardlayer.consequence import (
     file_consequence,
     phrases,
     places,
+    sends_out,
 )
 from guardlayer.labels import Confidentiality, Integrity, Label
 from guardlayer.labels import combine as combine_labels
@@ -1145,6 +1146,33 @@ def judge_trigger(
     return None
 
 
+def _outsider_destinations(
+    policy: SessionPolicy, state: SessionState, tool: str, kind: str, arguments: Mapping[str, Any] | str | None
+) -> list[str]:
+    """Destinations (for an irreversible action, any argument) an outsider named and the user didn't, off this
+    machine, where the action carries something private (following a link carries nothing)."""
+    seen, user_p = set(state.untrusted_phrases), set(state.user_phrases)
+    if kind == "irreversible":
+        # What gets deleted, booked or changed is as much the attacker's choice as where things go: every
+        # argument counts (irreversible actions are rare, and holding one costs a single approval).
+        dests = [v for v in _argument_values(arguments) if _outside_place(v)]
+    else:
+        dests = [v for v in destination_values(arguments, policy.destination_args.get(tool, ())) if _outside_place(v)]
+    copied = [v[:80] for v in dests if _h(v, "phrase") in seen and _h(v, "phrase") not in user_p]
+    # The same destination written another way (a scheme or "www." added, data appended as a query) is still the
+    # same place: compare places (host/path and its parents, or an address), not text.
+    outside, known = set(state.untrusted_places), set(state.user_places)
+    for v in dests:
+        if v[:80] in copied:
+            continue
+        fps = {_h(p, "place") for p in destination_places(v) | destination_places(_canonical(v))}
+        if fps & outside and not fps & known:
+            copied.append(v[:80])
+    if copied and kind == "outbound" and _adds_nothing(arguments, policy.destination_args.get(tool, ()), state):
+        return []
+    return copied
+
+
 def taint_detections(
     policy: SessionPolicy,
     state: SessionState,
@@ -1188,8 +1216,14 @@ def taint_detections(
                  "This session has read untrusted content and sensitive data; network/exec actions need approval.",
                  untrusted=state.untrusted_sources[-5:], sensitive=state.sensitive_sources[-5:])  # fmt: skip
         else:
-            carried = _carried(arguments_text, state.untrusted_values, state.user_values) if kind != "local" else []
-            if kind == "irreversible":  # publishing or sharing can expose the data with no attacker address at all
+            if kind == "outbound" and state.untrusted_places:
+                # the same destinations the destination check uses: real destination arguments, off this machine
+                carried = _outsider_destinations(policy, state, tool, kind, arguments)
+            else:
+                carried = _carried(arguments_text, state.untrusted_values, state.user_values) if kind != "local" else []
+            if kind == "irreversible" and sends_out(tool, caps, tagged, arguments if arguments is not None else arguments_text,
+                                                    remote=bool(remote)):
+                # publishing or sharing can expose the data with no attacker address at all; a local delete exposes nothing
                 emit("trifecta", Category.DATA_EXFILTRATION.value, 0.75,
                      "This session holds sensitive data and has read untrusted content; this action publishes or can't be undone.",
                      untrusted=state.untrusted_sources[-5:], sensitive=state.sensitive_sources[-5:], consequence=kind)  # fmt: skip
@@ -1200,25 +1234,7 @@ def taint_detections(
     if policy.untrusted_destination != "off" and state.untrusted_phrases and (
         kind == "irreversible" or (policy.untrusted_destination == "outbound" and kind == "outbound")
     ):
-        seen, user_p = set(state.untrusted_phrases), set(state.user_phrases)
-        if kind == "irreversible":
-            # What gets deleted, booked or changed is as much the attacker's choice as where things go: every
-            # argument counts (irreversible actions are rare, and holding one costs a single approval).
-            dests = [v for v in _argument_values(arguments) if _outside_place(v)]
-        else:
-            dests = [v for v in destination_values(arguments, policy.destination_args.get(tool, ())) if _outside_place(v)]
-        copied = [v[:80] for v in dests if _h(v, "phrase") in seen and _h(v, "phrase") not in user_p]
-        # The same destination written another way (a scheme or "www." added, data appended as a query) is still the
-        # same place: compare places (host/path and its parents, or an address), not text.
-        outside, known = set(state.untrusted_places), set(state.user_places)
-        for v in dests:
-            if v[:80] in copied:
-                continue
-            fps = {_h(p, "place") for p in destination_places(v) | destination_places(_canonical(v))}
-            if fps & outside and not fps & known:
-                copied.append(v[:80])
-        if copied and kind == "outbound" and _adds_nothing(arguments, policy.destination_args.get(tool, ()), state):
-            copied = []
+        copied = _outsider_destinations(policy, state, tool, kind, arguments)
         if copied:
             emit("untrusted_destination", Category.PROMPT_INJECTION.value, 0.7,
                  f"This action sends to {', '.join(repr(v[:60]) for v in copied[:2])}, which came from content an "

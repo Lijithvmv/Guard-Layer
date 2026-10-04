@@ -87,7 +87,7 @@ any other host is blocked.
 
 - **Interruptions:** on real Claude Code sessions, today's defaults (the destination check, and trust only for
   declared tools) added **1 hold in 7,572 calls** on the sessions used to design them, and **none in 6,962 calls**
-  from other projects never used for design. On AgentDojo's tasks, nearly all of which pay or
+  from other projects never used for design. All rules together hold 2.3% of those 6,962 calls for approval. On AgentDojo's tasks, nearly all of which pay or
   send right after reading untrusted content, the defaults hold about one task in four for approval.
 - **Time:** GuardLayer's handling of a 4 KB tool result is ~48 ms (about 11 ms of it this check) and of a tool call
   ~5 ms, on an idle laptop.

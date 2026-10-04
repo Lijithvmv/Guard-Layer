@@ -211,6 +211,41 @@ def consequence(
     return declared
 
 
+def sends_out(
+    tool: str, caps: Iterable[str], tagged: bool, arguments: Mapping[str, Any] | str | None, *, remote: bool = False
+) -> bool:
+    """Whether this call can carry data off the machine: a network or publishing program in a shell command (or one
+    that can't be analysed), or a tool that reaches the network. `rm -rf build` is irreversible but sends nothing."""
+    caps = set(caps)
+    command = _command(arguments) if "exec" in caps or not tagged else None
+    if command is not None:
+        view = analyse(command)
+        if view is None:
+            return True
+        for pipeline in view.commands:
+            for cmd in pipeline:
+                if not cmd.argv:
+                    continue
+                prog = re.split(r"[/\\]", cmd.argv[0])[-1].removesuffix(".exe")
+                args = cmd.argv[1:]
+                if prog in _PUBLISH and args and args[0] in _PUBLISH[prog]:
+                    return True
+                if prog in _NET_PROGRAMS or (prog in _NET_SUBCOMMANDS and args and args[0] in _NET_SUBCOMMANDS[prog]):
+                    return True
+                if prog.startswith("__") or prog in ("python", "python3", "node", "py", "pwsh", "powershell", "bash", "sh"):
+                    return True  # inline or script code: can't tell what it sends
+        return False
+    # Not a shell command: publishing, sharing, sending, paying, inviting all carry data out; only an action that
+    # merely destroys something (and reaches no network) doesn't.
+    if not (remote or caps & {"network"}) and _DESTROY_ONLY.search(tool):
+        return False
+    return True
+
+
+_DESTROY_ONLY = re.compile(r"(^|__|[_\-.])(delete|remove|drop|destroy|truncate|purge|wipe|erase|unlink|rmdir|clear)(_|$)",
+                           re.IGNORECASE)  # fmt: skip
+
+
 def _guess(
     tool: str, caps: Iterable[str], tagged: bool, arguments: Mapping[str, Any] | str | None, *, remote: bool = False
 ) -> str:
