@@ -10,7 +10,7 @@ and the proposed call, so text an attacker planted in a web page or file can't a
 (Ollama), so nothing leaves the machine. Its answer is advisory: GuardLayer turns "not requested" into a review, never
 into an automatic approval of something the rules held.
 
-Experimental: not wired into the pipeline. Measured (recorded AgentDojo runs, detectors removed, destination check on):
+Research code, not part of GuardLayer: used by the replay scripts in `benchmarks/`. Measured (recorded AgentDojo runs, detectors removed, destination check on):
 asked only about irreversible actions, it took attacks stopped from 21 to 26 of 27; asked about every outbound action
 too, it added cost and no catches, because the destination check already covers those.
 """

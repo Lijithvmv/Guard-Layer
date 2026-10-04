@@ -346,34 +346,10 @@ def build_guard(source: str | Path | Mapping[str, Any] | None = None) -> GuardLa
         sessions=session_store,
     )
     guard.preset = preset
-    judge_cfg = config.get("judge")
-    if judge_cfg:
-        guard.judge, guard.judge_unavailable = _judge(judge_cfg)
     audit_cfg = config.get("audit")
     if audit_cfg:
         guard.add_hook(_audit_logger(audit_cfg, base_dir))
     return guard
-
-
-def _judge(cfg: Mapping[str, Any]) -> tuple[Any, str]:
-    """[judge]: an optional local model asked whether a call serves the user's task (see guardlayer.judge)."""
-    from guardlayer.judge import PROMPTS, OllamaJudge
-
-    known = {"model", "host", "timeout", "question", "unavailable"}
-    unknown = set(cfg) - known
-    if unknown:
-        raise ValueError(f"unknown [judge] key(s) {sorted(unknown)}; use {sorted(known)}")
-    if "model" not in cfg:
-        raise ValueError("[judge] needs a model, e.g. model = \"qwen2.5:14b\" (an Ollama model on this machine)")
-    question = str(cfg.get("question", "goal"))
-    if question not in PROMPTS:
-        raise ValueError(f"[judge] question must be one of {sorted(PROMPTS)}")
-    unavailable = str(cfg.get("unavailable", "review"))
-    if unavailable not in ("review", "allow"):
-        raise ValueError('[judge] unavailable must be "review" or "allow"')
-    judge = OllamaJudge(str(cfg["model"]), host=str(cfg.get("host", "http://127.0.0.1:11434")),
-                        timeout=float(cfg.get("timeout", 30)), question=question)  # fmt: skip
-    return judge, unavailable
 
 
 def _tool_policy(tools_cfg: Mapping[str, Any], guard_cfg: Mapping[str, Any], base_dir: Path | None) -> ToolPolicy:

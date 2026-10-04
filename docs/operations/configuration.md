@@ -108,13 +108,6 @@ argument = "to"
 allow = ["*@mycompany.com"]
 action = "review"
 
-[judge]                        # experimental, opt-in: a local model asked whether a call serves your task
-model = "qwen2.5:14b"                   # an Ollama model on this machine (nothing leaves it)
-host = "http://127.0.0.1:11434"
-timeout = 30                            # seconds; Claude Code hooks time out, so keep it short
-question = "goal"                       # "goal" (does it serve the task?) or "requested" (was it asked for?)
-unavailable = "review"                  # when the judge doesn't answer: hold for approval, or "allow"
-
 [audit]                        # tamper-evident audit log
 path = "guardlayer-audit.jsonl"         # "{hostname}" and "{pid}" are filled in
 min_verdict = "flag"

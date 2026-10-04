@@ -71,14 +71,13 @@ def _attacker_values(d: dict) -> set[str]:
 def replay(path: str, scope: str, evade_detection: bool = False, untrusted_destination: str = "off",
            untrusted_all: bool = False, judge_model: str | None = None, judge_on: str = "consequential",
            judge_cache: str | None = None, delegate: bool = False, judge_host: str = "http://127.0.0.1:11434",
-           attack_types: set[str] | None = None, product_judge: str | None = None) -> dict:
+           attack_types: set[str] | None = None) -> dict:
     session_cfg = {"after_injection_scope": scope, "untrusted_destination": untrusted_destination}
     if delegate:  # content fetched from a place the user named counts as the user's context (experiment)
         session_cfg["trusted_tools"] = ["__delegated__"]
     if untrusted_all:  # AgentDojo's threat model: any tool result may carry third-party text
         session_cfg["default_integrity"] = "untrusted"
-    guard = build_guard({"session": session_cfg, **({"judge": {"model": product_judge, "host": judge_host, "timeout": 180}}
-                                                     if product_judge else {})})  # the shipped [judge] code path
+    guard = build_guard({"session": session_cfg})
     if evade_detection:
         # Worst case for detection: an adaptive attacker whose injection no scanner recognises. Only the
         # injection detectors are removed; tool policy, secrets, personal data, links and session rules stay.
@@ -182,7 +181,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--judge-on", default="consequential", choices=["consequential", "irreversible", "irreversible+links"],
                    help="which actions the judge is asked about (after untrusted content, and only if the rules let them run)")
     p.add_argument("--judge-host", default="http://127.0.0.1:11434", help="Ollama server for --judge")
-    p.add_argument("--product-judge", help="Ollama model for GuardLayer's own [judge] (the shipped code path)")
     p.add_argument("--attack-types", help="comma-separated attack types to include (benign runs are always included)")
     p.add_argument("--delegate", action="store_true",
                    help="experiment: content fetched from a place the user named counts as the user's context")
@@ -190,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     print(json.dumps(replay(args.logs, args.scope, args.evade_detection, args.untrusted_destination, args.untrusted_all,
                             args.judge, args.judge_on, args.judge_cache, args.delegate, args.judge_host,
-                            set(args.attack_types.split(",")) if args.attack_types else None, args.product_judge), indent=2))
+                            set(args.attack_types.split(",")) if args.attack_types else None), indent=2))
     return 0
 
 

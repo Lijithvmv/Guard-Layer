@@ -123,7 +123,7 @@ approval; on the real Claude Code sessions above these defaults added 1 hold in 
 Not covered:
 
 - **Actions with no destination, and values the agent works out itself.** A password change, or "book the most
-  expensive hotel", names no outsider's place, so only the optional judge below can see it.
+  expensive hotel", names no outsider's place; a judge was tested for this (below) without a demonstrated gain.
 - **Visiting an outsider's page.** It carries nothing private, so it runs. On the frontier-model runs this "visit the
   phishing link" goal is most of what remains when every tool result is treated as untrusted.
 - **An address the agent has to rebuild:** spelled out ("site dot net"), reversed, split across sentences, or another
@@ -132,28 +132,19 @@ Not covered:
 - **Evidence limits:** recorded runs of one published attack family; no adaptive attacker has been run against these
   rules beyond the cases above.
 
-## Optional: a judge for what the rules can't see
+## Research, not in GuardLayer: a judge for what the rules can't see
 
-An experimental, opt-in `[judge]` asks a local model one question about the few calls the rules let through but
-can't judge (an irreversible action, or an outbound one carrying something from untrusted content, after untrusted
-content was read): **does this action serve the user's own task?** It sees only your messages (your first two and
-latest three) and the call, never tool output, so text planted in a page can't argue with it. A "no", or no answer
-in time, holds the call for your approval.
+We tested asking a local model about the calls the rules let through but can't judge (an irreversible action, or
+an outbound one carrying an untrusted link): does this action serve the user's own task? Two findings:
 
-The question matters more than the model. Asked "did the user request this action?", a 7B and a 14B model both
-refused 84 of 92 actions on real Claude Code sessions: an agent takes many steps nobody named (opening a page's
-images, deleting its own scratch files). Asked whose goal the action serves, the 14B model refused 31 of 87, 13 of
-them pages on this machine (no longer asked). It is asked only about an outbound call carrying an untrusted
-**link** (an untrusted recipient is the destination check's job) and an irreversible one, except a delete whose
-every target is a file the agent itself created. Measured end to end with a 30-second limit, it held **20 of 14,534**
-real calls: 19 of 7,572 on the sessions used to design it (2 of them too slow) and 1 of 6,962 from other projects.
-On the recorded AgentDojo attacks it stops 27 of 27 with every tool result untrusted, where the rules alone stop 25:
-on 27 samples that difference is not statistically meaningful (95% intervals 88–100% and 77–98%), so its benefit on
-attacks is not yet demonstrated. It holds 52 of 113 ordinary tasks there (40 without it). It stays off by default and experimental: one local
-model, one machine, and 8–40 s per question.
+- **The question matters more than the model.** Asked "did the user request this action?", a 7B and a 14B model
+  both refused 84 of 92 actions on real Claude Code sessions: agents take many steps nobody named. Asked whose goal
+  the action serves, the 14B model refused 31 of 87.
+- **Its benefit on attacks is not demonstrated.** It stopped 27 of 27 recorded attacks where the rules alone stop 25;
+  on 27 samples that difference is noise (95% intervals 88-100% and 77-98%). It also held 20 of 14,534 real calls.
 
-With a judge, the session file keeps those five prompts in clear (up to 1,500 characters each), because the model
-needs your words; see SECURITY.md.
+Because it adds holds without a demonstrated gain, it is not part of GuardLayer. The research code is in
+`guardlayer/judge.py` and the replay scripts.
 
 ## Where this comes from
 

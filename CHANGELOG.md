@@ -16,9 +16,6 @@ All notable changes to this project are documented here. The format follows
   destination arguments, never this machine, nothing held for a link the agent merely follows); an irreversible
   action counts only if it can send data out (publish, push, share, send; not a local delete). Real Claude Code
   sessions from other projects: calls held 8.5% -> 2.3% (trifecta 499 -> 14 of 6,962); recorded attacks unchanged.
-- **Experimental `[judge]`** (opt-in): a local model asked "does this call serve the user's own task?" about the
-  calls the rules let through but can't judge. Real Claude Code sessions with qwen2.5:14b, end to end: 20 holds in 14,534 calls; recorded AgentDojo attacks 27/27;
-  8–40 s per question on ~1% of calls. With a judge, the session keeps five of your prompts in clear.
 - **A tool's name no longer establishes trust** (`[labels] default_integrity = "declared"`, the new default): a
   result counts as trusted only if you vouched for who writes it (`output = "trusted"`, `trusted_tools`, a source's
   `integrity = "trusted"`) or an integration did for its own tools (Claude Code's Read, Grep, Glob), and it is
