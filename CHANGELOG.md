@@ -12,6 +12,9 @@ All notable changes to this project are documented here. The format follows
   no injection detection. Measured with detectors removed: recorded attacks stopped by the defaults 5/27 -> 12/27;
   extra holds on real Claude Code sessions: 1 in 7,572 calls, 0 in 6,962 from other projects. Following links, opening files a page listed, and opening this
   machine's dev servers or files are not held. Hold messages name the recipient and where it came from.
+- **Experimental `[judge]`** (opt-in): a local model asked "does this call serve the user's own task?" about the
+  calls the rules let through but can't judge. Real Claude Code sessions with qwen2.5:14b: an estimated 1 hold in 400 calls;
+  8–40 s per question on ~1% of calls. With a judge, the session keeps five of your prompts in clear.
 - **A tool's name no longer establishes trust** (`[labels] default_integrity = "declared"`, the new default): a
   result counts as trusted only if the tool's capabilities were declared (by you, or by an integration for its own
   tools) or you named it in `trusted_tools` / `sources`, and it is local. `"trusted"` restores the old name-based

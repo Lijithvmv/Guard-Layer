@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 from guardlayer.canary import Canary, CanaryManager
+from guardlayer.consequence import consequence
 from guardlayer.credentials import credential_flow
 from guardlayer.extract import DEFAULT_EXTRACTORS, Extractor, extract, media_parts
 from guardlayer.filelabels import FileLabelStore, written_paths
@@ -58,10 +59,12 @@ from guardlayer.session import (
     SessionState,
     SessionStore,
     file_label_detections,
+    judge_trigger,
     observe_content,
     observe_input,
     observe_label,
     observe_tool_call,
+    remember_prompt,
     taint_detections,
     task_detections,
 )
@@ -189,6 +192,10 @@ class GuardLayer:
         self._file_labels_for: object | None = None
         self.preset: str | None = None  # set by `from_preset` / a config with `preset = ...`
         self.hooks: list[Callable[[ScanResult], None]] = list(hooks)
+        # Optional second-stage judge (guardlayer.judge): asked about calls the rules let through, only where they
+        # can't see the harm. `judge_unavailable` is what a call gets when the judge doesn't answer.
+        self.judge: Callable[..., Any] | None = None
+        self.judge_unavailable: str = "review"
 
     # ------------------------------------------------------------------ construction helpers
     @classmethod
@@ -269,6 +276,8 @@ class GuardLayer:
         context_fields["metadata"] = {**dict(context_fields.get("metadata") or {}), "session_id": state.id}
         result = self.scan(prompt, "input", **context_fields)
         observe_input(state, prompt, result)
+        if self.judge is not None:
+            remember_prompt(state, prompt)  # the judge needs the user's task in words; kept only with a judge
         self.sessions.put(state)
         return result
 
@@ -449,6 +458,7 @@ class GuardLayer:
         if remote:
             extra += self._secrets_in_egress(tool_name, rule_text)
         state = self._load_session(session)
+        refs: list[tuple[str, Label]] = []
         if state is not None:
             metadata["session_id"] = state.id
             refs = self.file_labels.referenced(arguments, arguments_text)
@@ -464,6 +474,8 @@ class GuardLayer:
             scan_content = self.tool_policy.can_act(tool_name)
         ctx = ScanContext(direction="output", metadata=metadata, **context_fields)
         result = self._run(payload, ctx, extra=extra, content=scan_content)
+        if state is not None and self.judge is not None and result.verdict < Verdict.REVIEW:
+            result = self._judged(result, state, tool_name, caps, tagged, arguments, remote, refs, payload, ctx)
         if state is not None:
             observe_tool_call(state, tool_name, result)
             # Record only what runs without a human in between; a reviewed write is recorded after it ran
@@ -472,6 +484,29 @@ class GuardLayer:
                 self.file_labels.record(written_paths(arguments), state.label)
             self.sessions.put(state)
         return result
+
+    def _judged(
+        self, result: ScanResult, state: SessionState, tool_name: str, caps: frozenset[str], tagged: bool,
+        arguments: Any, remote: bool, refs: list[tuple[str, Label]], payload: str, ctx: ScanContext,
+    ) -> ScanResult:
+        """Ask the second-stage judge about a call the rules let through, where they can't see the harm."""
+        kind = consequence(tool_name, caps, tagged, arguments if arguments is not None else payload, remote=remote,
+                           declared=self.session_policy.declared_consequence(tool_name))  # fmt: skip
+        why = judge_trigger(self.session_policy, state, tool_name, kind, arguments, refs)
+        if why is None:
+            return result
+        verdict = self.judge(state.user_prompts, tool_name, arguments)  # type: ignore[misc]
+        if verdict.requested is True:
+            return result
+        action = "review" if verdict.requested is False else self.judge_unavailable
+        if action == "allow":
+            return result
+        message = (f"A check of your messages found this action doesn't serve your task: {verdict.reason}"
+                   if verdict.requested is False else f"The action check couldn't answer ({verdict.reason}).")  # fmt: skip
+        det = Detection("judge", "not_the_users_goal" if verdict.requested is False else "judge_unavailable",
+                        Category.PROMPT_INJECTION.value, 0.7, message,
+                        metadata={"trigger": why, "consequence": kind}, action=action)  # fmt: skip
+        return self._decide(payload, ctx, [*result.detections, det], list(result.errors))
 
     # ------------------------------------------------------------------ behavioural check
     def needs_intent_check(self, tool_name: str, *, session: str | GuardSession | None = None) -> bool:

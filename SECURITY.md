@@ -44,6 +44,7 @@ What GuardLayer protects, what it assumes and what it can't stop: [THREAT_MODEL.
   session saw (the key is `~/.guardlayer/hash.key`; someone who can read both can test guesses); unkeyed truncated
   SHA-256 fingerprints of identifiers and secrets (URLs, addresses, keys), which are matched inside other text; and the
   **last 500 characters of untrusted content in clear**, secrets redacted, to catch an instruction split across two
-  tool results. Sessions expire after 7 days by default.
+  tool results. With the optional `[judge]`, it also keeps your first two and latest three prompts in clear (up to
+  1,500 characters each), because the model needs your words. Sessions expire after 7 days by default.
 - `AuditLogger` stores hashes rather than raw text by default. Enable `include_text` only if your
   data-handling policy allows it.

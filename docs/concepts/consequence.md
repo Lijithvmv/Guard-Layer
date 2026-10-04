@@ -122,10 +122,7 @@ approval; on the real Claude Code sessions above these defaults added 1 hold in 
 Not covered:
 
 - **Actions with no destination, and values the agent works out itself.** A password change, or "book the most
-  expensive hotel", names no outsider's place. Only an irreversible action is held, and only when an injection was
-  detected or secrets are present. In experiments a local model asked "did the user request this?" (shown only your
-  messages and the action) closed this on AgentDojo, but on real sessions a 7B model refused 91% of actions it was
-  asked about, so it is not part of GuardLayer.
+  expensive hotel", names no outsider's place, so only the optional judge below can see it.
 - **Visiting an outsider's page.** It carries nothing private, so it runs. On the frontier-model runs this "visit the
   phishing link" goal is most of what remains when every tool result is treated as untrusted.
 - **An address the agent has to rebuild:** spelled out ("site dot net"), reversed, split across sentences, or another
@@ -133,6 +130,23 @@ Not covered:
 - **Paraphrase:** private data rewritten in new words isn't recognised when it goes to a public place.
 - **Evidence limits:** recorded runs of one published attack family; no adaptive attacker has been run against these
   rules beyond the cases above.
+
+## Optional: a judge for what the rules can't see
+
+An experimental, opt-in `[judge]` asks a local model one question about the few calls the rules let through but
+can't judge (an irreversible action, or an outbound one carrying something from untrusted content, after untrusted
+content was read): **does this action serve the user's own task?** It sees only your messages (your first two and
+latest three) and the call, never tool output, so text planted in a page can't argue with it. A "no", or no answer
+in time, holds the call for your approval.
+
+The question matters more than the model. Asked "did the user request this action?", a 7B and a 14B model both
+refused 84 of 92 actions on real Claude Code sessions: an agent takes many steps nobody named (opening a page's
+images, deleting its own scratch files). Asked whose goal the action serves, the 14B model refused 31 of 87, 13 of
+them pages on this machine (no longer asked), so an estimated 1 call in 400 is held (measured through the replay; see the changelog for the end-to-end figure). On the recorded AgentDojo attacks it
+stops 26 of 27 with every tool result untrusted, where the rules alone stop 25.
+
+With a judge, the session file keeps those five prompts in clear (up to 1,500 characters each), because the model
+needs your words; see SECURITY.md.
 
 ## Where this comes from
 

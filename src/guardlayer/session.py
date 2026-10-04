@@ -227,6 +227,7 @@ class SessionState:
     user_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of the user's own messages
     untrusted_places: list[str] = field(default_factory=list)  # hashes of places (host/path, address) untrusted content named
     user_places: list[str] = field(default_factory=list)  # hashes of places the user or trusted content named
+    user_prompts: list[str] = field(default_factory=list)  # only with a [judge]: the user's first 2 and latest 3 prompts
     private_marks: list[str] = field(default_factory=list)  # hashes of identifiers and 6-word runs from declared-private sources
     unmarked_private: bool = False  # private data entered without text to mark (a labelled file): judge session-wide
     public_words: list[str] = field(default_factory=list)  # hashes of words in untrusted content and user prompts: not private, so sending them leaks nothing
@@ -1079,6 +1080,47 @@ def _carried(arguments_text: str, values: list[str], user_values: list[str]) -> 
 def _touch(state: SessionState) -> None:
     state.updated = time.time()
     state.events += 1
+
+
+def remember_prompt(state: SessionState, prompt: str) -> None:
+    """Keep what the judge needs to know the user's task: their first two prompts and their latest three."""
+    prompts = [*state.user_prompts, prompt[:1500]]
+    state.user_prompts = prompts if len(prompts) <= 5 else [*prompts[:2], *prompts[-3:]]
+
+
+_DELETE_COMMAND = re.compile(r"^\s*(?:cd\s+[^;&|]+(?:&&|;)\s*)?(?:rm|rmdir|unlink|del|Remove-Item)\b", re.IGNORECASE)
+
+
+def judge_trigger(
+    policy: SessionPolicy, state: SessionState, tool: str, kind: str, arguments: Mapping[str, Any] | str | None,
+    refs: list[tuple[str, Any]],
+) -> str | None:
+    """Why the second-stage judge should be asked about this call, or None.
+
+    Only where the deterministic rules can't see the harm, after untrusted content was read: an irreversible action
+    (a password change, a booking, a delete), unless it only deletes files the agent wrote; and an outbound action
+    carrying an identifier from untrusted content, unless it goes to this machine or a place the user named.
+    """
+    if not state.untrusted:
+        return None
+    if kind == "irreversible":
+        command = str(arguments.get("command") or "") if isinstance(arguments, Mapping) else ""
+        if command and _DELETE_COMMAND.match(command) and refs:
+            return None  # deleting files the agent itself wrote in this context
+        return "irreversible"
+    if kind == "outbound":
+        text = json.dumps(arguments, ensure_ascii=False, default=str) if not isinstance(arguments, str) else arguments
+        carried = _carried(text, state.untrusted_values, state.user_values)
+        if not carried:
+            return None
+        dests = destination_values(arguments, policy.destination_args.get(tool, ()))
+        if dests and not any(_outside_place(v) for v in dests):
+            return None
+        known = set(state.user_places)
+        if any(_h(p, "place") in known for v in dests for p in destination_places(v)):
+            return None
+        return "untrusted link"
+    return None
 
 
 def taint_detections(
