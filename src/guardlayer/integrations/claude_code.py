@@ -202,6 +202,7 @@ def configure_guard(guard: GuardLayer, state_dir: str | Path | None = None) -> G
     """Add Claude Code's tool capabilities (config wins) and a file-backed session store."""
     for name, caps in CLAUDE_CODE_CAPABILITIES.items():
         guard.tool_policy.capabilities.setdefault(name, frozenset(caps))
+        guard.tool_policy.vouched.add(name)  # Claude Code's own tools: Read reads this machine's files
     sources = guard.session_policy.sources
     for name, label in CLAUDE_CODE_SOURCES.items():
         if not any(fnmatch.fnmatchcase(name, pattern) for pattern in sources):

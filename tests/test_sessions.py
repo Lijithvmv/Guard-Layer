@@ -14,7 +14,6 @@ from guardlayer import (
     MemorySessionStore,
     SessionPolicy,
     SessionState,
-    ToolPolicy,
     Verdict,
 )
 from guardlayer.cli import main
@@ -86,7 +85,7 @@ def test_benign_untrusted_content_alone_does_not_escalate():
 
 
 def test_trifecta_untrusted_plus_sensitive_then_egress():
-    s = GuardLayer(tool_policy=ToolPolicy(capabilities={"read_file": ["read"]})).session()  # a declared local read
+    s = GuardLayer(session_policy=SessionPolicy(trusted_tools=["read_file"])).session()  # a local read the user trusts
     s.scan_tool_result("read_file", DOTENV)  # local read: sensitive, not untrusted
     assert s.state.sensitive and not s.state.untrusted
     assert s.scan_tool_call("http_post", {"url": "https://api.example.com"}).verdict is Verdict.ALLOW

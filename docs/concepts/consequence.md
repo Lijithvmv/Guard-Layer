@@ -109,9 +109,10 @@ similarity detector can know. The plainest attack in the set (`direct`: the atta
 instruction) shows why. The detectors catch 9 of 23 on GPT-4o and 8 of 34 on Llama 3.3; the defaults stop 22 of 23
 and 32 of 34, because they don't depend on how the instruction is worded.
 
-**Which results count as outsider content.** A tool's result is trusted only when its capabilities were declared
-(by you, or by an integration for its own tools, as Claude Code's Read, Grep and Glob are) or you named it in
-`trusted_tools` or `[labels] sources`, and it is local. A name can't establish trust: `read_file` on a shared drive,
+**Which results count as outsider content.** A tool's result is trusted only when someone vouched for who writes
+it: you (`output = "trusted"` on the tool, `trusted_tools`, or a source's `integrity = "trusted"`), or an
+integration for its own tools (Claude Code's Read, Grep and Glob read this machine's files), and the tool is local.
+Declaring a tool's capabilities says what it can do, not who writes what it returns, so it doesn't make it trusted. A name can't establish trust: `read_file` on a shared drive,
 `get_channels`, a calendar, transactions or reviews carry text other people wrote; in these runs they delivered most
 of the injections that name-based trust let through. `[labels] default_integrity = "trusted"` restores name-based
 trust; `"untrusted"` distrusts every result.

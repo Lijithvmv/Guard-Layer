@@ -126,7 +126,7 @@ def _tool_table(u: ToolUsage, guard: GuardLayer, *, trust: bool) -> list[str]:
     acts = not tagged or bool(caps & _ACTING)
     out = [f"[tool.{_key(u.name)}]                # used {u.calls} time(s), {u.results} result(s) seen"]
     if tagged:
-        out.append(f"capabilities = {json.dumps(sorted(caps))}   # inferred from the name: CHECK")
+        out.append(f"capabilities = {json.dumps(sorted(caps))}   # inferred from the name: CHECK (what it can do; who writes its output is set below)")
     else:
         out.append('capabilities = ["read", "write", "network", "exec"]   # CHECK: unknown, so assumed able to do anything')
     if remote and tagged and not caps & {"network", "exec"}:

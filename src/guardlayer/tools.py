@@ -428,6 +428,10 @@ class ToolPolicy:
         self.allowlist = set(allowlist) if allowlist is not None else None
         self.denylist = set(denylist)
         self.capabilities = {k: frozenset(v) for k, v in (capabilities or {}).items()}
+        # Tools an integration vouches for because it knows them (Claude Code's own Read, Grep, Glob, ...): their local
+        # results are trusted under default_integrity = "declared". Declaring a tool's capabilities says what it can
+        # do, not who writes what it returns, so it doesn't add a tool here.
+        self.vouched: set[str] = set()
         for tool, caps in self.capabilities.items():
             unknown = caps - set(CAPABILITIES)
             if unknown:
@@ -471,6 +475,10 @@ class ToolPolicy:
     def is_declared(self, tool: str) -> bool:
         """Whether the tool's capabilities were declared (config, or an integration's own tools), not guessed."""
         return tool in self.capabilities or any(fnmatch.fnmatchcase(tool, p) for p in self.capabilities)
+
+    def vouches(self, tool: str) -> bool:
+        """Whether an integration vouches for this tool as its own (see `vouched`)."""
+        return tool in self.vouched or any(fnmatch.fnmatchcase(tool, p) for p in self.vouched)
 
     def resolve(self, tool: str) -> tuple[frozenset[str], bool]:
         """(capabilities, tagged). An explicit empty list tags a tool as harmless; untagged tools match every rule."""

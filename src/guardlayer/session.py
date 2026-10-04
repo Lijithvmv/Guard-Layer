@@ -737,11 +737,12 @@ class SessionPolicy:
         return min(known) if known else None
 
     def declares(self, tool: str | None) -> bool:
-        """Whether the user named this tool in trusted_tools, untrusted_tools or [labels] sources: a known tool."""
+        """Whether the user stated who writes this tool's results: trusted_tools, untrusted_tools, or a source's
+        `integrity`. Its capabilities or how confidential its data is don't say that."""
         if tool is None:
             return False
         return self.is_trusted(tool) or self._matches(tool, self.untrusted_tools) or any(
-            fnmatch.fnmatchcase(tool, p) for p in self.sources
+            "integrity" in spec and fnmatch.fnmatchcase(tool, p) for p, spec in self.sources.items()
         )
 
     def is_untrusted(self, tool: str | None, can_reach_network: bool) -> bool:

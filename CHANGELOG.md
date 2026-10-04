@@ -16,8 +16,9 @@ All notable changes to this project are documented here. The format follows
   calls the rules let through but can't judge. Real Claude Code sessions with qwen2.5:14b, end to end: 20 holds in 14,534 calls; recorded AgentDojo attacks 27/27;
   8–40 s per question on ~1% of calls. With a judge, the session keeps five of your prompts in clear.
 - **A tool's name no longer establishes trust** (`[labels] default_integrity = "declared"`, the new default): a
-  result counts as trusted only if the tool's capabilities were declared (by you, or by an integration for its own
-  tools) or you named it in `trusted_tools` / `sources`, and it is local. `"trusted"` restores the old name-based
+  result counts as trusted only if you vouched for who writes it (`output = "trusted"`, `trusted_tools`, a source's
+  `integrity = "trusted"`) or an integration did for its own tools (Claude Code's Read, Grep, Glob), and it is
+  local. Declaring capabilities doesn't confer trust, so pasting a `policy draft` doesn't quietly restore it. `"trusted"` restores the old name-based
   behaviour. On AgentDojo's published frontier-model runs, undetected attacks stopped: 423 -> 648 of 707; extra
   holds on real Claude Code sessions: 0. Declare your own tools (`guardlayer policy draft` proposes lines).
 - Irreversible actions: every argument counts (the outsider choosing the file to delete or hotel to book), and

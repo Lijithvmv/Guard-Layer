@@ -85,7 +85,7 @@ def test_gap_b1_local_file_default_is_unchanged_but_untrusted_default_closes_it(
 
 
 def test_gap_b2_business_data_declared_private_cannot_reach_a_public_sink():
-    policy = SessionPolicy(sources={"get_customer": {"confidentiality": "private"}},
+    policy = SessionPolicy(sources={"get_customer": {"confidentiality": "private", "integrity": "trusted"}},
                            sinks={"send_email": {"max_confidentiality": "public"}, "save_note": {"max_confidentiality": "private"}})  # fmt: skip
     s = GuardLayer(session_policy=policy).session()
     s.scan_tool_result("get_customer", CUSTOMER)
@@ -187,7 +187,7 @@ def test_argument_rule_validation():
 
 
 def test_destinations_let_internal_recipients_receive_private_data():
-    policy = SessionPolicy(sources={"get_customer": {"confidentiality": "private"}},
+    policy = SessionPolicy(sources={"get_customer": {"confidentiality": "private", "integrity": "trusted"}},
                            sinks={"send_email": {"max_confidentiality": "public"}},
                            destinations=[{"tool": "send_email", "argument": "to", "match": "*@mycompany.com",
                                           "max_confidentiality": "private"}])  # fmt: skip
@@ -256,7 +256,7 @@ def test_reviewed_write_is_recorded_only_after_it_ran(tmp_path):
 
 
 def test_private_file_raises_confidentiality_of_a_later_reader(tmp_path):
-    policy = SessionPolicy(sources={"get_customer": {"confidentiality": "private"}},
+    policy = SessionPolicy(sources={"get_customer": {"confidentiality": "private", "integrity": "trusted"}},
                            sinks={"post_public": {"max_confidentiality": "public"}})  # fmt: skip
     g, export = GuardLayer(session_policy=policy), str(tmp_path / "export.csv")
     a = g.session()
@@ -350,7 +350,7 @@ def test_claude_code_label_defaults_yield_to_config(tmp_path):
 def test_public_sink_is_judged_by_what_the_call_carries():
     """Reading a private record used to hold every later post to a public place, "Done." included. Now only a call
     carrying the record's identifiers, names or a verbatim run is held; paraphrase passes (documented limit)."""
-    policy = SessionPolicy(sources={"get_customer": {"confidentiality": "private"}},
+    policy = SessionPolicy(sources={"get_customer": {"confidentiality": "private", "integrity": "trusted"}},
                            sinks={"post_status": {"max_confidentiality": "public"}})  # fmt: skip
     s = GuardLayer(session_policy=policy).session()
     s.scan_input("Update the customer file and post a short status")
@@ -361,3 +361,20 @@ def test_public_sink_is_judged_by_what_the_call_carries():
     assert held("asha menon is updated")
     assert held("balance now 91200")
     assert held("terms for the northern region stay confidential")
+
+
+def test_trust_comes_from_a_trust_statement_or_an_integration_not_from_capabilities():
+    """Declaring what a tool can do doesn't say who writes what it returns (a shared drive's read_file)."""
+    from guardlayer.config import build_guard
+    from guardlayer.integrations.claude_code import configure_guard
+
+    by_caps = build_guard({"tool": {"read_file": {"capabilities": ["read"]}}}).session()
+    by_caps.scan_tool_result("read_file", "Quarterly notes")
+    assert by_caps.state.untrusted  # capabilities alone: still untrusted
+    by_statement = build_guard({"tool": {"read_file": {"capabilities": ["read"], "output": "trusted"}}}).session()
+    by_statement.scan_tool_result("read_file", "Quarterly notes")
+    assert not by_statement.state.untrusted
+    cc = configure_guard(build_guard({}))  # Claude Code vouches for its own Read
+    s = cc.session("x")
+    s.scan_tool_result("Read", "local file")
+    assert not s.state.untrusted

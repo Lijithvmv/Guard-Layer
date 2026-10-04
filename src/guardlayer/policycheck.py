@@ -59,7 +59,7 @@ def check_policy(guard: GuardLayer, tools: Iterable[str]) -> tuple[list[ToolRepo
         source = "declared" if declared else "inferred" if tagged else "unknown"
         remote = tp.is_remote(tool)
         reaches_out = (not tagged) or bool(caps & {"network", "exec"})
-        guessed = sp.default_integrity == "declared" and not (declared or sp.declares(tool))  # a name can't establish trust
+        guessed = sp.default_integrity == "declared" and not (tp.vouches(tool) or sp.declares(tool))  # only a trust statement
         untrusted = sp.is_untrusted(tool, can_reach_network=remote or guessed)
         label = sp.source_label(tool)
         confidentiality = label.confidentiality.value if label else "public (detections can raise it)"
