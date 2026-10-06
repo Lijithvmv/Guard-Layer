@@ -34,7 +34,7 @@ from guardlayer.canary import Canary, CanaryManager
 from guardlayer.consequence import local_command
 from guardlayer.credentials import credential_flow
 from guardlayer.extract import DEFAULT_EXTRACTORS, Extractor, extract, media_parts
-from guardlayer.filelabels import FileLabelStore, executed_paths, normalise, written_paths
+from guardlayer.filelabels import FileLabelStore, deleted_paths, executed_paths, normalise, written_paths
 from guardlayer.intent import NEUTRAL_TASK, IntentCheck, Replay
 from guardlayer.intent import acheck as _intent_acheck
 from guardlayer.intent import check as _intent_check
@@ -469,8 +469,10 @@ class GuardLayer:
             extra += task_detections(self.session_policy, state, tool_name, arguments)
             metadata["session"] = {"untrusted": state.untrusted, "hostile": state.hostile, "sensitive": state.sensitive,
                                    "label": state.label.to_dict(), "task": state.task}  # fmt: skip
+            removes = deleted_paths(arguments) if "exec" in caps or not tagged else None
+            own_files = bool(removes) and all(self.file_labels.created_by_agent(p) for p in removes)  # type: ignore[union-attr]
             extra += taint_detections(self.session_policy, state, tool_name, caps, tagged, arguments_text, remote=remote,
-                                      arguments=arguments)  # fmt: skip
+                                      arguments=arguments, own_files_only=own_files)  # fmt: skip
         if scan_content is None:
             scan_content = self.tool_policy.can_act(tool_name)
         ctx = ScanContext(direction="output", metadata=metadata, **context_fields)
@@ -480,7 +482,8 @@ class GuardLayer:
             # Record only what runs without a human in between; a reviewed write is recorded after it ran
             # (`record_written`), because a refused one never happened.
             if result.verdict < Verdict.REVIEW and (not tagged or "write" in caps or "exec" in caps):
-                self.file_labels.record(written_paths(arguments), self._write_label(tool_name, caps, tagged, arguments, state))
+                self.file_labels.record(written_paths(arguments), self._write_label(tool_name, caps, tagged, arguments, state),
+                                        check_created=True)  # before the write runs: does the file exist yet?
             self.sessions.put(state)
         return result
 

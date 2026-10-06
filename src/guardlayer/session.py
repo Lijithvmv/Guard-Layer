@@ -1120,8 +1120,12 @@ def taint_detections(
     *,
     remote: bool | None = None,
     arguments: Mapping[str, Any] | str | None = None,
+    own_files_only: bool = False,
 ) -> list[Detection]:
     """Detections for a proposed tool call, given what the session has already seen.
+
+    `own_files_only`: the call only deletes files the agent itself created; that loses none of the user's data, so
+    it is local work, not an irreversible action.
 
     `remote` (from `ToolPolicy.is_remote`) widens `sensitive_data_egress` to tools whose
     arguments leave the machine even though they look read-only, such as a search query.
@@ -1139,6 +1143,8 @@ def taint_detections(
     allowed = policy.allowed_kinds(tool)
     kind = consequence(tool, caps, tagged, arguments if arguments is not None else arguments_text, remote=bool(remote),
                        declared=policy.declared_consequence(tool))
+    if own_files_only and kind == "irreversible":
+        kind = "local"
     classic = policy.trifecta_scope == "all"
     if leaves and state.fingerprints and (classic or kind != "local"):
         if contains_fingerprint(arguments_text, state.fingerprints, allowed_kinds=allowed):

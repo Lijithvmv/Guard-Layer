@@ -53,6 +53,37 @@ _INTERPRETERS = {"python", "python3", "py", "bash", "sh", "zsh", "node", "deno",
                  "powershell", "source", ".", "Rscript", "lua", "tsx", "ts-node"}
 
 
+def deleted_paths(arguments: Mapping[str, Any] | str | None) -> list[str] | None:
+    """The paths a plain delete command removes (`rm`, `del`, `Remove-Item`, after an optional `cd`), resolved against
+    that `cd`; None if the command is anything else (a pipeline, a script, several commands)."""
+    from guardlayer.shell import analyse  # local import: shell imports nothing from here
+
+    command = arguments.get("command") or arguments.get("cmd") if isinstance(arguments, Mapping) else arguments
+    if not isinstance(command, str):
+        return None
+    view = analyse(command.replace("\\", "/"))
+    if view is None:
+        return None
+    cmds = [c for p in view.commands for c in p if c.argv]
+    base = ""
+    if len(cmds) == 2 and cmds[0].argv[0] == "cd" and len(cmds[0].argv) == 2:
+        base = re.sub(r"^/([a-zA-Z])/", r"\1:/", cmds[0].argv[1])
+        cmds = cmds[1:]
+    if len(cmds) != 1 or re.split(r"[/\\]", cmds[0].argv[0])[-1].removesuffix(".exe") not in ("rm", "del", "unlink", "Remove-Item"):
+        return None
+    if cmds[0].redirects:
+        return None
+    targets = []
+    for a in cmds[0].argv[1:]:
+        if a.startswith("-") or a.startswith("$"):
+            continue
+        if any(ch in a for ch in "*?["):
+            return None  # a glob: can't tell which files it removes
+        a = re.sub(r"^/([a-zA-Z])/", r"\1:/", a)
+        targets.append(a if os.path.isabs(a) or not base else os.path.join(base, a))
+    return targets or None
+
+
 def executed_paths(arguments: Mapping[str, Any] | str | None) -> list[str]:
     """Files a shell command runs: the program itself (`./build.sh`) or an interpreter's script (`python x.py`).
     A file it only reads, writes or redirects to (`tail run.log`, `> /dev/null`) is not run."""
@@ -127,19 +158,25 @@ class FileLabelStore:
         entry = _lookup(self._load(), normalise(path))
         return Label.from_dict(entry) if entry else None
 
-    def record(self, paths: Iterable[str], label: Label) -> None:
+    def record(self, paths: Iterable[str], label: Label, *, check_created: bool = False) -> None:
         """Remember `label` for each path (combined with any label it already has).
 
-        A file written in a clean context is recorded with the neutral label: it marks the file as one the agent
-        created (so deleting it loses none of the user's data) and changes no rule, which act only on untrusted
-        or confidential labels."""
+        A file written in a clean context is recorded with the neutral label, which changes no rule (they act only on
+        untrusted or confidential labels). With `check_created` (before the write runs), a path that doesn't exist
+        yet and has no record is marked as created by the agent: deleting it later loses none of the user's data. A
+        file the agent only edited is the user's and is never marked."""
         with self._lock:
             data = dict(self._load())
             for p in paths:
                 key = normalise(p)
                 old = Label.from_dict(data[key]) if key in data else BOTTOM
-                data[key] = {**combine(old, label).to_dict(), "t": time.time()}
+                created = data[key].get("created", False) if key in data else (check_created and not os.path.exists(key))
+                data[key] = {**combine(old, label).to_dict(), "t": time.time(), "created": created}
             self._save(data)
+
+    def created_by_agent(self, path: str) -> bool:
+        entry = self._load().get(normalise(path))
+        return bool(entry and entry.get("created"))
 
     def referenced(self, arguments: Mapping[str, Any] | str | None, text: str) -> list[tuple[str, Label]]:
         """Labelled files that a tool call mentions, by path argument or anywhere in its argument text."""
