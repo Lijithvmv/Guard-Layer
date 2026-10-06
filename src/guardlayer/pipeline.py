@@ -31,13 +31,15 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 from guardlayer.canary import Canary, CanaryManager
+from guardlayer.consequence import local_command
+from guardlayer.credentials import credential_flow
 from guardlayer.extract import DEFAULT_EXTRACTORS, Extractor, extract, media_parts
-from guardlayer.filelabels import FileLabelStore, written_paths
+from guardlayer.filelabels import FileLabelStore, deleted_paths, executed_paths, normalise, written_paths
 from guardlayer.intent import NEUTRAL_TASK, IntentCheck, Replay
 from guardlayer.intent import acheck as _intent_acheck
 from guardlayer.intent import check as _intent_check
-from guardlayer.labels import BOTTOM as _BOTTOM_LABEL
 from guardlayer.labels import Integrity, Label
+from guardlayer.labels import combine as combine_labels
 from guardlayer.models import DIRECTIONS, Action, Category, Detection, Direction, ScanContext, ScanResult, Verdict
 from guardlayer.scanners.base import Scanner
 from guardlayer.scanners.heuristics import HeuristicScanner
@@ -64,6 +66,7 @@ from guardlayer.session import (
     taint_detections,
     task_detections,
 )
+from guardlayer.shell import command_view
 from guardlayer.tools import ToolPolicy, flatten_arguments
 
 logger = logging.getLogger("guardlayer")
@@ -314,7 +317,7 @@ class GuardLayer:
 
     def _scan_content(
         self, content: str, *, source: str | None, session: str | GuardSession | None, tool: str | None,
-        extra: Sequence[Detection] = (), force_untrusted: bool = False, **context_fields: Any,
+        extra: Sequence[Detection] = (), force_untrusted: bool = False, local: bool = False, **context_fields: Any,
     ) -> ScanResult:
         metadata = dict(context_fields.pop("metadata", {}) or {})
         if source:
@@ -324,7 +327,14 @@ class GuardLayer:
             metadata["session_id"] = state.id
         # Results of remote tools (network/exec, untagged, or matching `remote_tools` such as
         # MCP or search tools) are untrusted: someone outside this machine could have written them.
-        reaches_network = True if tool is None else self.tool_policy.is_remote(tool)
+        reaches_network = True if tool is None else self.tool_policy.is_remote(tool) and not local
+        if tool is not None and not local and self.session_policy.default_integrity == "declared" and not (
+            self.tool_policy.vouches(tool) or self.session_policy.declares(tool) or self.tool_policy.reads_nothing(tool)
+        ):
+            # A name can't establish trust: "read_file" on a shared drive, "get_channels", a calendar or a review
+            # list carry text other people wrote. Only tools whose capabilities were declared (by you, or by an
+            # integration for its own tools) are trusted when local.
+            reaches_network = True
         policy = self.session_policy
         untrusted = state is not None and policy.enabled and (
             policy.is_untrusted(tool, reaches_network) or (force_untrusted and not policy.declared_trusted(tool))
@@ -335,7 +345,7 @@ class GuardLayer:
         if state is not None:
             observe_content(
                 self.session_policy, state, content, result,
-                source=source or "context", tool=tool, can_reach_network=reaches_network,
+                source=source or "context", tool=tool, can_reach_network=reaches_network, untrusted=untrusted,
             )  # fmt: skip
             if force_untrusted and untrusted:
                 observe_label(state, Label(Integrity.UNTRUSTED), f"unreadable:{source or tool}")
@@ -391,6 +401,14 @@ class GuardLayer:
             self._file_labels_for = self.sessions
         return self._file_labels
 
+    @staticmethod
+    def _write_label(tool: str, caps: frozenset[str], tagged: bool, arguments: Any, state: SessionState) -> Label:
+        """The session's label, raised to untrusted when the command itself reads from outside (a download, a clone):
+        what it writes is outsider content even in a clean session."""
+        if ("exec" in caps or not tagged) and isinstance(arguments, Mapping) and not local_command(tool, caps, tagged, arguments):
+            return combine_labels(state.label, Label(Integrity.UNTRUSTED))
+        return state.label
+
     def record_written(self, tool_name: str, arguments: Mapping[str, Any] | str | None, *, session: str | GuardSession | None) -> None:
         """After a write tool actually ran: label the files it wrote with the session's label.
 
@@ -399,8 +417,8 @@ class GuardLayer:
         """
         state = self._load_session(session)
         caps, tagged = self.tool_policy.resolve(tool_name)
-        if state is not None and (not tagged or "write" in caps) and state.label != _BOTTOM_LABEL:
-            self.file_labels.record(written_paths(arguments), state.label)
+        if state is not None and (not tagged or "write" in caps or "exec" in caps):
+            self.file_labels.record(written_paths(arguments), self._write_label(tool_name, caps, tagged, arguments, state))
 
     def scan_tool_call(
         self,
@@ -419,31 +437,42 @@ class GuardLayer:
         tagged read-only (`scan_content=None`, the default), whose arguments cannot cause harm.
         A REVIEW verdict means: ask a human first.
         """
-        payload = arguments if isinstance(arguments, str) else json.dumps(arguments or {}, ensure_ascii=False, default=str)
         caps, tagged = self.tool_policy.resolve(tool_name)
         remote = self.tool_policy.is_remote(tool_name)
-        arguments_text = flatten_arguments(arguments)
-        extra = self.tool_policy.evaluate(tool_name, arguments)
+        arguments_text = flatten_arguments(arguments)  # original text: file labels and secret fingerprints use it
+        # Rules judge what a shell command executes, not every string in it (see `guardlayer.shell`).
+        view = command_view(tool_name, arguments) if (not tagged or "exec" in caps) else None
+        rule_arguments = {**arguments, view[0]: view[1]} if view is not None and isinstance(arguments, Mapping) else arguments
+        rule_text = flatten_arguments(rule_arguments)
+        payload = rule_arguments if isinstance(rule_arguments, str) else json.dumps(rule_arguments or {}, ensure_ascii=False, default=str)
+        extra = self.tool_policy.evaluate(tool_name, rule_arguments)
+        if view is not None and any(d.rule == "credential_access" for d in extra):
+            extra = self._bind_credentials(tool_name, str(arguments[view[0]]), extra)  # type: ignore[index]
         metadata = {
             **dict(context_fields.pop("metadata", {}) or {}),
             "tool": tool_name,
             "capabilities": sorted(caps),
             "remote": remote,
+            "command_view": "parsed" if view is not None else "text",
         }
         if remote:
-            extra += self._secrets_in_egress(tool_name, arguments_text)
+            extra += self._secrets_in_egress(tool_name, rule_text)
         state = self._load_session(session)
+        refs: list[tuple[str, Label]] = []
         if state is not None:
             metadata["session_id"] = state.id
             refs = self.file_labels.referenced(arguments, arguments_text)
             for path, label in refs:  # a labelled file the call mentions: the session has now, in effect, read it
                 observe_label(state, label, f"file:{path}")
-            extra += file_label_detections(self.session_policy, tool_name, caps, tagged, refs)
+            run = {normalise(p) for p in executed_paths(arguments if arguments is not None else arguments_text)}
+            extra += file_label_detections(self.session_policy, tool_name, caps, tagged, [(p, lb) for p, lb in refs if p in run])
             extra += task_detections(self.session_policy, state, tool_name, arguments)
             metadata["session"] = {"untrusted": state.untrusted, "hostile": state.hostile, "sensitive": state.sensitive,
                                    "label": state.label.to_dict(), "task": state.task}  # fmt: skip
+            removes = deleted_paths(arguments) if "exec" in caps or not tagged else None
+            own_files = bool(removes) and all(self.file_labels.created_by_agent(p) for p in removes)  # type: ignore[union-attr]
             extra += taint_detections(self.session_policy, state, tool_name, caps, tagged, arguments_text, remote=remote,
-                                      arguments=arguments)  # fmt: skip
+                                      arguments=arguments, own_files_only=own_files)  # fmt: skip
         if scan_content is None:
             scan_content = self.tool_policy.can_act(tool_name)
         ctx = ScanContext(direction="output", metadata=metadata, **context_fields)
@@ -452,8 +481,9 @@ class GuardLayer:
             observe_tool_call(state, tool_name, result)
             # Record only what runs without a human in between; a reviewed write is recorded after it ran
             # (`record_written`), because a refused one never happened.
-            if result.verdict < Verdict.REVIEW and (not tagged or "write" in caps) and state.label != _BOTTOM_LABEL:
-                self.file_labels.record(written_paths(arguments), state.label)
+            if result.verdict < Verdict.REVIEW and (not tagged or "write" in caps or "exec" in caps):
+                self.file_labels.record(written_paths(arguments), self._write_label(tool_name, caps, tagged, arguments, state),
+                                        check_created=True)  # before the write runs: does the file exist yet?
             self.sessions.put(state)
         return result
 
@@ -525,6 +555,30 @@ class GuardLayer:
         payload = arguments if isinstance(arguments, str) else json.dumps(arguments or {}, ensure_ascii=False, default=str)
         return self._run(payload, ScanContext(direction="output", metadata=metadata, **context_fields), extra=detections, content=False)
 
+    def _bind_credentials(self, tool_name: str, command: str, extra: list[Detection]) -> list[Detection]:
+        """Judge a fetched credential by where it goes (`guardlayer.credentials`): kept in a variable and used only
+        toward its own service is fine; printed into the transcript or sent elsewhere is not."""
+        flow = credential_flow(command)
+        if flow in ("", "unknown"):
+            return extra
+        rest = [d for d in extra if d.rule != "credential_access"]
+        if flow == "bound":
+            rest.append(Detection("tool_policy", "credential_bound", Category.POLICY.value, 0.1,
+                                  "A credential was fetched into a variable and used only toward its own service.",
+                                  metadata={"tool": tool_name}))  # fmt: skip
+        elif flow == "printed":
+            rest.append(Detection("tool_policy", "credential_exposed", Category.DATA_EXFILTRATION.value, 0.9,
+                                  "This prints a live credential into the agent's context. Capture it in a variable "
+                                  "(TOKEN=$(...)) and use it only toward its own service.",
+                                  metadata={"tool": tool_name},
+                                  action=self.tool_policy.rule_actions.get("credential_exposed", Action.BLOCK).value))  # fmt: skip
+        else:
+            rest.append(Detection("tool_policy", "credential_exfiltration", Category.DATA_EXFILTRATION.value, 1.0,
+                                  "A fetched credential is being sent to a host other than the service it belongs to.",
+                                  metadata={"tool": tool_name},
+                                  action=self.tool_policy.rule_actions.get("credential_exfiltration", Action.BLOCK).value))  # fmt: skip
+        return rest
+
     def _secrets_in_egress(self, tool_name: str, arguments_text: str) -> list[Detection]:
         """A secret in the arguments of a call that leaves the machine needs a human.
 
@@ -551,16 +605,28 @@ class GuardLayer:
             )
         ]  # fmt: skip
 
-    def scan_tool_result(self, tool_name: str, result: Any, *, session: str | GuardSession | None = None, **context_fields: Any) -> ScanResult:
+    def scan_tool_result(
+        self, tool_name: str, result: Any, *, session: str | GuardSession | None = None,
+        arguments: Mapping[str, Any] | str | None = None, **context_fields: Any,
+    ) -> ScanResult:  # fmt: skip
         """Scan what a tool returned before the model reads it (indirect injection channel).
 
         With a `session`, results from network-capable (or untagged) tools mark the session
-        untrusted, injections mark it hostile, and secrets/PII mark it sensitive.
+        untrusted, injections mark it hostile, and secrets/PII mark it sensitive. Pass the call's `arguments` so a
+        file the agent wrote after reading untrusted content is read back as untrusted, whatever tool reads it.
         """
+        read_back = local = False
+        if arguments is not None and session is not None:
+            refs = self.file_labels.referenced(arguments, flatten_arguments(arguments))
+            read_back = any(label.integrity >= Integrity.UNTRUSTED for _, label in refs)
+            caps, tagged = self.tool_policy.resolve(tool_name)
+            # The parsed command is the evidence of what it read, not the tool's name or declaration.
+            local = not read_back and "exec" in caps and local_command(tool_name, caps, tagged, arguments)
         parts = None if isinstance(result, str) else media_parts(result)
         if parts is None:
             text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
-            return self._scan_content(text, source=f"tool:{tool_name}", session=session, tool=tool_name, **context_fields)
+            return self._scan_content(text, source=f"tool:{tool_name}", session=session, tool=tool_name,
+                                      force_untrusted=read_back, local=local, **context_fields)  # fmt: skip
         # Bytes or media blocks: scan what can be extracted; what can't be read makes the session untrusted.
         texts, blobs = parts
         extracted, unreadable = extract(blobs, self.extractors)
@@ -570,7 +636,7 @@ class GuardLayer:
                                    f"Couldn't read {', '.join(sorted(set(unreadable)))} content; treated as untrusted.",
                                    metadata={"media": unreadable[:10]}, action=Action.LOG.value))  # fmt: skip
         return self._scan_content("\n\n".join([*texts, *extracted]), source=f"tool:{tool_name}", session=session,
-                                  tool=tool_name, extra=extra, force_untrusted=bool(unreadable), **context_fields)  # fmt: skip
+                                  tool=tool_name, extra=extra, force_untrusted=bool(unreadable) or read_back, **context_fields)  # fmt: skip
 
     # ------------------------------------------------------------------ canaries
     def add_canary(self, prompt: str, *, echo: bool = False) -> Canary:

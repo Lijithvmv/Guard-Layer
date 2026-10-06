@@ -50,8 +50,13 @@ send_money   = { accepts_untrusted = false }
 
 | Rule | Fires when | Default action |
 |---|---|---|
-| `confidentiality_exceeds_sink` | the session holds data more sensitive than the tool's `max_confidentiality` | review |
+| `confidentiality_exceeds_sink` | the call carries data from a source more sensitive than the tool's `max_confidentiality` | review |
 | `untrusted_to_protected_sink` | the session has read untrusted (or hostile) content and the tool has `accepts_untrusted = false` | review |
+
+"Carries" means the call's arguments contain the private source's identifiers (IDs, numbers, e-mail addresses),
+names (capitalised words), or a run of six words copied from it. A status note that shares none of these runs ("Done.");
+a summary in new words also runs (not detected). Private data that reaches the session without text to compare
+(a labelled file) keeps the stricter judgement: every call to the sink is held.
 
 These add to the session rules you already have (`sensitive_data_egress`, `trifecta`, `after_injection`); change any
 action in `[session] actions`.

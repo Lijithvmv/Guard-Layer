@@ -6,6 +6,35 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **The destination check is on by default** (`[session] untrusted_destination = "outbound"`; set `"off"` to
+  disable). An outbound action whose destination came from content an outsider can write is held when it carries
+  something private (a body or message, or URL words that are in neither that content nor your prompts). It needs
+  no injection detection. Measured with detectors removed: recorded attacks stopped by the defaults 5/27 -> 12/27;
+  extra holds on real Claude Code sessions: 1 in 7,572 calls, 0 in 6,962 from other projects. Following links, opening files a page listed, and opening this
+  machine's dev servers or files are not held. Hold messages name the recipient and where it came from.
+- **Shell output and file runs are judged by what actually happens.** A shell command's output is local content
+  unless the command can read from outside (network programs, fetching modules, unanalysable code); files a command
+  downloads keep their outsider origin; `untrusted_file_executed` judges files that are run, not merely mentioned,
+  and judges them by what they would execute even after an injection was detected; a declared tool that can't read
+  anything doesn't make the session untrusted. Real Claude Code sessions from other projects: 2.3% -> 1.6% held;
+  OpenHands agents' real work: 58% -> under 1% out of the box, 0.2% with tools declared; recorded attacks unchanged.
+- **`trifecta` judges where data can actually go.** Its outbound check now uses the destination check's places (real
+  destination arguments, never this machine, nothing held for a link the agent merely follows); an irreversible
+  action counts only if it can send data out (publish, push, share, send; not a local delete). Real Claude Code
+  sessions from other projects: calls held 8.5% -> 2.3% (trifecta 499 -> 14 of 6,962); recorded attacks unchanged.
+- **A tool's name no longer establishes trust** (`[labels] default_integrity = "declared"`, the new default): a
+  result counts as trusted only if you vouched for who writes it (`output = "trusted"`, `trusted_tools`, a source's
+  `integrity = "trusted"`) or an integration did for its own tools (Claude Code's Read, Grep, Glob), and it is
+  local. Declaring capabilities doesn't confer trust, so pasting a `policy draft` doesn't quietly restore it. `"trusted"` restores the old name-based
+  behaviour. On AgentDojo's published frontier-model runs, undetected attacks stopped: 423 -> 648 of 707; extra
+  holds on real Claude Code sessions: 0. Declare your own tools (`guardlayer policy draft` proposes lines).
+- Irreversible actions: every argument counts (the outsider choosing the file to delete or hotel to book), and
+  invite participants are recipients.
+- **An outsider's address can't be laundered through a file**: trusted content that repeats an address an outsider
+  already supplied no longer makes it "known"; only your own messages can.
+- **`confidentiality_exceeds_sink` judges what a call carries**: after reading a declared-private source, a call to a
+  public sink is held when it carries that source's identifiers, names or a verbatim run, not for every call ("Done."
+  now runs). Paraphrase is not detected.
 - New docs page *What's stable*: which features are core, which are add-ons, and which are experimental (task profiles,
   file labels, split-instruction detection, extraction, behavioural check). Experimental modules say so in their first
   lines. A dead-code scan (vulture, counting tests and examples as users) found nothing to remove.

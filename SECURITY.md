@@ -40,5 +40,10 @@ What GuardLayer protects, what it assumes and what it can't stop: [THREAT_MODEL.
   approval for high-impact actions.
 - Set `GUARDLAYER_API_KEY` whenever the REST API is reachable beyond localhost, and put it behind TLS.
 - Use `fail_closed = true` when a scanner outage should stop traffic rather than let it through.
+- Session state (`~/.guardlayer/sessions` with the file store) holds keyed hashes of the phrases, places and words a
+  session saw (the key is `~/.guardlayer/hash.key`; someone who can read both can test guesses); unkeyed truncated
+  SHA-256 fingerprints of identifiers and secrets (URLs, addresses, keys), which are matched inside other text; and the
+  **last 500 characters of untrusted content in clear**, secrets redacted, to catch an instruction split across two
+  tool results. Sessions expire after 7 days by default.
 - `AuditLogger` stores hashes rather than raw text by default. Enable `include_text` only if your
   data-handling policy allows it.

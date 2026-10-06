@@ -54,9 +54,9 @@ class HookService:
     """The guard behind the server: rebuilt when the config file changes, one event at a time."""
 
     def __init__(self, build: Callable[[], GuardLayer], *, config: str | None = None, preset: str | None = None,
-                 block_prompts: bool = False, token: str | None = None) -> None:  # fmt: skip
+                 block_prompts: bool = False, token: str | None = None, withhold: bool = False) -> None:  # fmt: skip
         self.build, self.config, self.preset = build, config, preset
-        self.block_prompts, self.token = block_prompts, token
+        self.block_prompts, self.token, self.withhold = block_prompts, token, withhold
         self.started = time.time()
         self._lock = threading.Lock()
         self._mtime = self._config_mtime()
@@ -79,7 +79,7 @@ class HookService:
             event: dict[str, Any] = {}
             try:
                 event = json.loads(raw)
-                output = claude_code.handle_event(event, self.guard, block_prompts=self.block_prompts)
+                output = claude_code.handle_event(event, self.guard, block_prompts=self.block_prompts, withhold=self.withhold)
             except Exception as exc:  # same contract as the command hook
                 print(f"GuardLayer hook error: {type(exc).__name__}: {exc}", file=sys.stderr)
                 output = claude_code.failure_output(self.guard, event, exc)

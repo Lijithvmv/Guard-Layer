@@ -132,6 +132,9 @@ def main(argv: list[str] | None = None) -> int:
     cc = hook_sub.add_parser("claude-code", help="Claude Code PreToolUse / PostToolUse / UserPromptSubmit hook.")
     cc.add_argument("--state-dir", help="Session state directory (default ~/.guardlayer/sessions or GUARDLAYER_STATE_DIR).")
     cc.add_argument("--block-prompts", action="store_true", help="Also block user prompts that GuardLayer blocks.")
+    cc.add_argument("--withhold-injections", action="store_true",
+                    help="Replace a tool result that holds a likely prompt injection, so Claude never reads it "
+                         "(default: Claude is warned and the auto-mode classifier is told; the output stays visible).")
     cc.add_argument("--print-config", action="store_true", help="Print the settings.json hooks snippet and exit.")
     cc.add_argument("--server", action="store_true",
                     help="Run as a long-running local server for Claude Code's HTTP hooks (with --print-config: print that setup).")
@@ -227,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         state_dir = Path(args.state_dir).expanduser().resolve().as_posix() if args.state_dir else None
         port = args.port or hookserver.default_port(config, args.preset)
         extra = [*(["--state-dir", state_dir] if state_dir else []), *(["--block-prompts"] if args.block_prompts else []),
+                 *(["--withhold-injections"] if args.withhold_injections else []),
                  *(["--token-env", args.token_env] if args.token_env else [])]  # fmt: skip
         if args.print_config:
             command = claude_code.default_command(args.config, args.preset)
@@ -234,6 +238,8 @@ def main(argv: list[str] | None = None) -> int:
                 command += f' --state-dir "{state_dir}"'
             if args.block_prompts:
                 command += " --block-prompts"
+            if args.withhold_injections:
+                command += " --withhold-injections"
             if args.server:
                 ensure = command + f" --ensure-server --port {port}" + (f" --token-env {args.token_env}" if args.token_env else "")
                 print(json.dumps(hookserver.settings_snippet(port, ensure, token_env=args.token_env), indent=2))
@@ -253,7 +259,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.server:
             service = hookserver.HookService(lambda: claude_code.configure_guard(build_guard(config), state_dir), config=config,
-                                             preset=args.preset, block_prompts=args.block_prompts, token=token)  # fmt: skip
+                                             preset=args.preset, block_prompts=args.block_prompts, token=token,
+                                             withhold=args.withhold_injections)  # fmt: skip
             server = hookserver.make_server(service, port)
             print(f"GuardLayer hook server on http://{hookserver.HOST}:{port}{hookserver.PATH} (pid {os.getpid()})", file=sys.stderr, flush=True)
             try:
@@ -262,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
                 pass
             return 0
         guard = claude_code.configure_guard(build_guard(args.config), args.state_dir)
-        return claude_code.run(guard, block_prompts=args.block_prompts)
+        return claude_code.run(guard, block_prompts=args.block_prompts, withhold=args.withhold_injections)
 
     if args.command == "serve":
         try:

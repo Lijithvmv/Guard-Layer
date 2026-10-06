@@ -47,7 +47,8 @@ PRESETS: dict[str, Preset] = {
             "The defaults. Blocks high-confidence attacks, redacts secrets everywhere and PII in outputs, blocks "
             "destructive commands, credential-file access and exfiltration endpoints, and holds risky commands "
             "(force-push, sudo, DROP TABLE, persistence, .env access) for human review. In a session, a secret "
-            "seen earlier being sent out is blocked, and actions after untrusted + sensitive reads or an injection need review.",
+            "seen earlier being sent out is blocked; data sent to a place only an outsider named, and irreversible actions "
+            "an outsider chose or taken after an injection, need review; local work runs.",
             (
                 "Paraphrased injections that avoid known phrasing can pass (add the classifier or an LLM judge).",
                 "Shell and network tools run without review unless a rule matches their arguments.",
@@ -75,7 +76,7 @@ PRESETS: dict[str, Preset] = {
                     "capability_actions": {"exec": "review", "write": "review"},
                     "rule_actions": {"egress_raw_ip": "block", "dotenv_file": "block", "persistence": "block"},
                 },
-                "session": {"actions": {"after_injection": "block"}, "trifecta_on_pii": True},
+                "session": {"actions": {"after_injection": "block"}, "trifecta_on_pii": True, "after_injection_scope": "all", "trifecta_scope": "all"},
                 "labels": {"default_integrity": "untrusted"},
             },
         ),
@@ -94,7 +95,7 @@ PRESETS: dict[str, Preset] = {
                     "capability_actions": {"network": "block", "exec": "block", "write": "review"},
                     "rule_actions": {"egress_raw_ip": "block", "dotenv_file": "block", "persistence": "block"},
                 },
-                "session": {"actions": {"after_injection": "block", "trifecta": "block"}, "trifecta_on_pii": True},
+                "session": {"actions": {"after_injection": "block", "trifecta": "block"}, "trifecta_on_pii": True, "after_injection_scope": "all", "trifecta_scope": "all"},
                 "labels": {"default_integrity": "untrusted"},
             },
         ),

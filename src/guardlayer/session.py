@@ -35,9 +35,12 @@ check runs in a new process, as with Claude Code hooks.
 
 from __future__ import annotations
 
+import base64
 import fnmatch
 import hashlib
+import html
 import json
+import logging
 import os
 import re
 import tempfile
@@ -47,13 +50,26 @@ import uuid
 import zlib
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
+from urllib.parse import unquote
 
+from guardlayer.consequence import (
+    DESTINATION_ARGS,
+    consequence,
+    destination_places,
+    destination_values,
+    distinctive_values,
+    file_consequence,
+    phrases,
+    places,
+    sends_out,
+)
 from guardlayer.labels import Confidentiality, Integrity, Label
 from guardlayer.labels import combine as combine_labels
 from guardlayer.models import Action, Category, Detection, ScanResult, Verdict
+from guardlayer.normalize import decode_payloads, despace, normalize
 
 if TYPE_CHECKING:  # pragma: no cover
     from guardlayer.pipeline import GuardLayer
@@ -68,6 +84,7 @@ _NOT_SENSITIVE_PII = frozenset({"ip_address"})  # too common in logs to make a s
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_\-+/.@]{8,}")
 MAX_SOURCES = 50
 MAX_FINGERPRINTS = 1000
+MAX_PHRASES = 20_000
 MAX_SCAN_CHARS = 65_536  # bound on argument text searched for fingerprints
 SEAM_CHARS = 500  # how much of the previous untrusted content is kept to scan across the boundary with the next one
 _PREFIX = 8  # every fingerprinted value is at least this long (see _TOKEN_RE)
@@ -203,6 +220,17 @@ class SessionState:
     sensitive_sources: list[str] = field(default_factory=list)  # where sensitive data was seen
     private_sources: list[str] = field(default_factory=list)  # sources declared private (business data, not secrets)
     fingerprints: list[str] = field(default_factory=list)  # hashes of sensitive values
+    hostile_values: list[str] = field(default_factory=list)  # hashes of distinctive values seen in hostile content
+    untrusted_values: list[str] = field(default_factory=list)  # hashes of distinctive values seen in untrusted content
+    user_values: list[str] = field(default_factory=list)  # hashes of distinctive values in the user's messages and trusted content
+    untrusted_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of untrusted content
+    hostile_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of hostile content (where a destination may come from)
+    user_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of the user's own messages
+    untrusted_places: list[str] = field(default_factory=list)  # hashes of places (host/path, address) untrusted content named
+    user_places: list[str] = field(default_factory=list)  # hashes of places the user or trusted content named
+    private_marks: list[str] = field(default_factory=list)  # hashes of identifiers and 6-word runs from declared-private sources
+    unmarked_private: bool = False  # private data entered without text to mark (a labelled file): judge session-wide
+    public_words: list[str] = field(default_factory=list)  # hashes of words in untrusted content and user prompts: not private, so sending them leaks nothing
     sensitive_kinds: list[str] = field(default_factory=list)  # rules that found them (iban, credential_file, ...)
     task: str | None = None  # the task profile in force (see guardlayer.tasks)
     task_args: dict[str, Any] = field(default_factory=dict)  # values from the trusted request, for {task.NAME}
@@ -247,17 +275,39 @@ class SessionState:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        # A shallow copy: fields are str, number, bool, None, lists of str, or task_args (asdict copies element by element)
+        data = {name: (type(v)(v) if isinstance(v := getattr(self, name), (list, dict)) else v) for name in self.__dataclass_fields__}
+        for name in _PACKED:  # one base64 string instead of tens of thousands of JSON strings per save
+            data[name] = {"packed": base64.b64encode(bytes.fromhex("".join(data[name]))).decode("ascii")}
+        return data
+
+    def copy(self) -> SessionState:
+        """An independent copy (lists and dicts copied; their items are immutable)."""
+        return SessionState(**{name: (type(v)(v) if isinstance(v := getattr(self, name), (list, dict)) else v)
+                               for name in self.__dataclass_fields__})  # fmt: skip
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> SessionState:
         known = set(cls.__dataclass_fields__)
+        data = dict(data)
+        for name in _PACKED:
+            value = data.get(name)
+            if isinstance(value, Mapping):
+                raw = base64.b64decode(value.get("packed", ""))
+                hexed, w = raw.hex(), 2 * _H_BYTES
+                data[name] = [hexed[i : i + w] for i in range(0, len(hexed), w)]
+            elif isinstance(value, list):  # an older format: those hashes no longer match; start these lists afresh
+                data[name] = [v for v in value if isinstance(v, str) and len(v) == 2 * _H_BYTES]
         return cls(**{k: v for k, v in data.items() if k in known})
 
     def merge(self, other: SessionState) -> None:
         """Union another copy of this session into this one (state only grows, so merging is safe)."""
         for name, cap in (("untrusted_sources", MAX_SOURCES), ("hostile_sources", MAX_SOURCES), ("sensitive_sources", MAX_SOURCES), ("private_sources", MAX_SOURCES),
-                          ("fingerprints", MAX_FINGERPRINTS), ("sensitive_kinds", MAX_SOURCES)):
+                          ("fingerprints", MAX_FINGERPRINTS), ("sensitive_kinds", MAX_SOURCES),
+                          ("hostile_values", MAX_FINGERPRINTS), ("user_values", MAX_FINGERPRINTS),
+                          ("untrusted_values", MAX_FINGERPRINTS), ("hostile_phrases", MAX_PHRASES), ("user_phrases", MAX_PHRASES),
+                          ("untrusted_phrases", MAX_PHRASES), ("untrusted_places", MAX_PHRASES), ("user_places", MAX_PHRASES), ("private_marks", MAX_PHRASES),
+                          ("public_words", MAX_PHRASES)):
             setattr(self, name, _add(getattr(other, name), getattr(self, name), cap))
         self.created = min(self.created, other.created)
         self.updated = max(self.updated, other.updated)
@@ -265,6 +315,55 @@ class SessionState:
         if other.task_version > self.task_version:
             self.task, self.task_args, self.task_tools = other.task, dict(other.task_args), other.task_tools
             self.task_version, self.task_log = other.task_version, list(other.task_log)
+
+
+logger = logging.getLogger("guardlayer")
+
+_H_BYTES = 8
+# Lists only ever tested for membership: kept as short hashes and saved packed.
+_PACKED = ("untrusted_phrases", "hostile_phrases", "user_phrases", "untrusted_places", "user_places", "private_marks",
+           "public_words")
+
+
+_KEY: bytes | None = None
+
+
+def _hash_key() -> bytes:
+    """The installation's key for membership hashes, shared by every GuardLayer process (hook server, CLI, replays).
+
+    Short phrases are guessable, so an unkeyed hash of "send to fred" is as good as the text. The key lives in
+    `~/.guardlayer/hash.key` (or `GUARDLAYER_HASH_KEY_FILE`), readable only by the user: someone who can read both
+    the session files and the key can still test guesses. If the key can't be stored, hashes are unkeyed (with a
+    warning) rather than random per process, which would stop separate hook processes recognising each other's state.
+    """
+    global _KEY
+    if _KEY is not None:
+        return _KEY
+    path = Path(os.environ.get("GUARDLAYER_HASH_KEY_FILE", "~/.guardlayer/hash.key")).expanduser()
+    try:
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(os.urandom(32))
+            except FileExistsError:
+                pass  # another process created it first
+        key = path.read_bytes()
+        if len(key) < 16:
+            raise ValueError("hash key file too short")
+        _KEY = key[:32]
+    except (OSError, ValueError) as exc:
+        logger.warning("GuardLayer: no hash key (%s); membership hashes are unkeyed", exc)
+        _KEY = b""
+    return _KEY
+
+
+def _h(value: str, kind: str) -> str:
+    """A keyed 64-bit hash for membership lists (phrases, places, words, private marks). A chance collision among
+    20,000 entries is ~1e-11. Values are never stored in clear."""
+    data = f"{kind}\0{value}".encode("utf-8", "replace")
+    return hashlib.blake2b(data, digest_size=_H_BYTES, key=_hash_key()).hexdigest()
 
 
 def _add(existing: list[str], new: Iterable[str], cap: int) -> list[str]:
@@ -331,6 +430,25 @@ class FileSessionStore:
         self.dir = Path(directory).expanduser()
         self.ttl = ttl_seconds
         self.stale_lock_seconds = stale_lock_seconds
+        # The state this process last read or wrote, by file version (mtime, size). A state loaded from the file's
+        # current version needs no merge when saved; an unchanged file needs no re-read. ~40 ms a call on a full
+        # session. Anything else (another process wrote, or the state wasn't loaded from this version) merges as before.
+        self._known: dict[Path, tuple[tuple[int, int], SessionState]] = {}
+
+    @staticmethod
+    def _version(path: Path) -> tuple[int, int] | None:
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
+    def _remember(self, path: Path, state: SessionState) -> None:
+        version = self._version(path)
+        if version is None:
+            self._known.pop(path, None)
+        else:
+            self._known[path] = (version, state.copy())
 
     def _path(self, session_id: str) -> Path:
         return self.dir / f"{hashlib.sha256(session_id.encode('utf-8')).hexdigest()[:32]}.json"
@@ -376,9 +494,18 @@ class FileSessionStore:
                 time.sleep(0.005)
 
     def get(self, session_id: str) -> SessionState | None:
-        state = self._read(self._path(session_id))
+        path = self._path(session_id)
+        known = self._known.get(path)
+        version = self._version(path)
+        if known is not None and known[0] == version:
+            state: SessionState | None = known[1].copy()
+        else:
+            state = self._read(path)
+            if state is not None:
+                self._remember(path, state)
         if state is None or state.id != session_id:
             return None
+        state._loaded_from = version  # lineage: saving it back over this same version needs no merge
         if self.ttl is not None and time.time() - state.updated > self.ttl:
             return None
         return state
@@ -388,14 +515,19 @@ class FileSessionStore:
         path = self._path(state.id)
         lock = self._lock(path)
         try:
-            current = self._read(path)
-            if current is not None and current.id == state.id:
-                state.merge(current)
+            version = self._version(path)
+            if version is not None and getattr(state, "_loaded_from", None) != version:
+                known = self._known.get(path)
+                current = known[1].copy() if known is not None and known[0] == version else self._read(path)
+                if current is not None and current.id == state.id:
+                    state.merge(current)
             fd, tmp = tempfile.mkstemp(dir=self.dir, prefix=".tmp-", suffix=".json")
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                    json.dump(state.to_dict(), fh)
+                    fh.write(json.dumps(state.to_dict()))  # json.dump streams through the slow pure-Python path
                 self._replace(tmp, path)
+                self._remember(path, state)
+                state._loaded_from = self._version(path)
             except BaseException:
                 Path(tmp).unlink(missing_ok=True)
                 raise
@@ -404,7 +536,9 @@ class FileSessionStore:
                 lock.unlink(missing_ok=True)
 
     def delete(self, session_id: str) -> None:
-        self._path(session_id).unlink(missing_ok=True)
+        path = self._path(session_id)
+        self._known.pop(path, None)
+        path.unlink(missing_ok=True)
 
 
 # ------------------------------------------------------------------------------------- policy
@@ -412,6 +546,8 @@ DEFAULT_SESSION_ACTIONS: dict[str, Action] = {
     "sensitive_data_egress": Action.BLOCK,
     "trifecta": Action.REVIEW,
     "after_injection": Action.REVIEW,
+    # A destination argument copied from untrusted content (not from the user), without needing detection.
+    "untrusted_destination": Action.REVIEW,
     # Label rules (0.7): only fire for tools declared as sinks in `sinks`.
     "untrusted_to_protected_sink": Action.REVIEW,
     "confidentiality_exceeds_sink": Action.REVIEW,
@@ -446,8 +582,10 @@ class SessionPolicy:
       Declarations only *raise* the session label; content detections can raise it further.
     * `sinks`: tool-name glob -> what that tool accepts: `accepts_untrusted = false` (untrusted
       content must not drive it) and/or `max_confidentiality` (the most sensitive data it may receive).
-    * `default_integrity`: `"trusted"` (default: local, read-only tools are trusted) or
-      `"untrusted"` (every tool result is untrusted unless listed in `trusted_tools`).
+    * `default_integrity`: `"declared"` (default: a tool's result is trusted only if its capabilities were declared,
+      by you or by an integration for its own tools, or you named it in `trusted_tools` / `sources`, and it is local;
+      a name can't establish trust), `"trusted"` (tools inferred local from their names are trusted too; the
+      behaviour before 0.9), or `"untrusted"` (every tool result is untrusted unless listed in `trusted_tools`).
     * `trifecta_on_pii`: personal data found in tool output counts as sensitive for `trifecta` (as secrets always
       do). Off by default: it makes the session private instead; exact copies leaving are still caught.
     """
@@ -460,10 +598,25 @@ class SessionPolicy:
     allow_egress: dict[str, list[str]] = field(default_factory=dict)
     sources: dict[str, dict[str, Any]] = field(default_factory=dict)
     sinks: dict[str, dict[str, Any]] = field(default_factory=dict)
-    default_integrity: str = "trusted"
+    default_integrity: str = "declared"
     destinations: list[dict[str, Any]] = field(default_factory=list)
     tasks: dict[str, Any] = field(default_factory=dict)
     trifecta_on_pii: bool = False
+    # After an injection: "consequence" holds irreversible actions and outbound ones carrying values from the hostile
+    # content (see guardlayer.consequence); "all" holds every action that can write, execute or reach the network.
+    after_injection_scope: str = "consequence"
+    # The lethal trifecta (untrusted + sensitive + a way out): "destination" holds an outbound or irreversible action
+    # whose arguments carry a value from untrusted content the user didn't name (where an attacker says to send the
+    # data); "all" holds every network/exec action once the session is untrusted and sensitive.
+    trifecta_scope: str = "destination"
+    # Declared consequence per tool (glob -> "local" | "outbound" | "irreversible"), from [tool.NAME] consequence = ...
+    consequences: dict[str, str] = field(default_factory=dict)
+    # Extra destination argument names per tool (beyond the built-in to/recipient/url/channel/user/...)
+    destination_args: dict[str, list[str]] = field(default_factory=dict)
+    # Detection-independent: hold an action whose destination argument was copied from untrusted content and never
+    # named by the user. "irreversible" (payments, access changes, publishing), "outbound" (also messages and posts)
+    # or "off". An injection that evades every detector still has to name its destination somewhere the agent read.
+    untrusted_destination: str = "outbound"
 
     def __post_init__(self) -> None:
         merged = dict(DEFAULT_SESSION_ACTIONS)
@@ -477,8 +630,17 @@ class SessionPolicy:
             if isinstance(kinds, str) or not all(isinstance(k, str) for k in kinds):
                 raise ValueError(f"allow_egress[{pattern!r}] must be a list of data types, e.g. [\"iban\"]")
         self.allow_egress = {p: list(k) for p, k in self.allow_egress.items()}
-        if self.default_integrity not in ("trusted", "untrusted"):
-            raise ValueError('default_integrity must be "trusted" or "untrusted"')
+        for pattern, kind in self.consequences.items():
+            if kind not in ("local", "outbound", "irreversible"):
+                raise ValueError(f'consequences[{pattern!r}] must be "local", "outbound" or "irreversible", not {kind!r}')
+        if self.untrusted_destination not in ("off", "irreversible", "outbound"):
+            raise ValueError('untrusted_destination must be "off", "irreversible" or "outbound"')
+        if self.trifecta_scope not in ("destination", "all"):
+            raise ValueError('trifecta_scope must be "destination" or "all"')
+        if self.after_injection_scope not in ("consequence", "all"):
+            raise ValueError('after_injection_scope must be "consequence" or "all"')
+        if self.default_integrity not in ("declared", "trusted", "untrusted"):
+            raise ValueError('default_integrity must be "declared", "trusted" or "untrusted"')
         for pattern, spec in self.sources.items():
             unknown = set(spec) - _SOURCE_KEYS
             if unknown:
@@ -504,6 +666,14 @@ class SessionPolicy:
 
     def _matches(self, tool: str | None, patterns: list[str]) -> bool:
         return tool is not None and any(fnmatch.fnmatchcase(tool, p) for p in patterns)
+
+    def declared_consequence(self, tool: str | None) -> str | None:
+        """The consequence declared for `tool` (the most severe matching glob), or None."""
+        if tool is None:
+            return None
+        order = {"local": 0, "outbound": 1, "irreversible": 2}
+        found = [k for p, k in self.consequences.items() if fnmatch.fnmatchcase(tool, p)]
+        return max(found, key=order.__getitem__) if found else None
 
     def is_trusted(self, tool: str | None) -> bool:
         return self._matches(tool, self.trusted_tools)
@@ -566,6 +736,15 @@ class SessionPolicy:
         known = [c for c in caps if c is not None]
         return min(known) if known else None
 
+    def declares(self, tool: str | None) -> bool:
+        """Whether the user stated who writes this tool's results: trusted_tools, untrusted_tools, or a source's
+        `integrity`. Its capabilities or how confidential its data is don't say that."""
+        if tool is None:
+            return False
+        return self.is_trusted(tool) or self._matches(tool, self.untrusted_tools) or any(
+            "integrity" in spec and fnmatch.fnmatchcase(tool, p) for p, spec in self.sources.items()
+        )
+
     def is_untrusted(self, tool: str | None, can_reach_network: bool) -> bool:
         if tool is None:
             return True
@@ -597,15 +776,153 @@ def record_sensitive_values(state: SessionState, text: str, result: ScanResult) 
     return found
 
 
+_WRAPPED_B64 = re.compile(r"(?<=[A-Za-z0-9+/]{16})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9+/]{4})")
+
+
+def _canonical(text: str) -> str:
+    """The form an agent reads past: HTML entities, invisible characters, look-alike letters, s-p-a-c-e-d letters."""
+    return despace(normalize(html.unescape(text), collapse_whitespace=False))
+
+
+def _readable(text: str) -> str:
+    """`text` plus what an agent could decode from it.
+
+    An address hidden in base64 is still an address the agent read: the attacker can tell it to decode and use it.
+    Mail and MIME wrap base64 across lines, so wrapped runs are joined before decoding. A decoded token counts when it
+    is readable text or holds an identifier (a bare URL has no spaces). Transformations an agent can undo but no
+    canonical form captures (an address spelled out, reversed, or split across words) are out of reach of matching;
+    see docs/concepts/consequence.md.
+    """
+    text = text[:200_000]
+    canon = _canonical(text)
+    joined = _WRAPPED_B64.sub("", canon)  # may also glue a short last line to the next one: decode both forms
+    views = [d for _, d in decode_payloads(joined)]
+    for form in {canon, joined}:
+        for token in _ENCODED.findall(form)[:16] + _HEX.findall(form)[:16]:
+            decoded = _decode_token(token)
+            if decoded and decoded not in views and distinctive_values(decoded):
+                views.append(decoded)
+    views = [v for v in (canon if canon != text else "", *views) if v]
+    return "\n".join([text, *views]) if views else text
+
+
+_WORD = re.compile(r"[a-z0-9]{3,40}")
+
+
+def _words(text: str) -> set[str]:
+    return set(_WORD.findall(unquote(text).lower()))
+
+
+def _adds_nothing(arguments: Any, extra: Iterable[str], state: SessionState) -> bool:
+    """True when an outbound action carries nothing an outsider didn't already have.
+
+    Data leaves only in what an action carries: a body, message or other argument, or words in the URL. Opening a
+    page at an address built only from words in content the outsider wrote (following a link, or a file listed in a
+    repository) tells them nothing; appending the user's contacts or a file's contents to their URL does. (Opening an
+    outsider's page brings more untrusted content in; that is judged when it is read.)
+    """
+    if not isinstance(arguments, Mapping) or not arguments:
+        return False
+    keys = DESTINATION_ARGS | set(extra)
+    if any(str(k).lower() not in keys and v not in (None, "", [], {}) for k, v in arguments.items()):
+        return False
+    known = set(state.public_words)
+    for value in destination_values(arguments, extra):
+        if not (_URL_START.match(value) or ("@" not in value and " " not in value and places(value))):
+            return False  # an address or account: sending to it at all is the act
+        rest = re.sub(r"^\w+://", "", value)
+        if any(_h(w, "word") not in known for w in _words(rest)):
+            return False
+    return True
+
+
+def _argument_values(arguments: Any) -> list[str]:
+    """Every short string or number in the arguments (normalised as destination values are)."""
+    out: list[str] = []
+
+    def walk(v: Any) -> None:
+        if isinstance(v, Mapping):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                walk(x)
+        elif isinstance(v, (str, int)) and not isinstance(v, bool) and 0 < len(str(v)) <= 200:
+            out.append(re.sub(r"\s+", " ", str(v).strip().lower()).strip(".:"))
+
+    walk(arguments)
+    return out[:50]
+
+
+_THIS_MACHINE = re.compile(
+    r"^(?:file:|(?:\w+://)?(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\]|[\w.-]+\.localhost)(?::\d+)?(?:[/?#]|$))",
+    re.IGNORECASE,
+)
+
+
+def _outside_place(value: str) -> bool:
+    """Whether a destination value can be somewhere off this machine.
+
+    Data sent to localhost or a local file never leaves the machine, so it can't be exfiltration (acting on a local
+    service is an action risk, judged by consequence, not this check). Browser commands passed where a URL goes
+    ("back", "reload") aren't addresses. A plain name is kept: it can be a recipient.
+    """
+    if _THIS_MACHINE.match(value):
+        return False
+    return not re.fullmatch(r"back|forward|reload|refresh|home|about:blank", value)
+
+
+_URL_START = re.compile(r"^(?:https?|wss?|ftps?)://", re.IGNORECASE)
+
+
+def _decode_token(token: str) -> str | None:
+    import base64
+    import binascii
+
+    if re.fullmatch(r"(?:[0-9a-fA-F]{2})+", token):
+        try:
+            return _printable(bytes.fromhex(token))
+        except ValueError:
+            return None
+    for decode in (base64.b64decode, base64.urlsafe_b64decode):
+        try:
+            out = _printable(decode(token + "=" * (-len(token) % 4)))
+        except (binascii.Error, ValueError):
+            out = None
+        if out:
+            return out
+    return None
+
+
 def observe_content(
-    policy: SessionPolicy, state: SessionState, text: str, result: ScanResult, *, source: str, tool: str | None, can_reach_network: bool
+    policy: SessionPolicy, state: SessionState, text: str, result: ScanResult, *, source: str, tool: str | None,
+    can_reach_network: bool, untrusted: bool = False,
 ) -> None:
     """Update taint after the agent read `text` (a tool result or other third-party content)."""
     trusted = policy.is_trusted(tool)
-    if policy.is_untrusted(tool, can_reach_network):
+    text = _readable(text)
+    values = [fingerprint(v, "hostile") for v in distinctive_values(text)]
+    injected = result.effective_verdict >= policy.hostile_min_verdict and bool(HOSTILE_CATEGORIES & set(result.categories))
+    hostile = injected and not trusted
+    if untrusted or policy.is_untrusted(tool, can_reach_network):
         state.untrusted_sources = _add(state.untrusted_sources, [source], MAX_SOURCES)
-    if not trusted and result.effective_verdict >= policy.hostile_min_verdict and HOSTILE_CATEGORIES & set(result.categories):
+        state.untrusted_values = _add(state.untrusted_values, values, MAX_FINGERPRINTS)
+        if policy.untrusted_destination != "off":
+            state.untrusted_phrases = _add(state.untrusted_phrases, (_h(p, "phrase") for p in phrases(text)), MAX_PHRASES)
+            state.untrusted_places = _add(state.untrusted_places, (_h(p, "place") for p in places(text)), MAX_PHRASES)
+            state.public_words = _add(state.public_words, (_h(w, "word") for w in _words(text)), MAX_PHRASES)
+    elif not injected:
+        # Identifiers in trusted content (the user's own files and tools) are known context: an action using them
+        # is never blamed on untrusted or hostile content that repeats them. Content holding an injection never
+        # counts as known context, whatever its source (a poisoned README is a local file). A file the agent wrote
+        # after reading untrusted content is read back as untrusted (see Guard.scan_tool_result `arguments`), so an
+        # outsider's address can't be laundered through it.
+        state.user_values = _add(state.user_values, values, MAX_FINGERPRINTS)
+        state.user_places = _add(state.user_places, (_h(p, "place") for p in places(text)), MAX_PHRASES)
+    if hostile:
         state.hostile_sources = _add(state.hostile_sources, [source], MAX_SOURCES)
+        state.hostile_values = _add(state.hostile_values, values, MAX_FINGERPRINTS)
+        state.hostile_phrases = _add(state.hostile_phrases, (_h(p, "phrase") for p in phrases(text)), MAX_PHRASES)
     found = record_sensitive_values(state, text, result)
     # Secrets make a session sensitive (restricted). Personal data makes it private: its exact values are still
     # fingerprinted (sensitive_data_egress), but it doesn't turn every later network call into a review unless
@@ -622,6 +939,8 @@ def observe_content(
             state.sensitive_kinds = _add(state.sensitive_kinds, [f"declared:{tool}"], MAX_SOURCES)
         elif declared.confidentiality is Confidentiality.PRIVATE:
             state.private_sources = _add(state.private_sources, [source], MAX_SOURCES)
+        if declared.confidentiality >= Confidentiality.PRIVATE:
+            state.private_marks = _add(state.private_marks, (_h(m, "private") for m in _marks(text)), MAX_PHRASES)
     _touch(state)
 
 
@@ -647,6 +966,41 @@ def task_detections(policy: SessionPolicy, state: SessionState, tool: str, argum
     return out
 
 
+_SHINGLE = 6
+_NAME = re.compile(r"\b[A-Z][a-zA-Z-]{2,}\b")
+_GROUPED = re.compile(r"\d[\d,._ ]{2,}\d")
+_ID = re.compile(r"\b(?:(?=[a-z_-]*\d)(?=[\d_-]*[a-z])[a-z0-9_-]{4,}|\d{4,}|[\w.+-]+@[\w-]+(?:\.[\w-]+)+)\b")
+
+
+def _marks(text: str) -> set[str]:
+    """What identifies content from a private source: identifiers (IDs, numbers, addresses), names (capitalised
+    words), and every run of 6 words (a verbatim copy). Plain lower-case words don't count: a status note may share them."""
+    low = text.lower()[:200_000]
+    words = re.findall(r"\w+", low)
+    runs = {" ".join(words[i : i + _SHINGLE]) for i in range(max(0, len(words) - _SHINGLE + 1))}
+    names = {w.lower() for w in _NAME.findall(text[:200_000])}
+    numbers = {re.sub(r"[,._ ]", "", n) for n in _GROUPED.findall(low)}
+    ids = set(_ID.findall(low)) | {n for n in numbers if len(n) >= 4}
+    return set(distinctive_values(text)) | ids | names | set(list(runs)[:MAX_PHRASES])
+
+
+def _carries_private(state: SessionState, arguments: Any) -> bool:
+    """Whether an action carries content from a declared-private source (rather than merely following one).
+
+    Without this, reading one private file held every later post to a public place, including "Done.". Values the
+    user typed are theirs to send. Paraphrase is not detected: a summary in new words passes (documented limit).
+    Private data that entered without text to mark (a labelled file) keeps the session-wide judgement.
+    """
+    if state.unmarked_private or (not state.private_marks and (state.private_sources or state.sensitive_sources)):
+        return True
+    text = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False, default=str)
+    marks, public = set(state.private_marks), set(state.public_words)
+    for m in _marks(text) | set(re.findall(r"[a-z0-9-]{3,}", text.lower())):
+        if _h(m, "private") in marks and not all(_h(w, "word") in public for w in _words(m)):
+            return True
+    return False
+
+
 def observe_label(state: SessionState, label: Label, source: str) -> None:
     """Raise the session's label to `label` (e.g. from a labelled file the call mentions)."""
     if label.integrity is Integrity.HOSTILE:
@@ -657,6 +1011,8 @@ def observe_label(state: SessionState, label: Label, source: str) -> None:
         state.sensitive_sources = _add(state.sensitive_sources, [source], MAX_SOURCES)
     elif label.confidentiality is Confidentiality.PRIVATE:
         state.private_sources = _add(state.private_sources, [source], MAX_SOURCES)
+    if label.confidentiality >= Confidentiality.PRIVATE:
+        state.unmarked_private = True
 
 
 def file_label_detections(
@@ -665,7 +1021,15 @@ def file_label_detections(
     """`untrusted_file_executed` when an exec-capable call mentions a file written in an untrusted context."""
     if not policy.enabled or policy.is_trusted(tool) or (tagged and "exec" not in caps):
         return []
-    risky = [(path, label) for path, label in refs if label.integrity >= Integrity.UNTRUSTED]
+    # Under the session freeze ("all") every file written after an untrusted read is held when run. With
+    # consequence routing a file is opened and judged by what it would execute, whether an injection was detected
+    # before it was written or not: a script that reaches the network, publishes or can't be undone is held (an
+    # injection may have asked for a download-and-run script), one whose content can't be read is held, and a
+    # purely local one (a test runner) runs, as local edits and builds do after an injection.
+    risky = []
+    for path, label in refs:
+        if label.integrity >= Integrity.UNTRUSTED and (policy.after_injection_scope == "all" or file_consequence(path) != "local"):
+            risky.append((path, label))
     if not risky:
         return []
     path, label = max(risky, key=lambda r: r[1].integrity)
@@ -676,7 +1040,14 @@ def file_label_detections(
 
 
 def observe_input(state: SessionState, text: str, result: ScanResult) -> None:
-    """User prompts are trusted, but secrets pasted into them are still sensitive data."""
+    """User prompts are trusted, but secrets pasted into them are still sensitive data. Identifiers the user names
+    (URLs, addresses, accounts) are remembered so a later action using them is never blamed on hostile content."""
+    state.user_values = _add(state.user_values, (fingerprint(v, "hostile") for v in distinctive_values(text)), MAX_FINGERPRINTS)
+    state.user_phrases = _add(state.user_phrases, (_h(p, "phrase") for p in phrases(text)), MAX_PHRASES)
+    state.user_places = _add(state.user_places, (_h(p, "place") for p in places(text)), MAX_PHRASES)
+    # Words the user typed are theirs to send (a search term, a repository they named): not private data. Secrets
+    # pasted here are still caught by fingerprint rules.
+    state.public_words = _add(state.public_words, (_h(w, "word") for w in _words(text)), MAX_PHRASES)
     if any(d.category == Category.SECRET.value for d in result.detections):
         record_sensitive_values(state, text, result)
         state.sensitive_sources = _add(state.sensitive_sources, ["input"], MAX_SOURCES)
@@ -694,9 +1065,49 @@ def observe_tool_call(state: SessionState, tool: str, result: ScanResult) -> Non
     _touch(state)
 
 
+def _carried(arguments_text: str, values: list[str], user_values: list[str]) -> list[str]:
+    """Distinctive values in the arguments that appeared in the given content and not in the user's messages."""
+    if not values:
+        return []
+    seen, user = set(values), set(user_values)
+    out = []
+    for value in distinctive_values(arguments_text):
+        fp = fingerprint(value, "hostile")
+        if fp in seen and fp not in user:
+            out.append(value[:80])
+    return out
+
+
 def _touch(state: SessionState) -> None:
     state.updated = time.time()
     state.events += 1
+
+
+def _outsider_destinations(
+    policy: SessionPolicy, state: SessionState, tool: str, kind: str, arguments: Mapping[str, Any] | str | None
+) -> list[str]:
+    """Destinations (for an irreversible action, any argument) an outsider named and the user didn't, off this
+    machine, where the action carries something private (following a link carries nothing)."""
+    seen, user_p = set(state.untrusted_phrases), set(state.user_phrases)
+    if kind == "irreversible":
+        # What gets deleted, booked or changed is as much the attacker's choice as where things go: every
+        # argument counts (irreversible actions are rare, and holding one costs a single approval).
+        dests = [v for v in _argument_values(arguments) if _outside_place(v)]
+    else:
+        dests = [v for v in destination_values(arguments, policy.destination_args.get(tool, ())) if _outside_place(v)]
+    copied = [v[:80] for v in dests if _h(v, "phrase") in seen and _h(v, "phrase") not in user_p]
+    # The same destination written another way (a scheme or "www." added, data appended as a query) is still the
+    # same place: compare places (host/path and its parents, or an address), not text.
+    outside, known = set(state.untrusted_places), set(state.user_places)
+    for v in dests:
+        if v[:80] in copied:
+            continue
+        fps = {_h(p, "place") for p in destination_places(v) | destination_places(_canonical(v))}
+        if fps & outside and not fps & known:
+            copied.append(v[:80])
+    if copied and kind == "outbound" and _adds_nothing(arguments, policy.destination_args.get(tool, ()), state):
+        return []
+    return copied
 
 
 def taint_detections(
@@ -709,8 +1120,12 @@ def taint_detections(
     *,
     remote: bool | None = None,
     arguments: Mapping[str, Any] | str | None = None,
+    own_files_only: bool = False,
 ) -> list[Detection]:
     """Detections for a proposed tool call, given what the session has already seen.
+
+    `own_files_only`: the call only deletes files the agent itself created; that loses none of the user's data, so
+    it is local work, not an irreversible action.
 
     `remote` (from `ToolPolicy.is_remote`) widens `sensitive_data_egress` to tools whose
     arguments leave the machine even though they look read-only, such as a search query.
@@ -726,21 +1141,69 @@ def taint_detections(
         out.append(Detection(SCANNER, rule, category, severity, message, metadata={"tool": tool, **metadata}, action=policy.actions[rule].value))
 
     allowed = policy.allowed_kinds(tool)
-    if leaves and state.fingerprints:
+    kind = consequence(tool, caps, tagged, arguments if arguments is not None else arguments_text, remote=bool(remote),
+                       declared=policy.declared_consequence(tool))
+    if own_files_only and kind == "irreversible":
+        kind = "local"
+    classic = policy.trifecta_scope == "all"
+    if leaves and state.fingerprints and (classic or kind != "local"):
         if contains_fingerprint(arguments_text, state.fingerprints, allowed_kinds=allowed):
             emit("sensitive_data_egress", Category.DATA_EXFILTRATION.value, 1.0,
                  "A sensitive value seen earlier in this session is being sent out of the machine by this tool call.",
                  sources=state.sensitive_sources[-5:])  # fmt: skip
     # Only allowed data types seen (and every source typed): nothing this tool may not send.
     only_allowed = bool(allowed) and bool(state.sensitive_kinds) and set(state.sensitive_kinds) <= allowed
-    if egress and state.untrusted and state.sensitive and not only_allowed:
-        emit("trifecta", Category.DATA_EXFILTRATION.value, 0.7,
-             "This session has read untrusted content and sensitive data; network/exec actions need approval.",
-             untrusted=state.untrusted_sources[-5:], sensitive=state.sensitive_sources[-5:])  # fmt: skip
+    if (egress or (not classic and kind == "irreversible")) and state.untrusted and state.sensitive and not only_allowed:
+        if policy.trifecta_scope == "all":
+            emit("trifecta", Category.DATA_EXFILTRATION.value, 0.7,
+                 "This session has read untrusted content and sensitive data; network/exec actions need approval.",
+                 untrusted=state.untrusted_sources[-5:], sensitive=state.sensitive_sources[-5:])  # fmt: skip
+        else:
+            if kind == "outbound" and state.untrusted_places:
+                # the same destinations the destination check uses: real destination arguments, off this machine
+                carried = _outsider_destinations(policy, state, tool, kind, arguments)
+            else:
+                carried = _carried(arguments_text, state.untrusted_values, state.user_values) if kind != "local" else []
+            if kind == "irreversible" and sends_out(tool, caps, tagged, arguments if arguments is not None else arguments_text,
+                                                    remote=bool(remote)):
+                # publishing or sharing can expose the data with no attacker address at all; a local delete exposes nothing
+                emit("trifecta", Category.DATA_EXFILTRATION.value, 0.75,
+                     "This session holds sensitive data and has read untrusted content; this action publishes or can't be undone.",
+                     untrusted=state.untrusted_sources[-5:], sensitive=state.sensitive_sources[-5:], consequence=kind)  # fmt: skip
+            elif carried:
+                emit("trifecta", Category.DATA_EXFILTRATION.value, 0.75,
+                     "This session holds sensitive data, and this action sends to a destination that came from untrusted content.",
+                     untrusted=state.untrusted_sources[-5:], sensitive=state.sensitive_sources[-5:], values=carried[:5])  # fmt: skip
+    if policy.untrusted_destination != "off" and state.untrusted_phrases and (
+        kind == "irreversible" or (policy.untrusted_destination == "outbound" and kind == "outbound")
+    ):
+        copied = _outsider_destinations(policy, state, tool, kind, arguments)
+        if copied:
+            emit("untrusted_destination", Category.PROMPT_INJECTION.value, 0.7,
+                 f"This action sends to {', '.join(repr(v[:60]) for v in copied[:2])}, which came from content an "
+                 f"outsider can write ({', '.join(str(x)[:60] for x in state.untrusted_sources[-2:]) or 'untrusted content'}), "
+                 "not from you. Approve only if you meant this recipient.",
+                 consequence=kind, values=copied[:5], untrusted=state.untrusted_sources[-5:])  # fmt: skip
     if acts and state.hostile:
-        emit("after_injection", Category.PROMPT_INJECTION.value, 0.7,
-             "This session read content containing a prompt injection; side-effecting actions need approval.",
-             hostile=state.hostile_sources[-5:])  # fmt: skip
+        if policy.after_injection_scope == "all":
+            emit("after_injection", Category.PROMPT_INJECTION.value, 0.7,
+                 "This session read content containing a prompt injection; side-effecting actions need approval.",
+                 hostile=state.hostile_sources[-5:])  # fmt: skip
+        else:
+            carried = _carried(arguments_text, state.hostile_values, state.user_values) if kind == "outbound" else []
+            if kind == "outbound" and not carried and state.hostile_phrases:
+                # a destination argument whose value was copied from the injected content, whatever its shape
+                hostile_p, user_p = set(state.hostile_phrases), set(state.user_phrases)
+                carried = [v[:80] for v in destination_values(arguments, policy.destination_args.get(tool, ()))
+                           if _h(v, "phrase") in hostile_p and _h(v, "phrase") not in user_p]  # fmt: skip
+            if kind == "irreversible":
+                emit("after_injection", Category.PROMPT_INJECTION.value, 0.7,
+                     "This session read content containing a prompt injection; this action can't be undone, so it needs approval.",
+                     hostile=state.hostile_sources[-5:], consequence=kind)  # fmt: skip
+            elif carried:
+                emit("after_injection", Category.PROMPT_INJECTION.value, 0.8,
+                     "This action sends a value that came from content containing a prompt injection, not from the user.",
+                     hostile=state.hostile_sources[-5:], consequence=kind, values=carried[:5])  # fmt: skip
     accepts_untrusted, _ = policy.sink(tool)
     cap = policy.call_cap(tool, arguments)
     context = state.label
@@ -748,7 +1211,7 @@ def taint_detections(
         emit("untrusted_to_protected_sink", Category.PROMPT_INJECTION.value, 0.8,
              f"This tool doesn't accept untrusted input, and the session has read {context.integrity.value} content.",
              label=context.to_dict(), untrusted=state.untrusted_sources[-5:], hostile=state.hostile_sources[-5:])  # fmt: skip
-    if cap is not None and context.confidentiality > cap:
+    if cap is not None and context.confidentiality > cap and _carries_private(state, arguments):
         emit("confidentiality_exceeds_sink", Category.DATA_EXFILTRATION.value, 0.8,
              f"The session holds {context.confidentiality.value} data; this tool accepts at most {cap.value}.",
              label=context.to_dict(), max_confidentiality=cap.value,

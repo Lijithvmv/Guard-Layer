@@ -10,6 +10,30 @@ GuardLayer is measured three ways, and every number here can be reproduced from 
 Where a result is *not* a fair test (for example, a model evaluated on data it was trained on, or rules written after
 seeing the attacks), it says so.
 
+### Real work and recorded frontier-model attacks (October 2026)
+
+Replays, not live runs: each recorded call goes through GuardLayer's own code path, but the agent never saw its
+answer. Scripts: `benchmarks/transcript_replay.py` (Claude Code transcripts; `--rebuild-files` rebuilds the files a
+session wrote, so file rules judge their real content) and `benchmarks/agentdojo_trace_replay.py`.
+
+| What | Data (type) | Calls or runs | Held / stopped |
+|---|---|---|---|
+| Interruptions, `balanced` | one developer's Claude Code sessions from projects never used for design (real use) | 6,962 calls | 1.61-1.68% held |
+| Interruptions, no setup | OpenHands agents resolving real GitHub issues (third-party recorded, CC BY 4.0) | 11,869 calls | 0.75% held |
+| Interruptions, tools declared | same | 11,869 calls | 0.11% held |
+| Attacks, detectors off | AgentDojo published runs of five frontier models, `important_instructions` (third-party recorded) | 707 succeeded attacks | 92% stopped |
+| Ordinary tasks, same runs | same | 644 tasks | 27% held |
+
+The real-use sessions were checked for overlap with the design sessions by shared tool-call ids (a first held-out set
+was 28% copies of design sessions and was corrected). The interval is a bound: content the replay couldn't rebuild was
+counted both as held and as not held.
+
+**Against a model-based judge.** On the same seeded sample (85 succeeded attacks across four attack styles and 40
+ordinary tasks), an open-source LLM alignment checker that reads the agent's trace, run locally on a 14B model,
+stopped 80 attacks and held 11 ordinary tasks; GuardLayer stopped 82 and held 5, in about 0.01 s per decision against
+about 50 s. On plainly worded attacks (`direct`) it was 14 of 15 for GuardLayer and 11 of 15 for the judge. The samples
+are small and the intervals overlap; the judge's authors use a much larger model; and no attack was adapted to either.
+
 ### Public datasets
 
 `python benchmarks/public_eval.py` downloads four public datasets (about 12 MB) and scores

@@ -37,6 +37,85 @@ def normalise(path: str) -> str:
     return os.path.normcase(os.path.abspath(os.path.expanduser(path.strip().strip("'\""))))
 
 
+def _lookup(data: Mapping[str, Any], key: str) -> Any:
+    """The label of a path, or of the nearest labelled directory above it (a cloned repository, a download folder)."""
+    if key in data:
+        return data[key]
+    parent = os.path.dirname(key)
+    while parent and parent != key:
+        if parent in data:
+            return data[parent]
+        key, parent = parent, os.path.dirname(parent)
+    return None
+
+
+_INTERPRETERS = {"python", "python3", "py", "bash", "sh", "zsh", "node", "deno", "bun", "ruby", "perl", "php", "pwsh",
+                 "powershell", "source", ".", "Rscript", "lua", "tsx", "ts-node"}
+
+
+def deleted_paths(arguments: Mapping[str, Any] | str | None) -> list[str] | None:
+    """The paths a plain delete command removes (`rm`, `del`, `Remove-Item`, after an optional `cd`), resolved against
+    that `cd`; None if the command is anything else (a pipeline, a script, several commands)."""
+    from guardlayer.shell import analyse  # local import: shell imports nothing from here
+
+    command = arguments.get("command") or arguments.get("cmd") if isinstance(arguments, Mapping) else arguments
+    if not isinstance(command, str):
+        return None
+    view = analyse(command.replace("\\", "/"))
+    if view is None:
+        return None
+    cmds = [c for p in view.commands for c in p if c.argv]
+    base = ""
+    if len(cmds) == 2 and cmds[0].argv[0] == "cd" and len(cmds[0].argv) == 2:
+        base = re.sub(r"^/([a-zA-Z])/", r"\1:/", cmds[0].argv[1])
+        cmds = cmds[1:]
+    if len(cmds) != 1 or re.split(r"[/\\]", cmds[0].argv[0])[-1].removesuffix(".exe") not in ("rm", "del", "unlink", "Remove-Item"):
+        return None
+    if cmds[0].redirects:
+        return None
+    targets = []
+    for a in cmds[0].argv[1:]:
+        if a.startswith("-") or a.startswith("$"):
+            continue
+        if any(ch in a for ch in "*?["):
+            return None  # a glob: can't tell which files it removes
+        a = re.sub(r"^/([a-zA-Z])/", r"\1:/", a)
+        targets.append(a if os.path.isabs(a) or not base else os.path.join(base, a))
+    return targets or None
+
+
+def executed_paths(arguments: Mapping[str, Any] | str | None) -> list[str]:
+    """Files a shell command runs: the program itself (`./build.sh`) or an interpreter's script (`python x.py`).
+    A file it only reads, writes or redirects to (`tail run.log`, `> /dev/null`) is not run."""
+    from guardlayer.shell import analyse  # local import: shell imports nothing from here
+
+    command = arguments.get("command") or arguments.get("cmd") if isinstance(arguments, Mapping) else arguments
+    if not isinstance(command, str):
+        return []
+    # Windows paths: bash would read their backslashes as escapes; for finding the file a command runs, they're
+    # separators (paths are compared after `normalise`).
+    view = analyse(command.replace("\\", "/"))
+    if view is None:
+        return []
+    out: list[str] = []
+    for pipeline in view.commands:
+        for cmd in pipeline:
+            if not cmd.argv:
+                continue
+            prog = cmd.argv[0]
+            name = re.split(r"[/\\]", prog)[-1].removesuffix(".exe")
+            if name in _INTERPRETERS:
+                args = cmd.argv[1:]
+                if args and args[0] in ("-c", "-m", "-e", "-Command", "-EncodedCommand"):
+                    continue  # inline code or a module: no script file
+                script = next((a for a in args if not a.startswith("-")), None)
+                if script and script != "-":
+                    out.append(script)
+            elif looks_like_path(prog) and ("/" in prog or "\\" in prog):
+                out.append(prog)
+    return out
+
+
 def looks_like_path(token: str) -> bool:
     return ("/" in token or "\\" in token or "." in token.lstrip(".")) and not token.startswith(("http://", "https://", "-"))
 
@@ -76,20 +155,28 @@ class FileLabelStore:
             raise
 
     def get(self, path: str) -> Label | None:
-        entry = self._load().get(normalise(path))
+        entry = _lookup(self._load(), normalise(path))
         return Label.from_dict(entry) if entry else None
 
-    def record(self, paths: Iterable[str], label: Label) -> None:
-        """Remember `label` for each path (combined with any label it already has)."""
-        if label == BOTTOM:
-            return
+    def record(self, paths: Iterable[str], label: Label, *, check_created: bool = False) -> None:
+        """Remember `label` for each path (combined with any label it already has).
+
+        A file written in a clean context is recorded with the neutral label, which changes no rule (they act only on
+        untrusted or confidential labels). With `check_created` (before the write runs), a path that doesn't exist
+        yet and has no record is marked as created by the agent: deleting it later loses none of the user's data. A
+        file the agent only edited is the user's and is never marked."""
         with self._lock:
             data = dict(self._load())
             for p in paths:
                 key = normalise(p)
                 old = Label.from_dict(data[key]) if key in data else BOTTOM
-                data[key] = {**combine(old, label).to_dict(), "t": time.time()}
+                created = data[key].get("created", False) if key in data else (check_created and not os.path.exists(key))
+                data[key] = {**combine(old, label).to_dict(), "t": time.time(), "created": created}
             self._save(data)
+
+    def created_by_agent(self, path: str) -> bool:
+        entry = self._load().get(normalise(path))
+        return bool(entry and entry.get("created"))
 
     def referenced(self, arguments: Mapping[str, Any] | str | None, text: str) -> list[tuple[str, Label]]:
         """Labelled files that a tool call mentions, by path argument or anywhere in its argument text."""
@@ -103,12 +190,54 @@ class FileLabelStore:
         found = []
         for c in candidates:
             key = normalise(c)
-            if key in data:
-                found.append((key, Label.from_dict(data[key])))
+            entry = _lookup(data, key)
+            if entry:
+                found.append((key, Label.from_dict(entry)))
         return found
 
 
 def written_paths(arguments: Mapping[str, Any] | str | None) -> list[str]:
     from guardlayer.tools import argument_values
 
-    return [v for name in PATH_ARGUMENTS for v in argument_values(arguments, name) if v]
+    paths = [v for name in PATH_ARGUMENTS for v in argument_values(arguments, name) if v]
+    command = arguments.get("command") or arguments.get("cmd") if isinstance(arguments, Mapping) else None
+    if isinstance(command, str):
+        paths += shell_written_paths(command)
+    return paths
+
+
+_OUTPUT_FLAGS = {"curl": ("-o", "--output"), "wget": ("-O", "--output-document", "-P", "--directory-prefix")}
+
+
+def shell_written_paths(command: str) -> list[str]:
+    """Files or directories a shell command writes: redirect targets, `curl -o`, `wget -O`/`-P`, `git clone` targets.
+
+    A file downloaded and then read with a local command (`cat page.html`) must keep where it came from."""
+    from guardlayer.shell import analyse  # local import: shell imports nothing from here
+
+    view = analyse(command)
+    if view is None:
+        return []
+    out: list[str] = []
+    for pipeline in view.commands:
+        for cmd in pipeline:
+            out += [t for op, t in cmd.redirects if op in (">", ">>", "&>", "1>", "2>") and t not in ("/dev/null", "nul", "NUL")]
+            if not cmd.argv:
+                continue
+            prog = re.split(r"[/\\]", cmd.argv[0])[-1].removesuffix(".exe")
+            args = cmd.argv[1:]
+            for flag in _OUTPUT_FLAGS.get(prog, ()):
+                for i, a in enumerate(args):
+                    if a == flag and i + 1 < len(args):
+                        out.append(args[i + 1])
+                    elif a.startswith(flag + "="):
+                        out.append(a.split("=", 1)[1])
+            if prog == "git" and args[:1] == ["clone"]:
+                rest = [a for a in args[1:] if not a.startswith("-")]
+                if len(rest) >= 2:
+                    out.append(rest[1])
+                elif rest:
+                    out.append(re.sub(r"\.git$", "", rest[0].rstrip("/").rsplit("/", 1)[-1]))
+    # A label on ".", "..", the working folder or a drive root would cover everything beneath it.
+    return [p for p in out if p and p.strip("/\\") not in ("", ".", "..") and not re.fullmatch(r"[A-Za-z]:[/\\]?", p)
+            and normalise(p) != normalise(os.getcwd())]

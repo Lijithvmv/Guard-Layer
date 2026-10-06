@@ -70,7 +70,7 @@ def test_secrets_still_trigger_trifecta():
     s = _guard().session("p3")
     s.scan_tool_result("crm_lookup", 'config: aws_secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"')
     assert s.state.sensitive
-    assert "trifecta" in {d.rule for d in s.scan_tool_call("post_update", {"text": "done"}).detections}
+    assert "trifecta" in {d.rule for d in s.scan_tool_call("publish_update", {"text": "done"}).detections}
 
 
 def test_strict_keeps_trifecta_on_personal_data():

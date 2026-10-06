@@ -25,9 +25,9 @@ def _warnings(config, tools):
 def test_default_configuration_warns_about_each_gap():
     per_tool, global_warnings = _warnings(None, ["send_email", "read_file", "mystery_tool"])
     assert any("send data anywhere" in w for w in per_tool["send_email"])
-    assert any("assumed trusted" in w for w in per_tool["read_file"])
+    assert not any("assumed trusted" in w for w in per_tool["read_file"])  # undeclared: untrusted by default now
     assert any("capabilities unknown" in w for w in per_tool["mystery_tool"])
-    assert any("fails open" in w for w in global_warnings) and any("default_integrity" in w for w in global_warnings)
+    assert any("fails open" in w for w in global_warnings) and not any("default_integrity" in w for w in global_warnings)
 
 
 def test_well_configured_policy_is_clean():

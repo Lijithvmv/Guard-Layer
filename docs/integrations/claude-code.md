@@ -11,7 +11,7 @@ guardlayer --preset strict hook claude-code --print-config   # the same, with a 
 | Event | What GuardLayer does |
 |---|---|
 | `PreToolUse` | Runs the tool policy and session taint. Returns `deny` (Claude sees the reason) or `ask` (you get a permission prompt). Otherwise it returns nothing and Claude Code's own permission rules decide. |
-| `PostToolUse` | Scans what `WebFetch`, `Bash`, `Read` and MCP tools returned. If it finds an injection, it marks the session hostile and tells Claude to treat that output as untrusted. |
+| `PostToolUse` | Scans what `WebFetch`, `Bash`, `Read` and MCP tools returned. If it finds an injection, it marks the session hostile, tells Claude to treat that output as untrusted, and sends auto mode's classifier a short note (`classifierContext`: the tool, its origin and the rules that fired, never the output itself). Claude still sees the output unless you add `--withhold-injections`, which replaces it in the tool's own output shape. |
 | `UserPromptSubmit` | Fingerprints secrets you paste, so they can't later leave in a tool call. Blocks prompts only with `--block-prompts`: you are trusted. |
 
 !!! success "It can only tighten"
@@ -19,6 +19,11 @@ guardlayer --preset strict hook claude-code --print-config   # the same, with a 
     misconfigured or attacked.
 
 Details:
+
+- **Warn or withhold.** Claude Code's `decision: "block"` on a tool result only adds a reason next to it; Claude still
+  reads the output. The default follows Claude Code's own design (a warning to Claude, a note to the classifier, which
+  never reads tool results). `--withhold-injections` replaces the output so Claude never reads it, at the cost that a
+  false alarm on your own document hides that document too.
 
 - Claude Code's built-in tools come pre-tagged: `Bash` is exec, `WebFetch` is network, `Edit` is write, `TodoWrite` is
   harmless. For `Write` and `Edit`, only the target path is checked, not the file content, so writing security tests or
@@ -35,10 +40,14 @@ each tool. The hook server is a long-running GuardLayer that Claude Code calls o
 guardlayer --config pilot.toml hook claude-code --server --print-config    # merge into .claude/settings.json
 ```
 
-| Measured on Windows (laptop, best of runs) | Command hook | Hook server |
+| Measured on Windows (laptop, idle; medians) | Command hook | Hook server |
 |---|---|---|
 | Before a tool call (`PreToolUse`) | 608 ms | 10 ms (p95 31 ms) |
-| After a tool call, 4 KB file read (`PostToolUse`) | about 680 ms | 67 ms (the scan itself) |
+| After a tool call, 4 KB result (`PostToolUse`) | about 680 ms | 67 ms |
+
+GuardLayer's own handling inside the server, measured again 2026-10-04 with the destination check on (the default):
+a 1 KB result 27 ms, 4 KB 48 ms, 8 KB 75 ms; a tool call 5 ms on a long session. The detectors take about 5 ms per
+KB; the rest is session bookkeeping. On a loaded machine (builds, a local model) expect several times more.
 
 How it runs:
 

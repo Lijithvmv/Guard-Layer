@@ -79,6 +79,7 @@ nav:
   - Concepts:
       - How a verdict is reached: concepts/how-it-works.md
       - Guarding agent actions: concepts/agents.md
+      - Judging an action by its consequence: concepts/consequence.md
       - Sessions and taint: concepts/sessions.md
       - Labels and information flow: concepts/labels.md
       - "Behavioural check: who asked?": concepts/intent.md

@@ -59,7 +59,8 @@ def check_policy(guard: GuardLayer, tools: Iterable[str]) -> tuple[list[ToolRepo
         source = "declared" if declared else "inferred" if tagged else "unknown"
         remote = tp.is_remote(tool)
         reaches_out = (not tagged) or bool(caps & {"network", "exec"})
-        untrusted = sp.is_untrusted(tool, can_reach_network=remote)
+        guessed = sp.default_integrity == "declared" and not (tp.vouches(tool) or sp.declares(tool) or tp.reads_nothing(tool))  # only a trust statement
+        untrusted = sp.is_untrusted(tool, can_reach_network=remote or guessed)
         label = sp.source_label(tool)
         confidentiality = label.confidentiality.value if label else "public (detections can raise it)"
         accepts, cap = sp.sink(tool)
@@ -85,7 +86,8 @@ def check_policy(guard: GuardLayer, tools: Iterable[str]) -> tuple[list[ToolRepo
     if not guard.policy.fail_closed:
         global_warnings.append("fails open: if a scanner errors, traffic passes (set [guard] fail_closed = true, or use the strict preset)")
     if sp.default_integrity == "trusted":
-        global_warnings.append("default_integrity = \"trusted\": undeclared local tools' output is trusted; consider \"untrusted\"")
+        global_warnings.append("default_integrity = \"trusted\": tools whose names sound local are trusted without a declaration; "
+                               "consider \"declared\" (the default) or \"untrusted\"")
     if not sp.enabled:
         global_warnings.append("session rules are disabled: no taint, label or file-label protection")
     return reports, global_warnings

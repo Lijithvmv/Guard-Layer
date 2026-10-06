@@ -95,7 +95,9 @@ store = "memory"                        # or "file", with dir = "...", for check
 ttl_seconds = 86400
 
 [labels]                                # information flow (see Concepts: Labels)
-default_integrity = "trusted"           # or "untrusted": undeclared tool results count as untrusted
+default_integrity = "declared"          # results trusted only from local tools you or an integration vouched for
+                                        # (output = "trusted"); "trusted": also tools whose names sound local (before
+                                        # 0.9); "untrusted": none unless in trusted_tools
 sources = { get_customer = { confidentiality = "private" }, read_issue = { integrity = "untrusted" } }
 sinks = { post_comment = { max_confidentiality = "public" }, write_file = { accepts_untrusted = false } }
 destinations = [{ tool = "send_email", argument = "to", match = "*@mycompany.com", max_confidentiality = "private" }]
