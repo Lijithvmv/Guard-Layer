@@ -211,6 +211,48 @@ def consequence(
     return declared
 
 
+_FETCHING_MODULES = {"pip", "pip3", "ensurepip", "http.server", "urllib.request", "webbrowser", "venv"}
+
+
+def local_command(tool: str, caps: Iterable[str], tagged: bool, arguments: Mapping[str, Any] | str | None) -> bool:
+    """A shell call whose parsed command reads nothing from outside this machine, so what it prints comes from this
+    machine's files, as a file read does: `ls`, `grep`, `pytest`, `python -m pytest`, `python script.py`, inline
+    `python -c` code without network imports. Not local: network programs (`curl`, `git fetch`, `pip install`),
+    fetching modules, inline code that imports a network library, dynamic code, and anything that can't be parsed.
+    A script written after untrusted content was read is caught separately, by its file label."""
+    from guardlayer.shell import _python_commands  # local import: shell owns the Python analysis
+
+    caps = set(caps)
+    command = _command(arguments) if "exec" in caps or not tagged else None
+    if command is None:
+        return False
+    view = analyse(command)
+    if view is None:
+        return False
+    for pipeline in view.commands:
+        for cmd in pipeline:
+            if not cmd.argv:
+                continue
+            prog = re.split(r"[/\\]", cmd.argv[0])[-1].removesuffix(".exe")
+            args = cmd.argv[1:]
+            if prog.startswith("__"):
+                return False  # dynamic code
+            if (prog in _PUBLISH and args and args[0] in _PUBLISH[prog]) or prog in _NET_PROGRAMS or (
+                prog in _NET_SUBCOMMANDS and args and args[0] in _NET_SUBCOMMANDS[prog]
+            ):
+                return False
+            if prog in ("python", "python3", "py"):
+                if "-c" in args and args.index("-c") + 1 < len(args):
+                    found = _python_commands(args[args.index("-c") + 1])
+                    if found is None or found[2] or "__DYNAMIC__" in found[0]:
+                        return False  # unparseable, network imports, or dynamic commands
+                    if not all(local_command(tool, caps, tagged, {"command": c}) for c in found[0]):
+                        return False
+                if "-m" in args and args.index("-m") + 1 < len(args) and args[args.index("-m") + 1] in _FETCHING_MODULES:
+                    return False
+    return True
+
+
 def sends_out(
     tool: str, caps: Iterable[str], tagged: bool, arguments: Mapping[str, Any] | str | None, *, remote: bool = False
 ) -> bool:

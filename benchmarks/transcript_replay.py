@@ -44,7 +44,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from guardlayer import __version__
+sys.path.insert(0, str(Path(__file__).parent))  # replay_files
+from guardlayer import __version__  # noqa: E402
 from guardlayer.config import build_guard
 from guardlayer.consequence import consequence, destination_places, destination_values, distinctive_values
 from guardlayer.filelabels import looks_like_path, normalise, written_paths
@@ -193,6 +194,12 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
     guard = configure_guard(
         build_guard(args.config) if args.config else build_guard({"preset": args.preset}), state_dir
     )
+    vfs = None
+    if args.rebuild_files:
+        from replay_files import VirtualFiles
+
+        vfs = VirtualFiles()
+        vfs.install(args.rebuild_files)
     cache = _ScanCache(args.scan_cache) if args.scan_cache else None
     if cache is not None:
         cache.wrap(guard)
@@ -284,6 +291,8 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
             # The PostToolUse branch of handle_event, inline, so the scan result is visible here.
             tool = event["tool_name"]
             guard.record_written(tool, event.get("tool_input"), session=session)
+            if vfs is not None:
+                vfs.record(tool, event.get("tool_input"))
             if not _scan_output_of(guard, tool):
                 continue
             meta = {k: event[k] for k in ("cwd", "tool_use_id") if event.get(k)}
@@ -310,6 +319,9 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
                     guard.sessions.put(last)
                     totals["clears"] += 1
                     per["clears"] += 1
+    if vfs is not None:
+        totals.update({f"files_{k}": v for k, v in vfs.counts.items()})
+        totals["files_missing_examples"] = dict(vfs.missing.most_common(25))  # type: ignore[assignment]
     if cache is not None:
         cache.save()
         totals["scan_cache_hits"], totals["scan_cache_misses"] = cache.hits, cache.misses
@@ -350,6 +362,8 @@ def main(argv: list[str] | None = None) -> int:
         "--calls", action="store_true", help="include every tool call's outcome (ids, tool, rules; no content)"
     )
     p.add_argument("--judge", help="Ollama model: also ask the second-stage judge where it would be asked (slow)")
+    p.add_argument("--rebuild-files", choices=["hold", "skip"],
+                   help="judge executed files by the content the transcript wrote; unknown content: hold (fail-safe) or skip")
     p.add_argument("--judge-question", default="goal", choices=["goal", "requested"], help="what the judge is asked")
     p.add_argument("--judge-trigger", default="scoped", choices=["scoped", "all"],
                    help="scoped: not for deleting the agent's own files or for pages under places the user named")

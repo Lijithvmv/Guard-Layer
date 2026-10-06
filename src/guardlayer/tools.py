@@ -476,6 +476,12 @@ class ToolPolicy:
         """Whether the tool's capabilities were declared (config, or an integration's own tools), not guessed."""
         return tool in self.capabilities or any(fnmatch.fnmatchcase(tool, p) for p in self.capabilities)
 
+    def reads_nothing(self, tool: str) -> bool:
+        """Declared with no way to read anything (no read, network or exec capability), e.g. a "think" or "finish"
+        tool: its output can only echo the agent, so nobody outside can have written it. Inferred capabilities don't
+        count: an unknown tool may read anything."""
+        return self.is_declared(tool) and not (self.resolve(tool)[0] & {"read", "network", "exec"})
+
     def vouches(self, tool: str) -> bool:
         """Whether an integration vouches for this tool as its own (see `vouched`)."""
         return tool in self.vouched or any(fnmatch.fnmatchcase(tool, p) for p in self.vouched)

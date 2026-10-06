@@ -31,13 +31,15 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 from guardlayer.canary import Canary, CanaryManager
+from guardlayer.consequence import local_command
 from guardlayer.credentials import credential_flow
 from guardlayer.extract import DEFAULT_EXTRACTORS, Extractor, extract, media_parts
-from guardlayer.filelabels import FileLabelStore, written_paths
+from guardlayer.filelabels import FileLabelStore, executed_paths, normalise, written_paths
 from guardlayer.intent import NEUTRAL_TASK, IntentCheck, Replay
 from guardlayer.intent import acheck as _intent_acheck
 from guardlayer.intent import check as _intent_check
 from guardlayer.labels import Integrity, Label
+from guardlayer.labels import combine as combine_labels
 from guardlayer.models import DIRECTIONS, Action, Category, Detection, Direction, ScanContext, ScanResult, Verdict
 from guardlayer.scanners.base import Scanner
 from guardlayer.scanners.heuristics import HeuristicScanner
@@ -315,7 +317,7 @@ class GuardLayer:
 
     def _scan_content(
         self, content: str, *, source: str | None, session: str | GuardSession | None, tool: str | None,
-        extra: Sequence[Detection] = (), force_untrusted: bool = False, **context_fields: Any,
+        extra: Sequence[Detection] = (), force_untrusted: bool = False, local: bool = False, **context_fields: Any,
     ) -> ScanResult:
         metadata = dict(context_fields.pop("metadata", {}) or {})
         if source:
@@ -325,9 +327,9 @@ class GuardLayer:
             metadata["session_id"] = state.id
         # Results of remote tools (network/exec, untagged, or matching `remote_tools` such as
         # MCP or search tools) are untrusted: someone outside this machine could have written them.
-        reaches_network = True if tool is None else self.tool_policy.is_remote(tool)
-        if tool is not None and self.session_policy.default_integrity == "declared" and not (
-            self.tool_policy.vouches(tool) or self.session_policy.declares(tool)
+        reaches_network = True if tool is None else self.tool_policy.is_remote(tool) and not local
+        if tool is not None and not local and self.session_policy.default_integrity == "declared" and not (
+            self.tool_policy.vouches(tool) or self.session_policy.declares(tool) or self.tool_policy.reads_nothing(tool)
         ):
             # A name can't establish trust: "read_file" on a shared drive, "get_channels", a calendar or a review
             # list carry text other people wrote. Only tools whose capabilities were declared (by you, or by an
@@ -399,6 +401,14 @@ class GuardLayer:
             self._file_labels_for = self.sessions
         return self._file_labels
 
+    @staticmethod
+    def _write_label(tool: str, caps: frozenset[str], tagged: bool, arguments: Any, state: SessionState) -> Label:
+        """The session's label, raised to untrusted when the command itself reads from outside (a download, a clone):
+        what it writes is outsider content even in a clean session."""
+        if ("exec" in caps or not tagged) and isinstance(arguments, Mapping) and not local_command(tool, caps, tagged, arguments):
+            return combine_labels(state.label, Label(Integrity.UNTRUSTED))
+        return state.label
+
     def record_written(self, tool_name: str, arguments: Mapping[str, Any] | str | None, *, session: str | GuardSession | None) -> None:
         """After a write tool actually ran: label the files it wrote with the session's label.
 
@@ -407,8 +417,8 @@ class GuardLayer:
         """
         state = self._load_session(session)
         caps, tagged = self.tool_policy.resolve(tool_name)
-        if state is not None and (not tagged or "write" in caps):
-            self.file_labels.record(written_paths(arguments), state.label)
+        if state is not None and (not tagged or "write" in caps or "exec" in caps):
+            self.file_labels.record(written_paths(arguments), self._write_label(tool_name, caps, tagged, arguments, state))
 
     def scan_tool_call(
         self,
@@ -454,7 +464,8 @@ class GuardLayer:
             refs = self.file_labels.referenced(arguments, arguments_text)
             for path, label in refs:  # a labelled file the call mentions: the session has now, in effect, read it
                 observe_label(state, label, f"file:{path}")
-            extra += file_label_detections(self.session_policy, tool_name, caps, tagged, refs)
+            run = {normalise(p) for p in executed_paths(arguments if arguments is not None else arguments_text)}
+            extra += file_label_detections(self.session_policy, tool_name, caps, tagged, [(p, lb) for p, lb in refs if p in run])
             extra += task_detections(self.session_policy, state, tool_name, arguments)
             metadata["session"] = {"untrusted": state.untrusted, "hostile": state.hostile, "sensitive": state.sensitive,
                                    "label": state.label.to_dict(), "task": state.task}  # fmt: skip
@@ -468,8 +479,8 @@ class GuardLayer:
             observe_tool_call(state, tool_name, result)
             # Record only what runs without a human in between; a reviewed write is recorded after it ran
             # (`record_written`), because a refused one never happened.
-            if result.verdict < Verdict.REVIEW and (not tagged or "write" in caps):
-                self.file_labels.record(written_paths(arguments), state.label)
+            if result.verdict < Verdict.REVIEW and (not tagged or "write" in caps or "exec" in caps):
+                self.file_labels.record(written_paths(arguments), self._write_label(tool_name, caps, tagged, arguments, state))
             self.sessions.put(state)
         return result
 
@@ -601,15 +612,18 @@ class GuardLayer:
         untrusted, injections mark it hostile, and secrets/PII mark it sensitive. Pass the call's `arguments` so a
         file the agent wrote after reading untrusted content is read back as untrusted, whatever tool reads it.
         """
-        read_back = False
+        read_back = local = False
         if arguments is not None and session is not None:
             refs = self.file_labels.referenced(arguments, flatten_arguments(arguments))
             read_back = any(label.integrity >= Integrity.UNTRUSTED for _, label in refs)
+            caps, tagged = self.tool_policy.resolve(tool_name)
+            # The parsed command is the evidence of what it read, not the tool's name or declaration.
+            local = not read_back and "exec" in caps and local_command(tool_name, caps, tagged, arguments)
         parts = None if isinstance(result, str) else media_parts(result)
         if parts is None:
             text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
             return self._scan_content(text, source=f"tool:{tool_name}", session=session, tool=tool_name,
-                                      force_untrusted=read_back, **context_fields)  # fmt: skip
+                                      force_untrusted=read_back, local=local, **context_fields)  # fmt: skip
         # Bytes or media blocks: scan what can be extracted; what can't be read makes the session untrusted.
         texts, blobs = parts
         extracted, unreadable = extract(blobs, self.extractors)

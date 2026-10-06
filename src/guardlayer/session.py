@@ -1021,14 +1021,14 @@ def file_label_detections(
     """`untrusted_file_executed` when an exec-capable call mentions a file written in an untrusted context."""
     if not policy.enabled or policy.is_trusted(tool) or (tagged and "exec" not in caps):
         return []
-    # Files written after an injection was read (hostile) are held when run. Files written after an untrusted read
-    # are held under the session freeze ("all"); with consequence routing they are opened and judged by what they
-    # would execute (an undetected injection may have asked for a download-and-run script; a test script is fine).
+    # Under the session freeze ("all") every file written after an untrusted read is held when run. With
+    # consequence routing a file is opened and judged by what it would execute, whether an injection was detected
+    # before it was written or not: a script that reaches the network, publishes or can't be undone is held (an
+    # injection may have asked for a download-and-run script), one whose content can't be read is held, and a
+    # purely local one (a test runner) runs, as local edits and builds do after an injection.
     risky = []
     for path, label in refs:
-        if label.integrity >= Integrity.HOSTILE:
-            risky.append((path, label))
-        elif label.integrity >= Integrity.UNTRUSTED and (policy.after_injection_scope == "all" or file_consequence(path) != "local"):
+        if label.integrity >= Integrity.UNTRUSTED and (policy.after_injection_scope == "all" or file_consequence(path) != "local"):
             risky.append((path, label))
     if not risky:
         return []
