@@ -12,6 +12,12 @@ All notable changes to this project are documented here. The format follows
   no injection detection. Measured with detectors removed: recorded attacks stopped by the defaults 5/27 -> 12/27;
   extra holds on real Claude Code sessions: 1 in 7,572 calls, 0 in 6,962 from other projects. Following links, opening files a page listed, and opening this
   machine's dev servers or files are not held. Hold messages name the recipient and where it came from.
+- **Shell output and file runs are judged by what actually happens.** A shell command's output is local content
+  unless the command can read from outside (network programs, fetching modules, unanalysable code); files a command
+  downloads keep their outsider origin; `untrusted_file_executed` judges files that are run, not merely mentioned,
+  and judges them by what they would execute even after an injection was detected; a declared tool that can't read
+  anything doesn't make the session untrusted. Real Claude Code sessions from other projects: 2.3% -> 1.6% held;
+  OpenHands agents' real work: 58% -> under 1% out of the box, 0.2% with tools declared; recorded attacks unchanged.
 - **`trifecta` judges where data can actually go.** Its outbound check now uses the destination check's places (real
   destination arguments, never this machine, nothing held for a link the agent merely follows); an irreversible
   action counts only if it can send data out (publish, push, share, send; not a local delete). Real Claude Code

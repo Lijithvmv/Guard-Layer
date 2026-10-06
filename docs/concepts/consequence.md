@@ -58,6 +58,12 @@ An outbound action is held when both are true:
    tells the outsider nothing they didn't write, so it runs. Appending your contacts or a file's contents to their URL
    does not.
 
+Shell output is judged by the command that produced it: `ls`, `grep`, `pytest` or a local script read this machine's
+files; `curl`, `git fetch`, `pip install` or code that can't be analysed may bring in an outsider's text. A file a
+command downloads (`curl -o`, `wget -O`, a redirect, a `git clone`) keeps that origin when it is read back later. A
+file the agent runs is judged by what it would execute, even after an injection was detected: a local test runner
+runs, a script that reaches out is held.
+
 Two more rules keep it honest:
 
 - **This machine is not an outsider's place.** `localhost`, `127.0.0.1`, `*.localhost` and `file:` are never held by
@@ -87,7 +93,9 @@ any other host is blocked.
 
 - **Interruptions:** on real Claude Code sessions, today's defaults (the destination check, and trust only for
   declared tools) added **1 hold in 7,572 calls** on the sessions used to design them, and **none in 6,962 calls**
-  from other projects never used for design. All rules together hold 2.3% of those 6,962 calls for approval. On AgentDojo's tasks, nearly all of which pay or
+  from other projects never used for design. All rules together hold 1.6% of those 6,962 calls for approval. On another agent's real work (OpenHands
+  resolving GitHub issues, a different model and framework), they hold under 1% out of the box and 0.2% with its tools
+  declared. On AgentDojo's tasks, nearly all of which pay or
   send right after reading untrusted content, the defaults hold about one task in four for approval.
 - **Time:** GuardLayer's handling of a 4 KB tool result is ~48 ms (about 11 ms of it this check) and of a tool call
   ~5 ms, on an idle laptop.
