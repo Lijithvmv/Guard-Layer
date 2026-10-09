@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **`after_injection` holds where the injection points, not every page on a site it mentions.** After content holding
+  an injection is read, an outbound call is held when that content names its destination more precisely than you or
+  clean content did (the attacker's own site, path or address), or when it copies a non-address value from that
+  content. Opening another page on the site that served the injection, with nothing appended, isn't held: its
+  operator already knows the agent came. Measured on the same 2,433 real Claude Code calls including sub-agents:
+  214 -> 200 held; other projects' sessions unchanged (112 of 6,962); recorded attacks unchanged on every set
+  (674/707 frontier, every attack style). A first version that let every link through lost 54 "visit this site"
+  attacks, which is why the site test exists.
 - **The destination check is on by default** (`[session] untrusted_destination = "outbound"`; set `"off"` to
   disable). An outbound action whose destination came from content an outsider can write is held when it carries
   something private (a body or message, or URL words that are in neither that content nor your prompts). It needs

