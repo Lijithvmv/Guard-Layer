@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **Reading a process environment or a mounted service token is credential access** (`/proc/<pid>/environ`,
+  `/var/run/secrets/`, `/run/secrets/`), and **more publishing commands need approval** (`cargo|poetry|uv|hatch|flit
+  publish`, `gem push`, `nuget push`, `docker push`, `gh release create`; npm and twine already did). From 2026
+  incidents: an intruder read `/proc/self/environ`; an agent registered a package account and published. Real-use
+  cost: 0 extra holds on 9,395 Claude Code calls and 11,869 OpenHands calls.
+
 ### Changed
 - **`after_injection` holds where the injection points, not every page on a site it mentions.** After content holding
   an injection is read, an outbound call is held when that content names its destination more precisely than you or
