@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **`policy draft` can't be taught to trust by a poisoned session.** It never wrote an active trust line; it no
+  longer even suggests `output = "trusted"` for a tool whose calls came after the session read outside content
+  (what the log saw there could have been steered by an outsider). Regression test: an undetected outsider's text
+  drives five calls to a local tool and an attacker's endpoint; adopting the draft trusts nothing new and the
+  endpoint is still held.
+
 ### Added
 - **Business agents: from 27% to 13% of ordinary tasks held, no principled attack catch lost.** Three changes,
   measured together on AgentDojo's published frontier runs (707 attacks, 644 ordinary tasks):

@@ -34,6 +34,7 @@ class ToolUsage:
     secrets: int = 0  # results with secrets
     personal: int = 0  # results with personal data
     reviewed_or_blocked: int = 0
+    tainted_calls: int = 0  # calls made after the session had read content from outside
     rules: set[str] = field(default_factory=set)
 
 
@@ -58,6 +59,7 @@ def tool_usage(audit_paths: Iterable[str | Path]) -> dict[str, ToolUsage]:
                 detections = entry.get("detections") or []
                 if entry.get("direction") == "output":
                     u.calls += 1
+                    u.tainted_calls += bool((meta.get("session") or {}).get("untrusted"))
                     if (entry.get("shadow_verdict") or entry.get("verdict")) in ("review", "block"):
                         u.reviewed_or_blocked += 1
                     u.rules |= {d.get("rule", "") for d in detections if d.get("action") in ("review", "block")}
@@ -138,6 +140,11 @@ def _tool_table(u: ToolUsage, guard: GuardLayer, *, trust: bool) -> list[str]:
             out.append(f'output = "untrusted"                # an injection was seen in its output {u.injections} time(s)')
         elif remote:
             out.append('output = "untrusted"                # reaches outside the machine, so others can write what it returns')
+        elif u.tainted_calls:
+            # What was seen in these sessions could have been steered by outside content, so the log can't vouch for it
+            # (an attacker whose text no detector recognises would otherwise earn a "trusted" suggestion).
+            out.append(f"# not suggested as trusted: {u.tainted_calls} of its {u.calls} call(s) came after the session read"
+                       " outside content; decide from what the tool reads, not from this log")
         else:
             out.append('# output = "trusted"              # CHECK: uncomment only if nobody outside can write what it reads')
     if u.secrets:
