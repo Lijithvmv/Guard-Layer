@@ -150,8 +150,9 @@ def main(argv: list[str] | None = None) -> int:
     gw = sub.add_parser("mcp-gateway", help="Sit between an MCP client and an MCP server: check tool calls, scan results "
                                             "and tool descriptions. stdio: give the server command after --.")
     gw.add_argument("--name", required=True, help="Server name: tools are judged as mcp__NAME__TOOL.")
-    gw.add_argument("--on-review", choices=["deny", "allow"], default="deny",
-                    help="A call that needs a person's approval: refuse it (default) or let it through (logged).")
+    gw.add_argument("--on-review", choices=["ask", "deny", "allow"], default="ask",
+                    help="A call that needs a person's approval: ask the person through the client (MCP elicitation; "
+                         "refused if the client can't ask), refuse it, or let it through (logged).")
     gw.add_argument("--withhold", action="store_true", help="Replace a result holding a likely injection instead of flagging it.")
     gw.add_argument("--listen", help="HOST:PORT to serve Streamable HTTP on (with --upstream-url) instead of stdio.")
     gw.add_argument("--upstream-url", help="The MCP server's HTTP endpoint (with --listen).")
