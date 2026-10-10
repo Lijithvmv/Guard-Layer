@@ -5,6 +5,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Development version `0.9.0.dev0` (no release): builds now report a version other than 0.8.2, so the pilot and
+audit logs can tell them apart.
+
 ### Added
 - **Credential broker (experimental): `guardlayer broker`.** The agent calls a service through a local endpoint
   with no credential; the broker adds the token only to requests a route allows (method and path; `{repo}` = the
