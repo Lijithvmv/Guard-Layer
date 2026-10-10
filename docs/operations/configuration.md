@@ -60,6 +60,36 @@ decide, since that is what a call an injection caused looks like. Draft it per p
 list drafted from earlier sessions of the same project held 1.3% of later calls (24 of 1,871); one drafted from a
 different project held 42%.
 
+## Credentials the agent never holds (experimental)
+
+An agent that fetches a token (`git credential fill`, `gh auth token`) and uses it only toward its own service is
+allowed (`credential_bound`), unless it changes something there: a POST, PUT, PATCH, DELETE or upload with a fetched
+credential is held (`credential_write`). Binding to a host isn't binding to a task: a GitHub token sent only to
+api.github.com still publishes a public gist or deletes a repository.
+
+To keep the token out of the agent entirely, run the broker and have the agent call
+`http://127.0.0.1:47300/github/...` with no credential:
+
+```toml
+[broker]
+repos = "git"                       # the working directory's GitHub remotes, or ["owner/repo"]
+audit = "broker-audit.jsonl"
+
+[broker.routes.github]
+upstream = "https://api.github.com"
+credential = "git:github.com"       # or "env:NAME", "file:PATH"
+allow = ["GET /repos/{repo}/**"]    # METHOD path-glob; {repo} = the repositories above
+```
+
+```bash
+guardlayer --config guardlayer.toml broker
+guardlayer --config guardlayer.toml broker --check "POST /github/gists"   # what would pass, without running it
+```
+
+The broker adds the token only to allowed requests, scrubs it from responses, and logs every request (never the
+token). On one user's recorded sessions, all 30 GitHub API requests the agent made with a fetched token fit the default
+route.
+
 ## Everything else
 
 The sections below are the full reference. `[tool.NAME]` is a shorter way to write the per-tool parts of `[tools]`,

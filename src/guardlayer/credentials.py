@@ -8,8 +8,13 @@ of the first kind; GuardLayer used to hold every one of them.
 
 This module follows the idea behind credential providers in agent sandboxes (a credential is bound to the endpoints it
 is for) without a sandbox: it reads the command, finds credentials captured into variables, and checks every use of
-those variables. `credential_flow()` returns `bound` (every use goes to the credential's own service), `printed`
-(fetched straight into the output, echoed, or written to a file), `elsewhere` (sent to another host), or `unknown`.
+those variables. `credential_flow()` returns `bound` (every use goes to the credential's own service), `writes` (it
+does, but to change something there: a POST, PUT, PATCH or DELETE, or an upload), `printed` (fetched straight into the
+output, echoed, or written to a file), `elsewhere` (sent to another host), or `unknown`.
+
+Why `writes` is separate: binding to a host isn't binding to a task. A GitHub token bound to api.github.com still
+publishes a public gist, pushes to any repo or deletes one, all "on github.com". Reads of the service are what the
+recorded real uses were; a write is held for a person (or done through `guardlayer broker`, scoped per repository).
 """
 
 from __future__ import annotations
@@ -42,6 +47,11 @@ _ASSIGN = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)=\$\(")
 _URL_HOST = re.compile(r"\b(?:https?|wss?)://(?:[^@/\s\"']*@)?([^/:\s\"'?#]+)", re.IGNORECASE)
 _NET = {"curl", "wget", "http", "https", "xh", "iwr", "irm", "Invoke-WebRequest", "Invoke-RestMethod", "git", "gh", "nc", "ssh", "scp"}
 _PRINTERS = {"echo", "printf", "cat", "tee", "print", "Write-Output", "Write-Host"}
+# Requests that change something on the service: an explicit write method, or a body/upload (curl/wget/httpie/PowerShell).
+_WRITE_METHOD = re.compile(r"^(?:-X|--request|-Method|--method)$", re.IGNORECASE)
+_WRITE_VERBS = {"post", "put", "patch", "delete"}
+_BODY_FLAGS = {"-d", "--data", "--data-raw", "--data-binary", "--data-urlencode", "--json", "-F", "--form", "-T",
+               "--upload-file", "--post-data", "--post-file", "--body-data", "--body-file", "-Body", "-InFile"}
 
 
 def _balanced(src: str, start: int) -> str | None:
@@ -96,7 +106,7 @@ def credential_flow(command: str) -> str:
     view = analyse(command, keep_data=True)
     if view is None:
         return "unknown"
-    used = False
+    used = writes = False
     for pipeline in view.commands:
         for cmd in pipeline:
             words = cmd.argv + [t for _, t in cmd.redirects]
@@ -115,4 +125,23 @@ def credential_flow(command: str) -> str:
                     return "unknown"  # a network program with no visible destination
                 if not hosts and targets:
                     return "elsewhere"  # a secret with no service of its own leaving the machine
-    return "bound" if used else "bound"  # captured and never used: nothing left the variable
+                if _writes(cmd.argv):
+                    writes = True
+    if used and writes:
+        return "writes"
+    return "bound"  # every use toward its own service (or captured and never used: nothing left the variable)
+
+
+def _writes(argv: list[str]) -> bool:
+    """A request that changes something: an explicit POST/PUT/PATCH/DELETE, or a request body or upload."""
+    for i, word in enumerate(argv):
+        flag, _, inline = word.partition("=")
+        if _WRITE_METHOD.match(flag) and (inline or (argv[i + 1] if i + 1 < len(argv) else "")).lower() in _WRITE_VERBS:
+            return True
+        if word.startswith("-X") and word[2:].lower() in _WRITE_VERBS:
+            return True
+        if flag in _BODY_FLAGS:
+            return True
+        if word.lower() in _WRITE_VERBS and i == 1 and argv[0] in ("http", "https", "xh"):
+            return True
+    return False

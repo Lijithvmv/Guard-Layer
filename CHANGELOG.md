@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Credential broker (experimental): `guardlayer broker`.** The agent calls a service through a local endpoint
+  with no credential; the broker adds the token only to requests a route allows (method and path; `{repo}` = the
+  working directory's GitHub remotes), scrubs it from responses and logs every request. The token never enters the
+  agent's context. All 30 GitHub API requests made with fetched tokens in one user's recorded sessions fit the default
+  route (`GET /repos/{repo}/**`); publishing a gist, deleting a repository or reading another repository is refused.
 - **`policy draft` drafts an allow-list, and `[session] default_task` enforces it from config.** The draft lists the
   tools the agent used as a task profile; with `default_task` set, any other tool is held for review (`out_of_task`).
   Hooks (Claude Code) can now use task profiles: a new session starts under `default_task`. Built-in tools and tools
@@ -15,6 +20,10 @@ All notable changes to this project are documented here. The format follows
   suite, declaring the allowed tools takes GuardLayer from 25 to 16 of 35 scenarios with findings.
 
 ### Security
+- **`credential_write`: a fetched credential used to change something is held.** Credential binding allowed any
+  request to the credential's own host; a GitHub token sent only to api.github.com could still publish a public gist
+  with a local file, push anywhere or delete a repository. POST, PUT, PATCH, DELETE and uploads with a fetched
+  credential now need review. Real-use cost: 0 of the 19 recorded token uses (all reads).
 - **An agent passing on an injection's own words is held.** After a detected injection, an outbound call carrying
   8+ consecutive words of the injected text (and not the user's) is held (`after_injection`), whatever its
   destination. With no detection at all, an irreversible action (a payment, a deletion) carrying 8+ words of an
