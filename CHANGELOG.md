@@ -9,6 +9,9 @@ Development version `0.9.0.dev0` (no release): builds now report a version other
 audit logs can tell them apart.
 
 ### Added
+- **MCP gateway asks the person** (`--on-review ask`, the default): a call that needs approval becomes an MCP
+  elicitation in the client, showing the call and why it was held; approved, it reaches the server; declined or
+  unanswered, it gets a tool error. Clients without elicitation get a refusal, as before.
 - **MCP gateway: `guardlayer mcp-gateway`.** Any MCP client and server, no code changes: over stdio (the server
   command after `--`) or Streamable HTTP (`--listen` / `--upstream-url`). Checks every tool call before the server sees
   it (a refusal or a hold returns a tool error), scans every result before the agent reads it, and removes tools whose

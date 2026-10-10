@@ -5,9 +5,10 @@ of the server, and the gateway starts (stdio) or connects to (HTTP) the real ser
 
 On the way through it:
 
-- **checks every tool call** before it reaches the server. A refused call, or one that needs a person's approval, gets a
-  tool error back that says why, and the server never sees it (`--on-review allow` lets reviews through instead,
-  logged);
+- **checks every tool call** before it reaches the server. A refused call gets a tool error back that says why, and
+  the server never sees it. A call that needs a person's approval is **asked about through the client** (MCP
+  elicitation: the person sees what the call does and why it was held, and approves or declines); a client that can't
+  ask gets a refusal. `--on-review deny` always refuses; `--on-review allow` lets reviews through, logged;
 - **scans every result** before the agent reads it, so the session knows what the agent has read; a likely injection is
   flagged in the result (or replaced, with `--withhold`);
 - **scans every tool description** the server advertises; a tool whose description carries an injection (a poisoned
@@ -45,7 +46,8 @@ The gateway doesn't offer the optional server-to-client GET stream.
 ## What it can't see
 
 The gateway sees tool traffic, not the conversation: it can't scan the user's own messages (use the SDK or a hook for
-that), and a person can't approve a held call through it yet, so a hold is a refusal unless you choose `allow`.
+that). Approval needs a client with the elicitation capability; over HTTP the question travels on the call's event
+stream, so the client must accept `text/event-stream`. An unanswered question is declined after 10 minutes.
 
 ## Measured
 

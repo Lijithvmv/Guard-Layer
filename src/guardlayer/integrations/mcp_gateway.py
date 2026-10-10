@@ -42,47 +42,83 @@ class MCPGuard:
     """Transport-independent: judges client messages before they reach the server and server messages before the
     client reads them. One instance per client connection (its GuardLayer session)."""
 
-    def __init__(self, guard: GuardLayer, server: str, *, on_review: str = "deny", withhold: bool = False,
+    def __init__(self, guard: GuardLayer, server: str, *, on_review: str = "ask", withhold: bool = False,
                  session_id: str | None = None) -> None:  # fmt: skip
-        if on_review not in ("deny", "allow"):
-            raise ValueError('on_review must be "deny" or "allow"')
+        if on_review not in ("ask", "deny", "allow"):
+            raise ValueError('on_review must be "ask", "deny" or "allow"')
         self.guard, self.server, self.on_review, self.withhold = guard, server, on_review, withhold
         self.session = guard.session(session_id or f"mcp-{server}-{uuid.uuid4().hex[:8]}")
         self._pending: dict[Any, tuple[str, str | None, dict[str, Any]]] = {}  # id -> (method, tool, arguments)
         self._lock = threading.Lock()
-        self.stats = {"calls": 0, "refused": 0, "results": 0, "flagged_results": 0, "tools_removed": 0}
+        self.can_ask = False  # the client declared the elicitation capability
+        self.stats = {"calls": 0, "refused": 0, "asked": 0, "approved": 0, "results": 0, "flagged_results": 0,
+                      "tools_removed": 0}  # fmt: skip
 
     def tool_name(self, name: str) -> str:
         return f"mcp__{self.server}__{name}"
 
     # --- client -> server ------------------------------------------------------------------------------------------
     def from_client(self, msg: Any) -> tuple[str, Any]:
-        """("forward", msg) to send it on, or ("reply", response) to answer the client without the server."""
+        """("forward", msg) to send it on, ("reply", response) to answer the client without the server, or
+        ("ask", request) to ask the person first: send `request` (an elicitation) to the client, then pass its
+        answer to `answered()`."""
         if not isinstance(msg, Mapping) or "method" not in msg:
             return "forward", msg  # a response to a server request, or something we don't understand
         method, rid = msg.get("method"), msg.get("id")
         params = msg.get("params") or {}
+        if method == "initialize":
+            self.can_ask = isinstance((params.get("capabilities") or {}).get("elicitation"), Mapping)
         if method == "tools/call" and rid is not None:
             name = str(params.get("name", ""))
             args = params.get("arguments") or {}
             tool = self.tool_name(name)
             self.stats["calls"] += 1
             result = self.session.scan_tool_call(tool, args, metadata={"source": "mcp-gateway", "mcp_server": self.server})
-            held = result.needs_review and self.on_review == "deny"
+            held = result.needs_review and self.on_review != "allow"
+            if result.needs_review and not result.is_blocked and self.on_review == "ask" and self.can_ask:
+                self.stats["asked"] += 1
+                why = "; ".join(d.message for d in result.detections if d.action in ("review", "block"))
+                return "ask", {"jsonrpc": "2.0", "id": f"guardlayer-{uuid.uuid4().hex}", "method": "elicitation/create",
+                               "params": {"message": f"GuardLayer: approve {name}({json.dumps(args, ensure_ascii=False)[:300]})? {why}",
+                                          "requestedSchema": {"type": "object", "required": ["approve"], "properties": {
+                                              "approve": {"type": "boolean", "title": f"Run {name}"}}}}}  # fmt: skip
             if result.is_blocked or held:
-                self.stats["refused"] += 1
-                rules = sorted({d.rule for d in result.detections if d.action in ("review", "block")})
-                why = "; ".join(f"{d.rule}: {d.message}" for d in result.detections if d.action in ("review", "block"))
-                verb = "refused" if result.is_blocked else "held for a person's approval, which this connection can't ask for"
-                text = f"[GuardLayer] {name} was {verb} ({', '.join(rules)}). {why}"
-                return "reply", {"jsonrpc": "2.0", "id": rid,
-                                 "result": {"content": [{"type": "text", "text": text}], "isError": True}}  # fmt: skip
-            with self._lock:
-                self._pending[rid] = ("tools/call", tool, dict(args) if isinstance(args, Mapping) else {})
+                return "reply", self._refusal(msg, name, result, approved=None)
+            self._track(msg, tool, args)
         elif rid is not None:
             with self._lock:
                 self._pending[rid] = (str(method), None, {})
         return "forward", msg
+
+    def answered(self, call: Mapping[str, Any], answer: Mapping[str, Any]) -> tuple[str, Any]:
+        """The person's answer to the elicitation for `call`: ("forward", call) if approved, else ("reply", refusal)."""
+        result = answer.get("result") or {}
+        approved = result.get("action") == "accept" and (result.get("content") or {}).get("approve") is True
+        params = call.get("params") or {}
+        name, args = str(params.get("name", "")), params.get("arguments") or {}
+        if approved:
+            self.stats["approved"] += 1
+            self._track(call, self.tool_name(name), args)
+            return "forward", call
+        scan = self.session.scan_tool_call(self.tool_name(name), args, metadata={"source": "mcp-gateway", "mcp_server": self.server})
+        return "reply", self._refusal(call, name, scan, approved=False)
+
+    def _track(self, msg: Mapping[str, Any], tool: str, args: Any) -> None:
+        with self._lock:
+            self._pending[msg["id"]] = ("tools/call", tool, dict(args) if isinstance(args, Mapping) else {})
+
+    def _refusal(self, msg: Mapping[str, Any], name: str, result: Any, *, approved: bool | None) -> dict[str, Any]:
+        self.stats["refused"] += 1
+        rules = sorted({d.rule for d in result.detections if d.action in ("review", "block")})
+        why = "; ".join(f"{d.rule}: {d.message}" for d in result.detections if d.action in ("review", "block"))
+        if result.is_blocked:
+            verb = "refused"
+        elif approved is False:
+            verb = "not approved by the person asked"
+        else:
+            verb = "held for a person's approval, which this client can't be asked for"
+        text = f"[GuardLayer] {name} was {verb} ({', '.join(rules)}). {why}"
+        return {"jsonrpc": "2.0", "id": msg["id"], "result": {"content": [{"type": "text", "text": text}], "isError": True}}
 
     # --- server -> client ------------------------------------------------------------------------------------------
     def from_server(self, msg: Any) -> Any:
@@ -165,17 +201,29 @@ def run_stdio(core: MCPGuard, command: list[str], stdin: IO[bytes] | None = None
     reader = threading.Thread(target=pump_server, daemon=True)
     reader.start()
     assert proc.stdin is not None
+    asking: dict[Any, Any] = {}  # elicitation id -> the held tools/call
+
+    def to_server(obj: Any) -> None:
+        assert proc.stdin is not None
+        proc.stdin.write(json.dumps(obj, ensure_ascii=False).encode("utf-8") + b"\n")
+        proc.stdin.flush()
+
     for raw in cin:
         try:
             msg = json.loads(raw)
         except ValueError:
             continue
-        action, out = core.from_client(msg)
-        if action == "reply":
+        if isinstance(msg, Mapping) and "method" not in msg and msg.get("id") in asking:
+            action, out = core.answered(asking.pop(msg["id"]), msg)  # the person's answer
+        else:
+            action, out = core.from_client(msg)
+        if action == "ask":
+            asking[out["id"]] = msg
+            to_client(out)
+        elif action == "reply":
             to_client(out)
         else:
-            proc.stdin.write(json.dumps(out, ensure_ascii=False).encode("utf-8") + b"\n")
-            proc.stdin.flush()
+            to_server(out)
     proc.stdin.close()
     reader.join(timeout=5)
     proc.terminate()
@@ -190,6 +238,7 @@ def http_handler(make_core: Callable[[str], MCPGuard], upstream: str,
     open_ = opener or (lambda req: urllib.request.urlopen(req, timeout=120))
     cores: dict[str, MCPGuard] = {}
     lock = threading.Lock()
+    waiting: dict[Any, tuple[threading.Event, list[Any]]] = {}  # elicitation id -> (answered, [answer])
 
     def core_for(session: str | None) -> MCPGuard:
         key = session or "default"
@@ -217,12 +266,25 @@ def http_handler(make_core: Callable[[str], MCPGuard], upstream: str,
             except ValueError:
                 self._send(400, b'{"error": "not JSON"}', {"Content-Type": "application/json"})
                 return
+            if isinstance(msg, Mapping) and "method" not in msg and msg.get("id") in waiting:
+                event, box = waiting[msg["id"]]  # the person's answer to a question asked on another response
+                box.append(msg)
+                event.set()
+                self._send(202, b"", {})
+                return
             core = core_for(self.headers.get("Mcp-Session-Id"))
+            if "text/event-stream" not in self.headers.get("Accept", ""):
+                core.can_ask = False  # a question needs an event stream to travel on
             batch = msg if isinstance(msg, list) else [msg]
             replies: list[Any] = []
             forward: list[Any] = []
             for m in batch:
                 action, out = core.from_client(m)
+                if action == "ask":
+                    if not isinstance(msg, list):
+                        self._ask(core, m, out)
+                        return
+                    action, out = core.answered(m, {"result": {"action": "cancel"}})  # no stream of our own in a batch
                 (replies if action == "reply" else forward).append(out)
             if not forward:
                 body = json.dumps(replies if isinstance(msg, list) else replies[0]).encode()
@@ -268,6 +330,38 @@ def http_handler(make_core: Callable[[str], MCPGuard], upstream: str,
                     served = [*replies, *(served if isinstance(served, list) else [served])]
                 body = json.dumps(served).encode()
             self._send(status, body, out_headers)
+
+        def _ask(self, core: MCPGuard, call: Mapping[str, Any], question: Mapping[str, Any]) -> None:
+            """Ask on this response's event stream, wait for the answer (posted separately), then finish the call."""
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            event = threading.Event()
+            box: list[Any] = []
+            waiting[question["id"]] = (event, box)
+            try:
+                self.wfile.write(f"event: message\ndata: {json.dumps(question)}\n\n".encode())
+                self.wfile.flush()
+                answer = box[0] if event.wait(timeout=600) and box else {"result": {"action": "cancel"}}
+            finally:
+                waiting.pop(question["id"], None)
+            action, out = core.answered(call, answer)
+            if action == "forward":
+                headers = {k: v for k, v in self.headers.items() if k.lower() in _PASS_HEADERS}
+                headers.update({"Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+                req = urllib.request.Request(upstream, data=json.dumps(out).encode(), headers=headers, method="POST")
+                try:
+                    with open_(req) as resp:
+                        ctype, data = resp.headers.get("Content-Type", ""), resp.read()
+                    lines = data.decode("utf-8", "replace").splitlines()
+                    msgs = [json.loads(ln[5:].strip()) for ln in lines if ln.startswith("data:")] if "text/event-stream" in ctype else [json.loads(data)]
+                    out = next((core.from_server(m) for m in msgs if isinstance(m, Mapping) and m.get("id") == call["id"]),
+                               {"jsonrpc": "2.0", "id": call["id"], "error": {"code": -32603, "message": "no result from the server"}})
+                except (urllib.error.URLError, OSError, ValueError) as e:
+                    out = {"jsonrpc": "2.0", "id": call["id"], "error": {"code": -32603, "message": f"upstream: {e}"}}
+            self.wfile.write(f"event: message\ndata: {json.dumps(out)}\n\n".encode())
+            self.wfile.flush()
 
         def do_GET(self) -> None:  # no server-initiated stream through the gateway (allowed by the spec)
             self._send(405, b"", {"Allow": "POST, DELETE"})

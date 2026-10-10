@@ -148,3 +148,104 @@ def test_http_gateway_relays_and_judges():
         assert refused["result"]["isError"] and len(up.seen) == 1  # the upstream never saw the second call
     finally:
         server.shutdown()
+
+
+def _held_call(i):
+    return {"jsonrpc": "2.0", "id": i, "method": "tools/call", "params": {"name": "delete_file", "arguments": {"path": "a.txt"}}}
+
+
+@pytest.mark.parametrize("approve, expect_error", [(True, False), (False, True)])
+def test_stdio_asks_the_person_when_the_client_can(tmp_path, approve, expect_error):
+    """A call that needs approval becomes an MCP elicitation; the person's answer decides whether the server sees it."""
+    (tmp_path / "stub.py").write_text(STUB, encoding="utf-8")
+    proc = subprocess.Popen([sys.executable, "-m", "guardlayer.cli", "mcp-gateway", "--name", "stub", "--",
+                             sys.executable, str(tmp_path / "stub.py")], stdin=subprocess.PIPE, stdout=subprocess.PIPE, cwd=tmp_path)
+
+    def send(obj):
+        proc.stdin.write((json.dumps(obj) + "\n").encode())
+        proc.stdin.flush()
+
+    def recv():
+        return json.loads(proc.stdout.readline())
+
+    try:
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"protocolVersion": "2025-06-18", "capabilities": {"elicitation": {}}, "clientInfo": {"name": "t"}}})
+        recv()
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+              "params": {"name": "fetch_page", "arguments": {"url": "https://blog.example"}}})
+        recv()  # the session has now read an injection: an irreversible call needs approval
+        send(_held_call(3))
+        question = recv()
+        assert question["method"] == "elicitation/create" and "delete_file" in question["params"]["message"]
+        send({"jsonrpc": "2.0", "id": question["id"],
+              "result": {"action": "accept", "content": {"approve": approve}}})
+        result = recv()
+        assert result["id"] == 3 and bool(result["result"].get("isError")) is expect_error
+        if not expect_error:
+            assert result["result"]["content"][0]["text"].startswith("sent ")  # it reached the server
+    finally:
+        proc.stdin.close()
+        proc.wait(timeout=10)
+
+
+def test_a_client_that_cant_ask_gets_a_refusal():
+    core = MCPGuard(GuardLayer(), "stub")  # on_review="ask" by default
+    core.from_client({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}})
+    core.session.scan_tool_result("mcp__stub__fetch_page", INJECTED_PAGE)
+    action, reply = core.from_client(_held_call(2))
+    assert action == "reply" and "can't be asked" in reply["result"]["content"][0]["text"]
+
+
+def test_http_asks_on_the_event_stream():
+    import urllib.request
+
+    forwarded = []
+
+    def upstream(req):
+        body = json.loads(req.data)
+        forwarded.append(body)
+
+        class R:
+            status = 200
+            headers = {"Content-Type": "application/json"}
+
+            def read(self):
+                return json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": "deleted"}]}}).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        return R()
+
+    def make(s):
+        core = MCPGuard(GuardLayer(), "docs", session_id=s)
+        core.can_ask = True
+        core.session.scan_tool_result("mcp__docs__fetch_page", INJECTED_PAGE)
+        return core
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), http_handler(make, "https://up/mcp", opener=upstream))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}/mcp"
+    try:
+        req = urllib.request.Request(url, method="POST", data=json.dumps(_held_call(7)).encode(),
+                                     headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            first = resp.readline()
+            while not first.startswith(b"data:"):
+                first = resp.readline()
+            question = json.loads(first[5:])
+            assert question["method"] == "elicitation/create"
+            answer = urllib.request.Request(url, method="POST", headers={"Content-Type": "application/json"},
+                                            data=json.dumps({"jsonrpc": "2.0", "id": question["id"],
+                                                             "result": {"action": "accept", "content": {"approve": True}}}).encode())
+            with urllib.request.urlopen(answer, timeout=10) as a:
+                assert a.status == 202
+            rest = resp.read().decode()
+        final = json.loads(next(ln[5:] for ln in rest.splitlines() if ln.startswith("data:")))
+        assert final["id"] == 7 and final["result"]["content"][0]["text"] == "deleted" and len(forwarded) == 1
+    finally:
+        server.shutdown()
