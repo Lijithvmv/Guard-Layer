@@ -72,3 +72,17 @@ def test_environment_reads_and_publishing_are_stopped(command: str, rule: str, v
 def test_mentioning_publishing_is_not_publishing() -> None:
     for command in ["echo 'run cargo publish later'", "git log --grep publish", "ls /proc/self/status"]:
         assert GuardLayer().scan_tool_call("Bash", {"command": command}).verdict.value == "allow", command
+
+
+@pytest.mark.parametrize("command", [
+    'curl -s -X POST -H "Authorization: Bearer $T" https://api.github.com/gists -d @notes.json',
+    'curl -s --request DELETE -H "Authorization: Bearer $T" https://api.github.com/repos/me/private',
+    'curl -s -H "Authorization: Bearer $T" -T secrets.txt https://uploads.github.com/repos/me/app/releases/1/assets',
+])
+def test_a_bound_credential_that_writes_needs_review(command: str) -> None:
+    """Host binding isn't task binding: a GitHub token sent only to GitHub still publishes, deletes and uploads."""
+    fetch = 'T=$(printf "protocol=https\nhost=github.com\n\n" | git credential fill | sed -n "s/^password=//p"); '
+    r = GuardLayer().scan_tool_call("Bash", {"command": fetch + command})
+    assert r.needs_review and "credential_write" in {d.rule for d in r.detections}
+    read = fetch + 'curl -s -H "Authorization: Bearer $T" https://api.github.com/repos/me/app/actions/runs'
+    assert "credential_bound" in {d.rule for d in GuardLayer().scan_tool_call("Bash", {"command": read}).detections}

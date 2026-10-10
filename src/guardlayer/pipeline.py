@@ -575,6 +575,14 @@ class GuardLayer:
             rest.append(Detection("tool_policy", "credential_bound", Category.POLICY.value, 0.1,
                                   "A credential was fetched into a variable and used only toward its own service.",
                                   metadata={"tool": tool_name}))  # fmt: skip
+        elif flow == "writes":
+            rest.append(Detection("tool_policy", "credential_write", Category.TOOL_MISUSE.value, 0.7,
+                                  "A fetched credential is used to change something on its service (a write, upload or "
+                                  "delete). Binding to the service's host doesn't limit what the token can change: approve "
+                                  "only if this is the change you asked for, or call the service through `guardlayer broker`, which "
+                                  "adds the token only to requests you allow.",
+                                  metadata={"tool": tool_name},
+                                  action=self.tool_policy.rule_actions.get("credential_write", Action.REVIEW).value))  # fmt: skip
         elif flow == "printed":
             rest.append(Detection("tool_policy", "credential_exposed", Category.DATA_EXFILTRATION.value, 0.9,
                                   "This prints a live credential into the agent's context. Capture it in a variable "

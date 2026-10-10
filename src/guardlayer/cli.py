@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 from guardlayer import __version__
-from guardlayer.config import build_guard
+from guardlayer.config import build_guard, load_config
 from guardlayer.models import Action, Verdict
 
 FAIL_ON = ["flag", "review", "block"]
@@ -141,6 +141,11 @@ def main(argv: list[str] | None = None) -> int:
     cc.add_argument("--ensure-server", action="store_true", help="Start the server if it isn't running (a SessionStart hook).")
     cc.add_argument("--port", type=int, help="Server port (default: derived from --config and --preset).")
     cc.add_argument("--token-env", help="Require a bearer token, read from this environment variable (shared machines).")
+
+    broker = sub.add_parser("broker", help="Run the local credential broker: the agent calls services through it and "
+                                           "never holds the token (needs [broker] in --config).")
+    broker.add_argument("--port", type=int, help="Port on 127.0.0.1 (default: [broker] port, else 47300).")
+    broker.add_argument("--check", metavar="METHOD_PATH", help='Only print whether a request would pass, e.g. "GET /github/repos/o/r/actions/runs".')
 
     serve = sub.add_parser("serve", help="Run the REST API.")
     serve.add_argument("--host", default="127.0.0.1")
@@ -270,6 +275,33 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         guard = claude_code.configure_guard(build_guard(args.config), args.state_dir)
         return claude_code.run(guard, block_prompts=args.block_prompts, withhold=args.withhold_injections)
+
+    if args.command == "broker":
+        from guardlayer.broker import DEFAULT_PORT, BrokerPolicy
+        from guardlayer.broker import serve as serve_broker
+
+        if not args.config:
+            print("broker needs --config with a [broker] section", file=sys.stderr)
+            return 2
+        broker_cfg = load_config(args.config)
+        bpolicy = BrokerPolicy.from_config(broker_cfg, Path.cwd())
+        if bpolicy.audit and not Path(bpolicy.audit).is_absolute():
+            bpolicy.audit = str(Path(args.config).resolve().parent / bpolicy.audit)
+        if args.check:
+            method, _, path = args.check.partition(" ")
+            route, _, rest = path.lstrip("/").partition("/")
+            ok, reason = bpolicy.decide(route, method, rest)
+            print(f"{'allow' if ok else 'refuse'}: {reason}")
+            return 0 if ok else 1
+        port = args.port or int(broker_cfg.get("broker", {}).get("port", DEFAULT_PORT))
+        server = serve_broker(bpolicy, port)
+        print(f"guardlayer broker on http://127.0.0.1:{port}/ routes: {', '.join(sorted(bpolicy.routes))}; "
+              f"repositories: {', '.join(bpolicy.repos) or 'none'}", file=sys.stderr)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        return 0
 
     if args.command == "serve":
         try:
