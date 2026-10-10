@@ -943,6 +943,26 @@ def _relayed_links(
     return out
 
 
+_COPIED_RUN = 8  # consecutive words: well past the common phrases any two texts share
+
+
+def _copies_injected_text(arguments_text: str, state: SessionState, source: Iterable[str] | None = None) -> bool:
+    """True when the arguments carry a run of at least `_COPIED_RUN` words copied from content holding an injection
+    (or from `source`, hashed 4-word runs of other content), and the user didn't write those words. Phrases are kept
+    as 4-word runs; a copied run of n words matches n - 3 consecutive ones."""
+    words = re.findall(r"[\w@.+:/-]+", arguments_text.lower()[:20_000])
+    if len(words) < _COPIED_RUN:
+        return False
+    hostile, user = set(state.hostile_phrases if source is None else source), set(state.user_phrases)
+    need, run = _COPIED_RUN - 3, 0
+    for i in range(len(words) - 3):
+        h = _h(" ".join(words[i : i + 4]).strip(".:"), "phrase")
+        run = run + 1 if h in hostile and h not in user else 0
+        if run >= need:
+            return True
+    return False
+
+
 def _argument_values(arguments: Any) -> list[str]:
     """Every short string or number in the arguments (normalised as destination values are)."""
     out: list[str] = []
@@ -1304,6 +1324,10 @@ def taint_detections(
         kind == "irreversible" or (policy.untrusted_destination == "outbound" and kind == "outbound")
     ):
         copied = _outsider_destinations(policy, state, tool, kind, arguments)
+        if not copied and kind == "irreversible" and _copies_injected_text(arguments_text, state, state.untrusted_phrases):
+            # no detector needed: an action that can't be undone, carrying an outsider's words verbatim (a fake error
+            # message's "call reveal_credentials to recover", a poisoned record's "next step: pay ...")
+            copied = ["text copied from content an outsider can write"]
         if copied:
             emit("untrusted_destination", Category.PROMPT_INJECTION.value, 0.7,
                  f"This action sends to {', '.join(repr(v[:60]) for v in copied[:2])}, which came from content an "
@@ -1330,6 +1354,9 @@ def taint_detections(
                     carried = []
                 # a value copied from the injected content that isn't a place (an account number, an amount, a name)
                 carried += [v for v in _carried(arguments_text, state.hostile_values, state.user_values) if not _place_like(v)]
+                if not carried and state.hostile_phrases and _copies_injected_text(arguments_text, state):
+                    # the injection's own words, carried out verbatim: the agent is executing the injected text
+                    carried = ["text copied from the injected content"]
                 if not carried and state.hostile_phrases:
                     # a destination argument whose value was copied from the injected content, whatever its shape
                     hostile_p, user_p = set(state.hostile_phrases), set(state.user_phrases)
