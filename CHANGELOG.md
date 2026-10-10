@@ -6,13 +6,20 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- **Known records aren't outsider destinations** (`[session] record_fields`, on by default). A destination that is
-  the whole value of an identity field in a structured tool result (JSON, or YAML with PyYAML installed: a
-  recipient, a sender, a user or channel list) and that no untrusted prose names counts as a known record. An
-  injection is prose (a body, a subject, a page), so a target it names stays held. AgentDojo published frontier
-  runs: ordinary tasks held 173/644 -> 111/644; attacks whose harmful call was stopped 603/707 -> 603/707 with
-  detection, 538 -> 537 with detection removed (the one: the attacker's account was the account the user asked to
-  pay; it had been caught only by a copied date). It can only remove holds; ~5 ms per structured result.
+- **Business agents: from 27% to 13% of ordinary tasks held, no principled attack catch lost.** Three changes,
+  measured together on AgentDojo's published frontier runs (707 attacks, 644 ordinary tasks):
+  - *Known records aren't outsider destinations* (`[session] record_fields`, on by default): a destination that is
+    the whole value of an identity field in a structured tool result (JSON, or YAML with PyYAML installed: a
+    recipient, a sender, a user or channel list) and that no untrusted prose names is a known record. An injection is
+    prose (a body, a subject, a page), so a target it names stays held.
+  - *A known recipient's address isn't leaked data*: paying the account in the history or mailing a listed contact no
+    longer counts the recipient's own identifier as sensitive data leaving. Addresses an outsider supplied, URLs and
+    values in bodies are checked as before.
+  - *`relayed_link`* (new, review): a message, post or share that passes on a link only an outsider's content named
+    (phishing through the agent, to real recipients). Shell commands are excluded; their URL is where they go.
+  Ordinary tasks held 173 -> 85; harmful call stopped 603 -> 603 with detection, 538 -> 537 without (the one: the
+  attacker's account was the one the user asked to pay, caught before only by a copied date). Real Claude Code
+  sessions: unchanged (112/6,962); `relayed_link` fired 0 times on 9,395 real calls.
 
 ### Security
 - **Reading a process environment or a mounted service token is credential access** (`/proc/<pid>/environ`,

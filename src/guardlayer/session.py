@@ -554,6 +554,8 @@ DEFAULT_SESSION_ACTIONS: dict[str, Action] = {
     "after_injection": Action.REVIEW,
     # A destination argument copied from untrusted content (not from the user), without needing detection.
     "untrusted_destination": Action.REVIEW,
+    # A message that passes on a link only an outsider's content named (phishing relay), without needing detection.
+    "relayed_link": Action.REVIEW,
     # Label rules (0.7): only fire for tools declared as sinks in `sinks`.
     "untrusted_to_protected_sink": Action.REVIEW,
     "confidentiality_exceeds_sink": Action.REVIEW,
@@ -873,6 +875,72 @@ def _same_site(value: str, state: SessionState) -> bool:
     host = re.sub(r"^www\.", "", re.sub(r"^\w+://", "", value).split("/")[0].split("?")[0].split(":")[0])
     hosts = {host} | {p for p in destination_places(value) if "/" not in p}
     return any(_h(h, "place") in origins for h in hosts)
+
+
+_NOT_AN_ADDRESS = re.compile(r"[\s/?#=&]")
+
+
+def _payload_text(
+    arguments: Mapping[str, Any] | str | None, arguments_text: str, extra: Iterable[str], state: SessionState,
+    allowed: Iterable[str],
+) -> str:
+    """The arguments as data that leaves, without a known addressee.
+
+    A destination argument whose whole value is a known account or address (one the user named, or a record field no
+    outsider's prose names: paying the IBAN in the history, mailing a listed contact) says where data goes; it isn't
+    the data leaving. An address an outsider supplied stays in, as do URLs and anything with separators (a secret
+    hidden in a URL path still leaves)."""
+    if not isinstance(arguments, Mapping):
+        return arguments_text
+    keys = DESTINATION_ARGS | set(extra)
+    fps = state.fingerprints
+    user, records, prose = set(state.user_phrases), set(state.record_values), set(state.prose_phrases)
+
+    def known(v: str) -> bool:
+        h = _h(re.sub(r"\s+", " ", v.strip().lower()).strip(".:"), "phrase")
+        return h in user or (h in records and h not in prose)
+
+    def addressee(v: Any) -> bool:
+        return isinstance(v, str) and 0 < len(v.strip()) <= 200 and not _NOT_AN_ADDRESS.search(v.strip()) and (
+            known(v) and contains_fingerprint(v.strip(), fps, allowed_kinds=allowed)
+        )
+
+    kept: dict[str, Any] = {}
+    for key, value in arguments.items():
+        if str(key).lower() in keys:
+            if isinstance(value, (list, tuple)):
+                value = [v for v in value if not addressee(v)]
+            elif addressee(value):
+                continue
+        kept[str(key)] = value
+    from guardlayer.tools import flatten_arguments
+
+    return flatten_arguments(kept)
+
+
+def _relayed_links(
+    policy: SessionPolicy, state: SessionState, tool: str, arguments: Mapping[str, Any] | str | None
+) -> list[str]:
+    """Links in what a message carries (not where it goes) that only untrusted content named: neither the user nor a
+    record. Sending an outsider's link to people is how an injection phishes through the agent."""
+    if not isinstance(arguments, Mapping):
+        return []
+    keys = DESTINATION_ARGS | set(policy.destination_args.get(tool, ()))
+    from guardlayer.tools import flatten_arguments
+
+    carried = flatten_arguments({k: v for k, v in arguments.items() if str(k).lower() not in keys})
+    outside, user = set(state.untrusted_places), set(state.user_places)
+    out: list[str] = []
+    for v in distinctive_values(carried):
+        if not (_URL_START.match(v) or "/" in v) or not _outside_place(v):
+            continue
+        named = places(v) or places("https://" + v)
+        # the link's own page (host and path), not just its host: a link to a site the user named is still the
+        # outsider's if only the outsider named that page
+        specific = {_h(p, "place") for p in named if "/" in p} or {_h(p, "place") for p in named}
+        if specific & outside and not specific & user:
+            out.append(v[:80])
+    return out
 
 
 def _argument_values(arguments: Any) -> list[str]:
@@ -1204,7 +1272,8 @@ def taint_detections(
         kind = "local"
     classic = policy.trifecta_scope == "all"
     if leaves and state.fingerprints and (classic or kind != "local"):
-        if contains_fingerprint(arguments_text, state.fingerprints, allowed_kinds=allowed):
+        if contains_fingerprint(_payload_text(arguments, arguments_text, policy.destination_args.get(tool, ()), state, allowed),
+                                state.fingerprints, allowed_kinds=allowed):  # fmt: skip
             emit("sensitive_data_egress", Category.DATA_EXFILTRATION.value, 1.0,
                  "A sensitive value seen earlier in this session is being sent out of the machine by this tool call.",
                  sources=state.sensitive_sources[-5:])  # fmt: skip
@@ -1274,6 +1343,14 @@ def taint_detections(
                 emit("after_injection", Category.PROMPT_INJECTION.value, 0.8,
                      "This action sends a value that came from content containing a prompt injection, not from the user.",
                      hostile=state.hostile_sources[-5:], consequence=kind, values=carried[:5])  # fmt: skip
+    if policy.untrusted_destination == "outbound" and kind == "outbound" and "exec" not in caps and state.untrusted_places:
+        # messages, posts and shares (a shell command's URL is where it goes, judged above)
+        relayed = _relayed_links(policy, state, tool, arguments)
+        if relayed:
+            emit("relayed_link", Category.PROMPT_INJECTION.value, 0.7,
+                 f"This message passes on {', '.join(repr(v[:60]) for v in relayed[:2])}, a link that came from content an "
+                 "outsider can write, not from you. Approve only if you meant to share it.",
+                 values=relayed[:5], untrusted=state.untrusted_sources[-5:])  # fmt: skip
     accepts_untrusted, _ = policy.sink(tool)
     cap = policy.call_cap(tool, arguments)
     context = state.label
