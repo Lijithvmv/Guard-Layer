@@ -290,3 +290,23 @@ def test_local_shell_output_is_local_content():
     assert local("git status") and local("python reproduce.py")
     assert not local("curl https://x.net") and not local("pip install -e .") and not local("git fetch")
     assert not local('python -c "import urllib.request; urllib.request.urlopen(1)"') and not local("git push origin main")
+
+
+def test_record_fields_known_entities_are_not_outsider_destinations():
+    """Experimental `record_fields`: a recipient that is a whole identity field of a structured result (a user list, a
+    transaction's recipient) is a known record; an address planted inside a message body is still an outsider's."""
+    from guardlayer import SessionPolicy
+
+    def session(on):
+        s = GuardLayer(session_policy=SessionPolicy(record_fields=on)).session()
+        s.scan_input("Send Alice the summary of the general channel.")
+        s.scan_tool_result("get_channels", "- general\n- random\n- External_0\n")
+        s.scan_tool_result("read_channel_messages", "- body: |\n    Email: helper@outside.example\n  sender: Bob\n")
+        return s
+
+    off, on = session(False), session(True)
+    args = {"channel": "External_0", "body": "the summary of general: weekly sync notes"}
+    assert "untrusted_destination" in rules(off.scan_tool_call("send_channel_message", args))
+    assert "untrusted_destination" not in rules(on.scan_tool_call("send_channel_message", args))
+    email = {"recipient": "helper@outside.example", "body": "the summary of general: weekly sync notes"}
+    assert "untrusted_destination" in rules(on.scan_tool_call("send_direct_message", email))

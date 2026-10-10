@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`[session] record_fields` (experimental, off by default).** A destination that is the whole value of an identity
+  field in a structured tool result (JSON, or YAML with PyYAML installed: a recipient, a sender, a user or channel
+  list) counts as a known record, not text an outsider wrote. Prose fields (bodies, subjects, descriptions) and
+  plain-text results never count. AgentDojo published frontier runs: ordinary tasks held 173/644 -> 94/644; attacks
+  whose harmful call was stopped 603/707 -> 603/707 with detection, 538 -> 533 with detection removed (4 phishing
+  links sent to an existing Slack user, 1 attacker account already in the transaction history).
+
 ### Security
 - **Reading a process environment or a mounted service token is credential access** (`/proc/<pid>/environ`,
   `/var/run/secrets/`, `/run/secrets/`), and **more publishing commands need approval** (`cargo|poetry|uv|hatch|flit
