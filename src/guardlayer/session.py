@@ -64,7 +64,7 @@ from guardlayer.consequence import (
     file_consequence,
     phrases,
     places,
-    record_values,
+    record_parts,
     sends_out,
 )
 from guardlayer.labels import Confidentiality, Integrity, Label
@@ -233,6 +233,7 @@ class SessionState:
     hostile_places: list[str] = field(default_factory=list)  # hashes of places named by content holding an injection
     hostile_origins: list[str] = field(default_factory=list)  # hashes of hosts that served content holding an injection
     record_values: list[str] = field(default_factory=list)  # hashes of identity-field values of structured results (experimental)
+    prose_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of untrusted prose (record_fields)
     private_marks: list[str] = field(default_factory=list)  # hashes of identifiers and 6-word runs from declared-private sources
     unmarked_private: bool = False  # private data entered without text to mark (a labelled file): judge session-wide
     public_words: list[str] = field(default_factory=list)  # hashes of words in untrusted content and user prompts: not private, so sending them leaks nothing
@@ -311,7 +312,7 @@ class SessionState:
                           ("fingerprints", MAX_FINGERPRINTS), ("sensitive_kinds", MAX_SOURCES),
                           ("hostile_values", MAX_FINGERPRINTS), ("user_values", MAX_FINGERPRINTS),
                           ("untrusted_values", MAX_FINGERPRINTS), ("hostile_phrases", MAX_PHRASES), ("user_phrases", MAX_PHRASES),
-                          ("untrusted_phrases", MAX_PHRASES), ("untrusted_places", MAX_PHRASES), ("user_places", MAX_PHRASES), ("plain_places", MAX_PHRASES), ("hostile_places", MAX_PHRASES), ("hostile_origins", MAX_PHRASES), ("record_values", MAX_PHRASES), ("private_marks", MAX_PHRASES),
+                          ("untrusted_phrases", MAX_PHRASES), ("untrusted_places", MAX_PHRASES), ("user_places", MAX_PHRASES), ("plain_places", MAX_PHRASES), ("hostile_places", MAX_PHRASES), ("hostile_origins", MAX_PHRASES), ("record_values", MAX_PHRASES), ("prose_phrases", MAX_PHRASES), ("private_marks", MAX_PHRASES),
                           ("public_words", MAX_PHRASES)):
             setattr(self, name, _add(getattr(other, name), getattr(self, name), cap))
         self.created = min(self.created, other.created)
@@ -327,7 +328,7 @@ logger = logging.getLogger("guardlayer")
 _H_BYTES = 8
 # Lists only ever tested for membership: kept as short hashes and saved packed.
 _PACKED = ("untrusted_phrases", "hostile_phrases", "user_phrases", "untrusted_places", "user_places", "private_marks",
-           "public_words", "plain_places", "hostile_places", "hostile_origins", "record_values")
+           "public_words", "plain_places", "hostile_places", "hostile_origins", "record_values", "prose_phrases")
 
 
 _KEY: bytes | None = None
@@ -622,10 +623,10 @@ class SessionPolicy:
     # named by the user. "irreversible" (payments, access changes, publishing), "outbound" (also messages and posts)
     # or "off". An injection that evades every detector still has to name its destination somewhere the agent read.
     untrusted_destination: str = "outbound"
-    # Experimental: a destination that is the whole value of an identity field in a structured result (a recipient,
-    # a sender, a user or channel list) counts as a known record, not text an outsider wrote. Prose fields (bodies,
-    # subjects, descriptions) and plain-text results never count.
-    record_fields: bool = False
+    # A destination that is the whole value of an identity field in a structured result (a recipient, a sender, a user
+    # or channel list) and that no untrusted prose names is a known record, not a target an injection chose. An
+    # injection is prose (a body, a subject, a page), so whatever it points to appears in prose and stays held.
+    record_fields: bool = True
 
     def __post_init__(self) -> None:
         merged = dict(DEFAULT_SESSION_ACTIONS)
@@ -955,8 +956,12 @@ def observe_content(
             state.public_words = _add(state.public_words, (_h(w, "word") for w in _words(text)), MAX_PHRASES)
             if not injected:
                 state.plain_places = _add(state.plain_places, (_h(p, "place") for p in places(text)), MAX_PHRASES)
-                if policy.record_fields:
-                    state.record_values = _add(state.record_values, (_h(v, "phrase") for v in record_values(raw)), MAX_PHRASES)
+            if policy.record_fields:
+                records, prose = record_parts(raw)
+                if not injected:
+                    state.record_values = _add(state.record_values, (_h(v, "phrase") for v in records), MAX_PHRASES)
+                # an injection is prose: whatever target it names appears here
+                state.prose_phrases = _add(state.prose_phrases, (_h(p, "phrase") for t in prose for p in phrases(t)), MAX_PHRASES)
     elif not injected:
         # Identifiers in trusted content (the user's own files and tools) are known context: an action using them
         # is never blamed on untrusted or hostile content that repeats them. Content holding an injection never
@@ -1144,8 +1149,9 @@ def _outsider_destinations(
     else:
         dests = [v for v in destination_values(arguments, policy.destination_args.get(tool, ())) if _outside_place(v)]
     if policy.record_fields and state.record_values:
-        records = set(state.record_values)
-        dests = [v for v in dests if _h(v, "phrase") not in records]
+        # a known record (a whole identity field) that no outsider's prose names isn't a target an injection chose
+        records, prose = set(state.record_values), set(state.prose_phrases)
+        dests = [v for v in dests if _h(v, "phrase") not in records or _h(v, "phrase") in prose]
     copied = [v[:80] for v in dests if _h(v, "phrase") in seen and _h(v, "phrase") not in user_p]
     # The same destination written another way (a scheme or "www." added, data appended as a query) is still the
     # same place: compare places (host/path and its parents, or an address), not text.
