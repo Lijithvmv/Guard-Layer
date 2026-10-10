@@ -147,6 +147,16 @@ def main(argv: list[str] | None = None) -> int:
     broker.add_argument("--port", type=int, help="Port on 127.0.0.1 (default: [broker] port, else 47300).")
     broker.add_argument("--check", metavar="METHOD_PATH", help='Only print whether a request would pass, e.g. "GET /github/repos/o/r/actions/runs".')
 
+    gw = sub.add_parser("mcp-gateway", help="Sit between an MCP client and an MCP server: check tool calls, scan results "
+                                            "and tool descriptions. stdio: give the server command after --.")
+    gw.add_argument("--name", required=True, help="Server name: tools are judged as mcp__NAME__TOOL.")
+    gw.add_argument("--on-review", choices=["deny", "allow"], default="deny",
+                    help="A call that needs a person's approval: refuse it (default) or let it through (logged).")
+    gw.add_argument("--withhold", action="store_true", help="Replace a result holding a likely injection instead of flagging it.")
+    gw.add_argument("--listen", help="HOST:PORT to serve Streamable HTTP on (with --upstream-url) instead of stdio.")
+    gw.add_argument("--upstream-url", help="The MCP server's HTTP endpoint (with --listen).")
+    gw.add_argument("server_command", nargs=argparse.REMAINDER, help="stdio: the MCP server command, after --.")
+
     serve = sub.add_parser("serve", help="Run the REST API.")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
@@ -302,6 +312,33 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             pass
         return 0
+
+    if args.command == "mcp-gateway":
+        from guardlayer.integrations.mcp_gateway import MCPGuard, run_stdio, serve_http
+
+        guard = build_guard(args.config)
+
+        def make_core(session: str | None = None) -> MCPGuard:
+            return MCPGuard(guard, args.name, on_review=args.on_review, withhold=args.withhold,
+                            session_id=f"mcp-{args.name}-{session}" if session else None)  # fmt: skip
+
+        if args.listen:
+            if not args.upstream_url:
+                print("--listen needs --upstream-url", file=sys.stderr)
+                return 2
+            host, _, port = args.listen.rpartition(":")
+            server = serve_http(make_core, args.upstream_url, host or "127.0.0.1", int(port))
+            print(f"guardlayer mcp-gateway: http://{host or '127.0.0.1'}:{port}/ -> {args.upstream_url}", file=sys.stderr)
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                pass
+            return 0
+        server_cmd = [c for c in args.server_command if c != "--"]
+        if not server_cmd:
+            print("give the MCP server command after --, or use --listen with --upstream-url", file=sys.stderr)
+            return 2
+        return run_stdio(make_core(), server_cmd)
 
     if args.command == "serve":
         try:

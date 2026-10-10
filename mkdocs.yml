@@ -87,6 +87,7 @@ nav:
       - Audit log and evidence: concepts/audit-and-evidence.md
   - Integrations:
       - Claude Code: integrations/claude-code.md
+      - MCP gateway (any agent): integrations/mcp-gateway.md
       - LangGraph / LangChain: integrations/langgraph.md
       - OpenAI Agents SDK: integrations/openai-agents.md
       - Any framework: integrations/any-framework.md
