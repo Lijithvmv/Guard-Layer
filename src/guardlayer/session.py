@@ -64,6 +64,7 @@ from guardlayer.consequence import (
     file_consequence,
     phrases,
     places,
+    record_parts,
     sends_out,
 )
 from guardlayer.labels import Confidentiality, Integrity, Label
@@ -228,6 +229,11 @@ class SessionState:
     user_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of the user's own messages
     untrusted_places: list[str] = field(default_factory=list)  # hashes of places (host/path, address) untrusted content named
     user_places: list[str] = field(default_factory=list)  # hashes of places the user or trusted content named
+    plain_places: list[str] = field(default_factory=list)  # hashes of places named by untrusted content holding no injection
+    hostile_places: list[str] = field(default_factory=list)  # hashes of places named by content holding an injection
+    hostile_origins: list[str] = field(default_factory=list)  # hashes of hosts that served content holding an injection
+    record_values: list[str] = field(default_factory=list)  # hashes of identity-field values of structured results (experimental)
+    prose_phrases: list[str] = field(default_factory=list)  # hashes of 1-4 word runs of untrusted prose (record_fields)
     private_marks: list[str] = field(default_factory=list)  # hashes of identifiers and 6-word runs from declared-private sources
     unmarked_private: bool = False  # private data entered without text to mark (a labelled file): judge session-wide
     public_words: list[str] = field(default_factory=list)  # hashes of words in untrusted content and user prompts: not private, so sending them leaks nothing
@@ -306,7 +312,7 @@ class SessionState:
                           ("fingerprints", MAX_FINGERPRINTS), ("sensitive_kinds", MAX_SOURCES),
                           ("hostile_values", MAX_FINGERPRINTS), ("user_values", MAX_FINGERPRINTS),
                           ("untrusted_values", MAX_FINGERPRINTS), ("hostile_phrases", MAX_PHRASES), ("user_phrases", MAX_PHRASES),
-                          ("untrusted_phrases", MAX_PHRASES), ("untrusted_places", MAX_PHRASES), ("user_places", MAX_PHRASES), ("private_marks", MAX_PHRASES),
+                          ("untrusted_phrases", MAX_PHRASES), ("untrusted_places", MAX_PHRASES), ("user_places", MAX_PHRASES), ("plain_places", MAX_PHRASES), ("hostile_places", MAX_PHRASES), ("hostile_origins", MAX_PHRASES), ("record_values", MAX_PHRASES), ("prose_phrases", MAX_PHRASES), ("private_marks", MAX_PHRASES),
                           ("public_words", MAX_PHRASES)):
             setattr(self, name, _add(getattr(other, name), getattr(self, name), cap))
         self.created = min(self.created, other.created)
@@ -322,7 +328,7 @@ logger = logging.getLogger("guardlayer")
 _H_BYTES = 8
 # Lists only ever tested for membership: kept as short hashes and saved packed.
 _PACKED = ("untrusted_phrases", "hostile_phrases", "user_phrases", "untrusted_places", "user_places", "private_marks",
-           "public_words")
+           "public_words", "plain_places", "hostile_places", "hostile_origins", "record_values", "prose_phrases")
 
 
 _KEY: bytes | None = None
@@ -548,6 +554,8 @@ DEFAULT_SESSION_ACTIONS: dict[str, Action] = {
     "after_injection": Action.REVIEW,
     # A destination argument copied from untrusted content (not from the user), without needing detection.
     "untrusted_destination": Action.REVIEW,
+    # A message that passes on a link only an outsider's content named (phishing relay), without needing detection.
+    "relayed_link": Action.REVIEW,
     # Label rules (0.7): only fire for tools declared as sinks in `sinks`.
     "untrusted_to_protected_sink": Action.REVIEW,
     "confidentiality_exceeds_sink": Action.REVIEW,
@@ -601,6 +609,9 @@ class SessionPolicy:
     default_integrity: str = "declared"
     destinations: list[dict[str, Any]] = field(default_factory=list)
     tasks: dict[str, Any] = field(default_factory=dict)
+    # The task profile every new session starts under (one of `tasks`, with no {task.NAME} arguments): an allow-list
+    # of tools that works from config alone, for integrations (hooks) that can't call `guard.session(task=...)`.
+    default_task: str | None = None
     trifecta_on_pii: bool = False
     # After an injection: "consequence" holds irreversible actions and outbound ones carrying values from the hostile
     # content (see guardlayer.consequence); "all" holds every action that can write, execute or reach the network.
@@ -617,6 +628,10 @@ class SessionPolicy:
     # named by the user. "irreversible" (payments, access changes, publishing), "outbound" (also messages and posts)
     # or "off". An injection that evades every detector still has to name its destination somewhere the agent read.
     untrusted_destination: str = "outbound"
+    # A destination that is the whole value of an identity field in a structured result (a recipient, a sender, a user
+    # or channel list) and that no untrusted prose names is a known record, not a target an injection chose. An
+    # injection is prose (a body, a subject, a page), so whatever it points to appears in prose and stays held.
+    record_fields: bool = True
 
     def __post_init__(self) -> None:
         merged = dict(DEFAULT_SESSION_ACTIONS)
@@ -651,6 +666,11 @@ class SessionPolicy:
         from guardlayer.tasks import TaskProfile
 
         self.tasks = {name: t if isinstance(t, TaskProfile) else TaskProfile.from_dict(name, t) for name, t in self.tasks.items()}
+        if self.default_task is not None:
+            if self.default_task not in self.tasks:
+                raise ValueError(f"default_task {self.default_task!r} isn't defined under [tasks]")
+            if self.tasks[self.default_task].templates():
+                raise ValueError(f"default_task {self.default_task!r} uses {{task.NAME}} arguments, which only a trusted request can fill")
         for dest in self.destinations:
             missing = {"tool", "argument", "match", "max_confidentiality"} - set(dest)
             extra = set(dest) - {"tool", "argument", "match", "max_confidentiality"}
@@ -836,6 +856,121 @@ def _adds_nothing(arguments: Any, extra: Iterable[str], state: SessionState) -> 
     return True
 
 
+def _injection_chose(value: str, state: SessionState) -> bool:
+    """True when content holding an injection names this destination more precisely than anything else does.
+
+    A destination is a host, its paths and an address. If the injected text names `evil.example` and nothing else
+    does, going there is the injection's choice. If it only names `github.com`, which the user or clean content also
+    named, a GitHub page the agent picked isn't: the most specific place that points at it is not the injection's.
+    """
+    hostile, known = set(state.hostile_places), set(state.user_places) | set(state.plain_places)
+
+    def depth(hashes: set[str]) -> int:
+        named = destination_places(value) if places(value) else destination_places("https://" + value)
+        return max((p.count("/") for p in named if _h(p, "place") in hashes), default=-1)
+
+    return depth(hostile) > depth(known)
+
+
+def _place_like(value: str) -> bool:
+    """A URL, host/path or e-mail address (destination values come normalised, without their scheme)."""
+    return bool(places(value) or places("https://" + value))
+
+
+def _same_site(value: str, state: SessionState) -> bool:
+    """True when `value` is on a host that served content holding an injection in this session."""
+    origins = set(state.hostile_origins)
+    host = re.sub(r"^www\.", "", re.sub(r"^\w+://", "", value).split("/")[0].split("?")[0].split(":")[0])
+    hosts = {host} | {p for p in destination_places(value) if "/" not in p}
+    return any(_h(h, "place") in origins for h in hosts)
+
+
+_NOT_AN_ADDRESS = re.compile(r"[\s/?#=&]")
+
+
+def _payload_text(
+    arguments: Mapping[str, Any] | str | None, arguments_text: str, extra: Iterable[str], state: SessionState,
+    allowed: Iterable[str],
+) -> str:
+    """The arguments as data that leaves, without a known addressee.
+
+    A destination argument whose whole value is a known account or address (one the user named, or a record field no
+    outsider's prose names: paying the IBAN in the history, mailing a listed contact) says where data goes; it isn't
+    the data leaving. An address an outsider supplied stays in, as do URLs and anything with separators (a secret
+    hidden in a URL path still leaves)."""
+    if not isinstance(arguments, Mapping):
+        return arguments_text
+    keys = DESTINATION_ARGS | set(extra)
+    fps = state.fingerprints
+    user, records, prose = set(state.user_phrases), set(state.record_values), set(state.prose_phrases)
+
+    def known(v: str) -> bool:
+        h = _h(re.sub(r"\s+", " ", v.strip().lower()).strip(".:"), "phrase")
+        return h in user or (h in records and h not in prose)
+
+    def addressee(v: Any) -> bool:
+        return isinstance(v, str) and 0 < len(v.strip()) <= 200 and not _NOT_AN_ADDRESS.search(v.strip()) and (
+            known(v) and contains_fingerprint(v.strip(), fps, allowed_kinds=allowed)
+        )
+
+    kept: dict[str, Any] = {}
+    for key, value in arguments.items():
+        if str(key).lower() in keys:
+            if isinstance(value, (list, tuple)):
+                value = [v for v in value if not addressee(v)]
+            elif addressee(value):
+                continue
+        kept[str(key)] = value
+    from guardlayer.tools import flatten_arguments
+
+    return flatten_arguments(kept)
+
+
+def _relayed_links(
+    policy: SessionPolicy, state: SessionState, tool: str, arguments: Mapping[str, Any] | str | None
+) -> list[str]:
+    """Links in what a message carries (not where it goes) that only untrusted content named: neither the user nor a
+    record. Sending an outsider's link to people is how an injection phishes through the agent."""
+    if not isinstance(arguments, Mapping):
+        return []
+    keys = DESTINATION_ARGS | set(policy.destination_args.get(tool, ()))
+    from guardlayer.tools import flatten_arguments
+
+    carried = flatten_arguments({k: v for k, v in arguments.items() if str(k).lower() not in keys})
+    outside, user = set(state.untrusted_places), set(state.user_places)
+    out: list[str] = []
+    for v in distinctive_values(carried):
+        if not (_URL_START.match(v) or "/" in v) or not _outside_place(v):
+            continue
+        named = places(v) or places("https://" + v)
+        # the link's own page (host and path), not just its host: a link to a site the user named is still the
+        # outsider's if only the outsider named that page
+        specific = {_h(p, "place") for p in named if "/" in p} or {_h(p, "place") for p in named}
+        if specific & outside and not specific & user:
+            out.append(v[:80])
+    return out
+
+
+_COPIED_RUN = 8  # consecutive words: well past the common phrases any two texts share
+
+
+def _copies_injected_text(arguments_text: str, state: SessionState, source: Iterable[str] | None = None) -> bool:
+    """True when the arguments carry a run of at least `_COPIED_RUN` words copied from content holding an injection
+    (or from `source`, hashed 4-word runs of other content), and the user didn't write those words. Phrases are kept
+    as 4-word runs; a copied run of n words matches n - 3 consecutive ones."""
+    words = re.findall(r"[\w@.+:/-]+", arguments_text.lower()[:20_000])
+    if len(words) < _COPIED_RUN:
+        return False
+    hostile, user = set(state.hostile_phrases if source is None else source), set(state.user_phrases)
+    need, run = _COPIED_RUN - 3, 0
+    for i in range(len(words) - 3):
+        h = _h(" ".join(words[i : i + 4]).strip(".:"), "phrase")
+        run = run + 1 if h in hostile and h not in user else 0
+        if run >= need:
+            return True
+    return False
+
+
 def _argument_values(arguments: Any) -> list[str]:
     """Every short string or number in the arguments (normalised as destination values are)."""
     out: list[str] = []
@@ -896,10 +1031,14 @@ def _decode_token(token: str) -> str | None:
 
 def observe_content(
     policy: SessionPolicy, state: SessionState, text: str, result: ScanResult, *, source: str, tool: str | None,
-    can_reach_network: bool, untrusted: bool = False,
+    can_reach_network: bool, untrusted: bool = False, origin: Iterable[str] = (),
 ) -> None:
-    """Update taint after the agent read `text` (a tool result or other third-party content)."""
+    """Update taint after the agent read `text` (a tool result or other third-party content).
+
+    `origin`: the hosts the content came from (the URL the tool fetched), when known.
+    """
     trusted = policy.is_trusted(tool)
+    raw = text  # structure is read from what the tool returned, before decoded views are appended
     text = _readable(text)
     values = [fingerprint(v, "hostile") for v in distinctive_values(text)]
     injected = result.effective_verdict >= policy.hostile_min_verdict and bool(HOSTILE_CATEGORIES & set(result.categories))
@@ -911,6 +1050,14 @@ def observe_content(
             state.untrusted_phrases = _add(state.untrusted_phrases, (_h(p, "phrase") for p in phrases(text)), MAX_PHRASES)
             state.untrusted_places = _add(state.untrusted_places, (_h(p, "place") for p in places(text)), MAX_PHRASES)
             state.public_words = _add(state.public_words, (_h(w, "word") for w in _words(text)), MAX_PHRASES)
+            if not injected:
+                state.plain_places = _add(state.plain_places, (_h(p, "place") for p in places(text)), MAX_PHRASES)
+            if policy.record_fields:
+                records, prose = record_parts(raw)
+                if not injected:
+                    state.record_values = _add(state.record_values, (_h(v, "phrase") for v in records), MAX_PHRASES)
+                # an injection is prose: whatever target it names appears here
+                state.prose_phrases = _add(state.prose_phrases, (_h(p, "phrase") for t in prose for p in phrases(t)), MAX_PHRASES)
     elif not injected:
         # Identifiers in trusted content (the user's own files and tools) are known context: an action using them
         # is never blamed on untrusted or hostile content that repeats them. Content holding an injection never
@@ -923,6 +1070,8 @@ def observe_content(
         state.hostile_sources = _add(state.hostile_sources, [source], MAX_SOURCES)
         state.hostile_values = _add(state.hostile_values, values, MAX_FINGERPRINTS)
         state.hostile_phrases = _add(state.hostile_phrases, (_h(p, "phrase") for p in phrases(text)), MAX_PHRASES)
+        state.hostile_places = _add(state.hostile_places, (_h(p, "place") for p in places(text)), MAX_PHRASES)
+        state.hostile_origins = _add(state.hostile_origins, (_h(h, "place") for h in origin), MAX_PHRASES)
     found = record_sensitive_values(state, text, result)
     # Secrets make a session sensitive (restricted). Personal data makes it private: its exact values are still
     # fingerprinted (sensitive_data_egress), but it doesn't turn every later network call into a review unless
@@ -1095,6 +1244,10 @@ def _outsider_destinations(
         dests = [v for v in _argument_values(arguments) if _outside_place(v)]
     else:
         dests = [v for v in destination_values(arguments, policy.destination_args.get(tool, ())) if _outside_place(v)]
+    if policy.record_fields and state.record_values:
+        # a known record (a whole identity field) that no outsider's prose names isn't a target an injection chose
+        records, prose = set(state.record_values), set(state.prose_phrases)
+        dests = [v for v in dests if _h(v, "phrase") not in records or _h(v, "phrase") in prose]
     copied = [v[:80] for v in dests if _h(v, "phrase") in seen and _h(v, "phrase") not in user_p]
     # The same destination written another way (a scheme or "www." added, data appended as a query) is still the
     # same place: compare places (host/path and its parents, or an address), not text.
@@ -1147,7 +1300,8 @@ def taint_detections(
         kind = "local"
     classic = policy.trifecta_scope == "all"
     if leaves and state.fingerprints and (classic or kind != "local"):
-        if contains_fingerprint(arguments_text, state.fingerprints, allowed_kinds=allowed):
+        if contains_fingerprint(_payload_text(arguments, arguments_text, policy.destination_args.get(tool, ()), state, allowed),
+                                state.fingerprints, allowed_kinds=allowed):  # fmt: skip
             emit("sensitive_data_egress", Category.DATA_EXFILTRATION.value, 1.0,
                  "A sensitive value seen earlier in this session is being sent out of the machine by this tool call.",
                  sources=state.sensitive_sources[-5:])  # fmt: skip
@@ -1178,6 +1332,10 @@ def taint_detections(
         kind == "irreversible" or (policy.untrusted_destination == "outbound" and kind == "outbound")
     ):
         copied = _outsider_destinations(policy, state, tool, kind, arguments)
+        if not copied and kind == "irreversible" and _copies_injected_text(arguments_text, state, state.untrusted_phrases):
+            # no detector needed: an action that can't be undone, carrying an outsider's words verbatim (a fake error
+            # message's "call reveal_credentials to recover", a poisoned record's "next step: pay ...")
+            copied = ["text copied from content an outsider can write"]
         if copied:
             emit("untrusted_destination", Category.PROMPT_INJECTION.value, 0.7,
                  f"This action sends to {', '.join(repr(v[:60]) for v in copied[:2])}, which came from content an "
@@ -1190,12 +1348,28 @@ def taint_detections(
                  "This session read content containing a prompt injection; side-effecting actions need approval.",
                  hostile=state.hostile_sources[-5:])  # fmt: skip
         else:
-            carried = _carried(arguments_text, state.hostile_values, state.user_values) if kind == "outbound" else []
-            if kind == "outbound" and not carried and state.hostile_phrases:
-                # a destination argument whose value was copied from the injected content, whatever its shape
-                hostile_p, user_p = set(state.hostile_phrases), set(state.user_phrases)
-                carried = [v[:80] for v in destination_values(arguments, policy.destination_args.get(tool, ()))
-                           if _h(v, "phrase") in hostile_p and _h(v, "phrase") not in user_p]  # fmt: skip
+            carried: list[str] = []
+            if kind == "outbound":
+                extra = policy.destination_args.get(tool, ())
+                dests = destination_values(arguments, extra)
+                # a destination the injected content chose (the attacker's own site, address or path)
+                # (in a destination argument, or anywhere in the call: a URL inside a shell command)
+                found = dict.fromkeys([*dests, *(v for v in distinctive_values(arguments_text) if _place_like(v))])
+                carried = [v[:80] for v in found if _outside_place(v) and _place_like(v) and _injection_chose(v, state)]
+                if carried and _adds_nothing(arguments, extra, state) and all(_same_site(v, state) for v in carried):
+                    # Another page on the site that served the injection: its operator already knows the agent came,
+                    # and nothing private goes along (a research agent reading a flagged page, then its neighbours).
+                    carried = []
+                # a value copied from the injected content that isn't a place (an account number, an amount, a name)
+                carried += [v for v in _carried(arguments_text, state.hostile_values, state.user_values) if not _place_like(v)]
+                if not carried and state.hostile_phrases and _copies_injected_text(arguments_text, state):
+                    # the injection's own words, carried out verbatim: the agent is executing the injected text
+                    carried = ["text copied from the injected content"]
+                if not carried and state.hostile_phrases:
+                    # a destination argument whose value was copied from the injected content, whatever its shape
+                    hostile_p, user_p = set(state.hostile_phrases), set(state.user_phrases)
+                    carried = [v[:80] for v in dests if not _place_like(v)
+                               and _h(v, "phrase") in hostile_p and _h(v, "phrase") not in user_p]  # fmt: skip
             if kind == "irreversible":
                 emit("after_injection", Category.PROMPT_INJECTION.value, 0.7,
                      "This session read content containing a prompt injection; this action can't be undone, so it needs approval.",
@@ -1204,6 +1378,14 @@ def taint_detections(
                 emit("after_injection", Category.PROMPT_INJECTION.value, 0.8,
                      "This action sends a value that came from content containing a prompt injection, not from the user.",
                      hostile=state.hostile_sources[-5:], consequence=kind, values=carried[:5])  # fmt: skip
+    if policy.untrusted_destination == "outbound" and kind == "outbound" and "exec" not in caps and state.untrusted_places:
+        # messages, posts and shares (a shell command's URL is where it goes, judged above)
+        relayed = _relayed_links(policy, state, tool, arguments)
+        if relayed:
+            emit("relayed_link", Category.PROMPT_INJECTION.value, 0.7,
+                 f"This message passes on {', '.join(repr(v[:60]) for v in relayed[:2])}, a link that came from content an "
+                 "outsider can write, not from you. Approve only if you meant to share it.",
+                 values=relayed[:5], untrusted=state.untrusted_sources[-5:])  # fmt: skip
     accepts_untrusted, _ = policy.sink(tool)
     cap = policy.call_cap(tool, arguments)
     context = state.label

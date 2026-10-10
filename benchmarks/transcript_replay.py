@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import collections
 import hashlib
+import heapq
 import json
 import os
 import re
@@ -86,6 +87,7 @@ def events(path: Path) -> Iterator[tuple[datetime, dict[str, Any]]]:
                 continue
             base = {"session_id": row.get("sessionId") or path.stem, "cwd": row.get("cwd")}
             content = (row.get("message") or {}).get("content")
+            sidechain = bool(row.get("isSidechain"))  # a sub-agent's turn: its "prompt" was written by the parent agent
             if row["type"] == "assistant" and isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict) and block.get("type") == "tool_use":
@@ -95,6 +97,8 @@ def events(path: Path) -> Iterator[tuple[datetime, dict[str, Any]]]:
                                      "tool_input": tool_input, "tool_use_id": block["id"]}  # fmt: skip
             elif row["type"] == "user":
                 if isinstance(content, str):
+                    if sidechain:
+                        continue
                     yield when, {**base, "hook_event_name": "UserPromptSubmit", "prompt": content}
                     continue
                 if not isinstance(content, list):
@@ -109,7 +113,7 @@ def events(path: Path) -> Iterator[tuple[datetime, dict[str, Any]]]:
                         tool, tool_input = inputs[block["tool_use_id"]]
                         yield when, {**base, "hook_event_name": "PostToolUse", "tool_name": tool, "tool_input": tool_input,
                                      "tool_response": result_text(block.get("content")), "tool_use_id": block["tool_use_id"]}  # fmt: skip
-                if texts and not any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+                if texts and not sidechain and not any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
                     yield when, {**base, "hook_event_name": "UserPromptSubmit", "prompt": "\n".join(texts)}
 
 
@@ -222,103 +226,109 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
     # destination in none of them is novel, which no rewriting of an outsider's address can avoid.
     seen: dict[str, set[str]] = collections.defaultdict(set)
     written: dict[str, set[str]] = collections.defaultdict(set)  # paths the agent wrote in each session
-    for path in paths:
-        for when, event in events(path):
-            if (since and when < since) or (until and when >= until):
-                continue
-            sid = event["session_id"]
-            per = sessions.setdefault(sid, collections.Counter())
-            session = guard.session(sid)
-            kind = event["hook_event_name"]
-            if kind == "UserPromptSubmit":
-                prompts[sid].append(str(event.get("prompt") or ""))
-                seen[sid] |= distinctive_values(str(event.get("prompt") or ""))
-            if kind == "PreToolUse":
-                tool = event["tool_name"]
-                meta = {
-                    k: event[k] for k in ("cwd", "tool_use_id") if event.get(k)
-                }  # as handle_event: cwd resolves relative paths
-                result = session.scan_tool_call(
-                    tool, policy_view(tool, event["tool_input"]), metadata={**meta, "source": "replay"}
-                )
-                totals["tool_calls"] += 1
-                per["tool_calls"] += 1
-                rules = sorted({d.rule for d in result.detections if d.action in ("review", "block")})
-                calls.append({"tool_use_id": event["tool_use_id"], "tool": tool, "rules": rules,
-                              "outcome": "refused" if result.is_blocked else "held" if result.needs_review else "ok"})  # fmt: skip
-                if not (result.is_blocked or result.needs_review) and session.state.untrusted:
-                    # Would the second-stage judge be asked? Irreversible actions, and outbound ones carrying a link
-                    # that came from untrusted content and not from the user (see judge.py).
-                    view = policy_view(tool, event["tool_input"])
-                    caps, tagged = guard.tool_policy.resolve(tool)
-                    cls = consequence(tool, caps, tagged, view)
-                    text = json.dumps(view, default=str)
-                    links = [v for v in _carried(text, session.state.untrusted_values, session.state.user_values)
-                             if "." in v and "@" not in v]  # fmt: skip
-                    hosts = {v for v in distinctive_values(text) if "." in v and "@" not in v and "/" not in v}
-                    if cls == "outbound" and hosts - seen[sid]:
-                        totals["novel_destination"] += 1
-                        asked[f"novel:{tool}"] += 1
-                    if args.judge_trigger == "scoped":
-                        if cls == "irreversible" and _deletes_only_own_files(view, written[sid]):
-                            cls = "local"  # removing what the agent itself created this session loses none of the user's data
-                        if links and _user_place(view, session.state):
-                            links = []  # a page under a place the user named is the user's
-                        if not any(_outside_place(v) for v in destination_values(view)):
-                            links = []  # this machine (localhost, files) is not an outsider's place
-                    if cls == "irreversible" or (cls == "outbound" and links):
-                        asked[f"{cls}:{tool}"] += 1
-                        totals["judge_asked"] += 1
-                        if judge is not None:
-                            verdict = judge(prompts[sid], tool, view)
-                            totals[f"judge_answer_{verdict.requested}"] += 1
-                            if args.judge_log:
-                                judge_log.append({"tool": tool, "action": json.dumps(view)[:200], "answer": verdict.requested,
-                                                  "reason": verdict.reason[:200], "last_prompts": [m[:160] for m in prompts[sid][-3:]]})  # fmt: skip
-                            if verdict.requested is False:
-                                asked[f"NO {cls}:{tool}"] += 1
-                if result.is_blocked or result.needs_review:
-                    outcome = "refused" if result.is_blocked else "held"
-                    totals[outcome] += 1
-                    per[outcome] += 1
-                    for d in result.detections:
-                        if d.action in ("review", "block"):
-                            by_rule[d.rule] += 1
-                continue
-            if kind != "PostToolUse":
-                handle_event(event, guard)
-                continue
-            # The PostToolUse branch of handle_event, inline, so the scan result is visible here.
+    # Sub-agents share their parent's session id, and the hook saw their calls interleaved with the parent's: merge
+    # all transcripts by time (each is already in order) so session state builds up in the order it did live.
+    streams = (
+        heapq.merge(*(events(path) for path in paths), key=lambda item: item[0])
+        if args.with_subagents
+        else (item for path in paths for item in events(path))
+    )
+    for when, event in streams:
+        if (since and when < since) or (until and when >= until):
+            continue
+        sid = event["session_id"]
+        per = sessions.setdefault(sid, collections.Counter())
+        session = guard.session(sid)
+        kind = event["hook_event_name"]
+        if kind == "UserPromptSubmit":
+            prompts[sid].append(str(event.get("prompt") or ""))
+            seen[sid] |= distinctive_values(str(event.get("prompt") or ""))
+        if kind == "PreToolUse":
             tool = event["tool_name"]
-            guard.record_written(tool, event.get("tool_input"), session=session)
-            if vfs is not None:
-                vfs.record(tool, event.get("tool_input"))
-            if not _scan_output_of(guard, tool):
-                continue
-            meta = {k: event[k] for k in ("cwd", "tool_use_id") if event.get(k)}
-            written[sid] |= {normalise(p) for p in written_paths(event.get("tool_input"))}
-            seen[sid] |= distinctive_values(flatten_arguments(event.get("tool_response"))[:200_000])
-            result = session.scan_tool_result(
-                tool, flatten_arguments(event.get("tool_response")), metadata={**meta, "source": "replay"}
+            meta = {
+                k: event[k] for k in ("cwd", "tool_use_id") if event.get(k)
+            }  # as handle_event: cwd resolves relative paths
+            result = session.scan_tool_call(
+                tool, policy_view(tool, event["tool_input"]), metadata={**meta, "source": "replay"}
             )
-            new_hostile = result.verdict >= Verdict.FLAG and bool(HOSTILE_CATEGORIES & set(result.categories))
-            new_sensitive = Category.SECRET.value in set(result.categories) and bool(session.state.sensitive_sources)
-            if new_hostile or new_sensitive:
-                last = guard.sessions.get(sid)
-                entry = {"time": when.isoformat(timespec="seconds"), "session": sid[:8], "tool": event["tool_name"],
-                         "rules": sorted({d.rule for d in result.detections if d.category in HOSTILE_CATEGORIES | {Category.SECRET.value}}),
-                         "made": sorted(({"hostile"} if new_hostile else set()) | ({"sensitive"} if new_sensitive else set()))}  # fmt: skip
-                if args.show_sources:
-                    entry["where"] = where(event["tool_name"], event["tool_input"])
-                triggers.append(entry)
-                if new_hostile and args.clear_after_hostile and last is not None:
-                    # The file store merges on put (taint only grows, so concurrent hooks can't lose it); a clear
-                    # has to replace the stored state, so: delete, then put the cleared copy.
-                    last.hostile_sources = []
-                    guard.sessions.delete(sid)
-                    guard.sessions.put(last)
-                    totals["clears"] += 1
-                    per["clears"] += 1
+            totals["tool_calls"] += 1
+            per["tool_calls"] += 1
+            rules = sorted({d.rule for d in result.detections if d.action in ("review", "block")})
+            calls.append({"tool_use_id": event["tool_use_id"], "tool": tool, "rules": rules,
+                          "outcome": "refused" if result.is_blocked else "held" if result.needs_review else "ok"})  # fmt: skip
+            if not (result.is_blocked or result.needs_review) and session.state.untrusted:
+                # Would the second-stage judge be asked? Irreversible actions, and outbound ones carrying a link
+                # that came from untrusted content and not from the user (see judge.py).
+                view = policy_view(tool, event["tool_input"])
+                caps, tagged = guard.tool_policy.resolve(tool)
+                cls = consequence(tool, caps, tagged, view)
+                text = json.dumps(view, default=str)
+                links = [v for v in _carried(text, session.state.untrusted_values, session.state.user_values)
+                         if "." in v and "@" not in v]  # fmt: skip
+                hosts = {v for v in distinctive_values(text) if "." in v and "@" not in v and "/" not in v}
+                if cls == "outbound" and hosts - seen[sid]:
+                    totals["novel_destination"] += 1
+                    asked[f"novel:{tool}"] += 1
+                if args.judge_trigger == "scoped":
+                    if cls == "irreversible" and _deletes_only_own_files(view, written[sid]):
+                        cls = "local"  # removing what the agent itself created this session loses none of the user's data
+                    if links and _user_place(view, session.state):
+                        links = []  # a page under a place the user named is the user's
+                    if not any(_outside_place(v) for v in destination_values(view)):
+                        links = []  # this machine (localhost, files) is not an outsider's place
+                if cls == "irreversible" or (cls == "outbound" and links):
+                    asked[f"{cls}:{tool}"] += 1
+                    totals["judge_asked"] += 1
+                    if judge is not None:
+                        verdict = judge(prompts[sid], tool, view)
+                        totals[f"judge_answer_{verdict.requested}"] += 1
+                        if args.judge_log:
+                            judge_log.append({"tool": tool, "action": json.dumps(view)[:200], "answer": verdict.requested,
+                                              "reason": verdict.reason[:200], "last_prompts": [m[:160] for m in prompts[sid][-3:]]})  # fmt: skip
+                        if verdict.requested is False:
+                            asked[f"NO {cls}:{tool}"] += 1
+            if result.is_blocked or result.needs_review:
+                outcome = "refused" if result.is_blocked else "held"
+                totals[outcome] += 1
+                per[outcome] += 1
+                for d in result.detections:
+                    if d.action in ("review", "block"):
+                        by_rule[d.rule] += 1
+            continue
+        if kind != "PostToolUse":
+            handle_event(event, guard)
+            continue
+        # The PostToolUse branch of handle_event, inline, so the scan result is visible here.
+        tool = event["tool_name"]
+        guard.record_written(tool, event.get("tool_input"), session=session)
+        if vfs is not None:
+            vfs.record(tool, event.get("tool_input"))
+        if not _scan_output_of(guard, tool):
+            continue
+        meta = {k: event[k] for k in ("cwd", "tool_use_id") if event.get(k)}
+        written[sid] |= {normalise(p) for p in written_paths(event.get("tool_input"))}
+        seen[sid] |= distinctive_values(flatten_arguments(event.get("tool_response"))[:200_000])
+        result = session.scan_tool_result(
+            tool, flatten_arguments(event.get("tool_response")), metadata={**meta, "source": "replay"}
+        )
+        new_hostile = result.verdict >= Verdict.FLAG and bool(HOSTILE_CATEGORIES & set(result.categories))
+        new_sensitive = Category.SECRET.value in set(result.categories) and bool(session.state.sensitive_sources)
+        if new_hostile or new_sensitive:
+            last = guard.sessions.get(sid)
+            entry = {"time": when.isoformat(timespec="seconds"), "session": sid[:8], "tool": event["tool_name"],
+                     "rules": sorted({d.rule for d in result.detections if d.category in HOSTILE_CATEGORIES | {Category.SECRET.value}}),
+                     "made": sorted(({"hostile"} if new_hostile else set()) | ({"sensitive"} if new_sensitive else set()))}  # fmt: skip
+            if args.show_sources:
+                entry["where"] = where(event["tool_name"], event["tool_input"])
+            triggers.append(entry)
+            if new_hostile and args.clear_after_hostile and last is not None:
+                # The file store merges on put (taint only grows, so concurrent hooks can't lose it); a clear
+                # has to replace the stored state, so: delete, then put the cleared copy.
+                last.hostile_sources = []
+                guard.sessions.delete(sid)
+                guard.sessions.put(last)
+                totals["clears"] += 1
+                per["clears"] += 1
     if vfs is not None:
         totals.update({f"files_{k}": v for k, v in vfs.counts.items()})
         totals["files_missing_examples"] = dict(vfs.missing.most_common(25))  # type: ignore[assignment]
@@ -370,12 +380,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--judge-log", action="store_true", help="include each judged action, its answer and the last prompts (contains text)")
     p.add_argument("--judge-host", default="http://127.0.0.1:11434", help="Ollama server for --judge")
     p.add_argument("--scan-cache", help="file caching detector results across replays (delete it when detectors change)")
+    p.add_argument("--with-subagents", action="store_true",
+                   help="also replay each transcript's sub-agents (<session>/subagents/*.jsonl), merged by time")
     p.add_argument("-o", "--output", help="write the JSON result here")
     args = p.parse_args(argv)
     paths: list[Path] = []
     for raw in args.paths:
         path = Path(raw).expanduser()
-        paths += sorted(path.glob("*.jsonl")) if path.is_dir() else [path]
+        found = sorted(path.glob("*.jsonl")) if path.is_dir() else [path]
+        paths += found
+        if args.with_subagents:
+            paths += [sub for f in found for sub in sorted((f.parent / f.stem / "subagents").glob("*.jsonl"))]
     out = replay(paths, args)
     text = json.dumps(out, indent=2)
     if args.output:

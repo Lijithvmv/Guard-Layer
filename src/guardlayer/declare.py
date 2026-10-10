@@ -34,6 +34,8 @@ class ToolUsage:
     secrets: int = 0  # results with secrets
     personal: int = 0  # results with personal data
     reviewed_or_blocked: int = 0
+    tainted_calls: int = 0  # calls made after the session had read content from outside
+    sessions: set[str] = field(default_factory=set)  # sessions it was called in
     rules: set[str] = field(default_factory=set)
 
 
@@ -58,6 +60,8 @@ def tool_usage(audit_paths: Iterable[str | Path]) -> dict[str, ToolUsage]:
                 detections = entry.get("detections") or []
                 if entry.get("direction") == "output":
                     u.calls += 1
+                    u.tainted_calls += bool((meta.get("session") or {}).get("untrusted"))
+                    u.sessions.add(str(meta.get("session_id") or ""))
                     if (entry.get("shadow_verdict") or entry.get("verdict")) in ("review", "block"):
                         u.reviewed_or_blocked += 1
                     u.rules |= {d.get("rule", "") for d in detections if d.get("action") in ("review", "block")}
@@ -117,6 +121,7 @@ def draft(usage: dict[str, ToolUsage], guard: GuardLayer, *, known: Iterable[str
     if known:
         lines += ["# Already known to GuardLayer (Claude Code built-ins or your config), not redeclared:",
                   "#   " + ", ".join(sorted(n for n in known if n in usage)), ""]  # fmt: skip
+    lines += allowed_tools(usage, known)
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -138,6 +143,11 @@ def _tool_table(u: ToolUsage, guard: GuardLayer, *, trust: bool) -> list[str]:
             out.append(f'output = "untrusted"                # an injection was seen in its output {u.injections} time(s)')
         elif remote:
             out.append('output = "untrusted"                # reaches outside the machine, so others can write what it returns')
+        elif u.tainted_calls:
+            # What was seen in these sessions could have been steered by outside content, so the log can't vouch for it
+            # (an attacker whose text no detector recognises would otherwise earn a "trusted" suggestion).
+            out.append(f"# not suggested as trusted: {u.tainted_calls} of its {u.calls} call(s) came after the session read"
+                       " outside content; decide from what the tool reads, not from this log")
         else:
             out.append('# output = "trusted"              # CHECK: uncomment only if nobody outside can write what it reads')
     if u.secrets:
@@ -152,4 +162,49 @@ def _tool_table(u: ToolUsage, guard: GuardLayer, *, trust: bool) -> list[str]:
         out.append(f'consequence = "{kind}"{" " * (14 - len(kind))}# CHECK: guessed from the name: {why}')
     if u.reviewed_or_blocked:
         out.append(f"# held for review or refused {u.reviewed_or_blocked} time(s): {', '.join(sorted(u.rules)) or 'see the audit report'}")
+    return [*out, ""]
+
+TASK_NAME = "observed"
+
+
+def allowed_tools(usage: dict[str, ToolUsage], known: Iterable[str] = ()) -> list[str]:
+    """A task profile listing the tools the agent was seen using, as an allow-list to review.
+
+    With `[session] default_task` set to it, a call to any other tool is held for review (`out_of_task`). What an
+    injection could add to such a list is an extra tool (a mail or payment tool the task never needed), not the agent's
+    own tools. `known` tools (an integration's built-ins, tools already in your config) are always listed. Any other
+    tool is listed if it is part of the workflow (called in two or more sessions, or at least once before the session
+    read outside content) and wasn't held or refused every time. A tool seen in one session, only after outside content,
+    is what an injection-driven call looks like: it is named for a person to decide.
+    """
+    known = set(known)
+    called = sorted((u for u in usage.values() if u.calls), key=lambda u: u.name)
+    if not called:
+        return []
+    keep = [u for u in called if u.name in known or (
+        (u.tainted_calls < u.calls or len(u.sessions) >= 2) and u.reviewed_or_blocked < u.calls)]
+    out = [
+        "# ---- Allowed tools: what the agent used. With default_task set, any other tool is held for review",
+        "#      (out_of_task). CHECK the list: remove tools this agent shouldn't need, then uncomment default_task.",
+        "#      Draft it per project: another project's tools differ.",
+        "[session]",
+        f'# default_task = "{TASK_NAME}"',
+        "",
+        f"[tasks.{TASK_NAME}]",
+        'description = "Tools seen in use"',
+        "tools = [",
+        *(f"  {json.dumps(u.name)},{' ' * max(1, 34 - len(u.name))}# {u.calls} call(s) in {len(u.sessions)} session(s)"
+          + (" (built-in or already declared)" if u.name in known else "")
+          + (f", {u.reviewed_or_blocked} held or refused" if u.reviewed_or_blocked else "") for u in keep),
+        "]",
+    ]
+    if not keep:  # an empty profile isn't valid config: say so instead
+        out = [*out[:2], "# No tool qualified (each was seen once after outside content, or always held): nothing drafted.", ""]
+    left = [u for u in called if u not in keep]
+    if left:
+        out.append("# Left out (add them yourself if this agent needs them):")
+        for u in left:
+            why = (f"held or refused every time ({', '.join(sorted(u.rules)) or 'see the audit report'})"
+                   if u.reviewed_or_blocked >= u.calls else "one session, only after it had read outside content")
+            out.append(f"#   {json.dumps(u.name)}  # {u.calls} call(s): {why}")
     return [*out, ""]

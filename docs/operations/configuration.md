@@ -53,6 +53,13 @@ guardlayer --config guardlayer.toml policy draft audit.jsonl --claude-code -o to
 Check what you declared with `guardlayer --config guardlayer.toml policy check`: it lists every tool and what
 GuardLayer assumes about it.
 
+The draft also lists the tools the agent used as an **allow-list** (`[tasks.observed]`). Uncomment
+`default_task = "observed"` and any other tool is held for review (`out_of_task`). Built-in tools and tools used in two
+or more sessions are listed; a tool seen in one session, only after outside content was read, is left for you to
+decide, since that is what a call an injection caused looks like. Draft it per project: on one user's sessions, a
+list drafted from earlier sessions of the same project held 1.3% of later calls (24 of 1,871); one drafted from a
+different project held 42%.
+
 ## Everything else
 
 The sections below are the full reference. `[tool.NAME]` is a shorter way to write the per-tool parts of `[tools]`,

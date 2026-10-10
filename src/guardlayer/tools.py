@@ -160,7 +160,9 @@ DEFAULT_TOOL_RULES: tuple[ToolRule, ...] = (
         r"|\b(drop\s+(database|schema|table)|truncate\s+table)\b|\bdelete\s+from\s+\w+\s*(;|$)"
         r"|(^|[;&|]\s*|\s)(sudo|doas|runas)\s|\bsu\s+-|\bchmod\s+[ug]?\+s\b"
         r"|\b(shutdown|reboot|halt|poweroff)\b|\bkill(all)?\s+-9\b|\bStop-Computer\b|\bRestart-Computer\b"
-        r"|\b(npm|yarn|pnpm)\s+publish\b|\btwine\s+upload\b|\bterraform\s+(apply|destroy)\b[^;&|\n]*-auto-approve",
+        r"|\b(npm|yarn|pnpm|cargo|poetry|uv|hatch|flit)\s+publish\b|\btwine\s+upload\b|\bgem\s+push\b|\bnuget\s+push\b"
+        r"|\bdocker\s+push\b|\bgh\s+release\s+create\b"
+        r"|\bterraform\s+(apply|destroy)\b[^;&|\n]*-auto-approve",
         capabilities=_EXEC,
         severity=0.7,
         message="Risky command (history rewrite, data deletion, privilege escalation, publishing or shutdown).",
@@ -180,7 +182,9 @@ DEFAULT_TOOL_RULES: tuple[ToolRule, ...] = (
         r"\.ssh[/\\](id_[a-z0-9]+|authorized_keys|config)\b|\bid_(rsa|dsa|ecdsa|ed25519)\b|\.aws[/\\](credentials|config)\b"
         r"|\.azure[/\\]|\.config[/\\]gcloud\b|\.kube[/\\]config\b|\.docker[/\\]config\.json|\.git-credentials\b|(^|[/\\\s\"'])\.netrc\b"
         r"|(^|[/\\\s\"'])\.(npmrc|pypirc)\b|\.gnupg[/\\]|\.password-store\b|\.vault-token\b|\.terraform\.d[/\\]credentials"
-        r"|/etc/(shadow|gshadow|sudoers)\b|\\config\\(SAM|SECURITY|SYSTEM)\b|\bwallet\.dat\b|\bLogin Data\b|\bkeychain(-db)?\b",
+        r"|/etc/(shadow|gshadow|sudoers)\b|\\config\\(SAM|SECURITY|SYSTEM)\b|\bwallet\.dat\b|\bLogin Data\b|\bkeychain(-db)?\b"
+        # a process's environment and mounted service tokens (the 2026 Hugging Face intrusion read /proc/self/environ)
+        r"|/proc/(self|\d+)/environ\b|/var/run/secrets/|/run/secrets/",
         severity=0.95,
         message="Access to a credential store (SSH keys, cloud credentials, password stores or system secrets).",
     ),

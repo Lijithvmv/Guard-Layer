@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 from guardlayer.canary import Canary, CanaryManager
-from guardlayer.consequence import local_command
+from guardlayer.consequence import destination_places, destination_values, local_command
 from guardlayer.credentials import credential_flow
 from guardlayer.extract import DEFAULT_EXTRACTORS, Extractor, extract, media_parts
 from guardlayer.filelabels import FileLabelStore, deleted_paths, executed_paths, normalise, written_paths
@@ -242,7 +242,14 @@ class GuardLayer:
         if session is None:
             return None
         sid = session.id if isinstance(session, GuardSession) else str(session)
-        return self.sessions.get(sid) or SessionState(sid)
+        state = self.sessions.get(sid)
+        if state is None:
+            state = SessionState(sid)
+            default = self.session_policy.default_task
+            if default is not None:  # a new session starts under the configured task profile
+                state.task, state.task_tools = default, list(self.session_policy.tasks[default].tools)
+                state.task_version, state.task_log = 1, [f"set (default_task): {default}"]
+        return state
 
     # ------------------------------------------------------------------ core scan
     def scan(
@@ -317,7 +324,8 @@ class GuardLayer:
 
     def _scan_content(
         self, content: str, *, source: str | None, session: str | GuardSession | None, tool: str | None,
-        extra: Sequence[Detection] = (), force_untrusted: bool = False, local: bool = False, **context_fields: Any,
+        extra: Sequence[Detection] = (), force_untrusted: bool = False, local: bool = False, origin: Sequence[str] = (),
+        **context_fields: Any,
     ) -> ScanResult:
         metadata = dict(context_fields.pop("metadata", {}) or {})
         if source:
@@ -346,6 +354,7 @@ class GuardLayer:
             observe_content(
                 self.session_policy, state, content, result,
                 source=source or "context", tool=tool, can_reach_network=reaches_network, untrusted=untrusted,
+                origin=origin,
             )  # fmt: skip
             if force_untrusted and untrusted:
                 observe_label(state, Label(Integrity.UNTRUSTED), f"unreadable:{source or tool}")
@@ -616,6 +625,10 @@ class GuardLayer:
         file the agent wrote after reading untrusted content is read back as untrusted, whatever tool reads it.
         """
         read_back = local = False
+        origin: list[str] = []
+        if isinstance(arguments, Mapping) and session is not None:
+            # the host a fetch read from: a later visit to the same site tells its operator nothing new
+            origin = sorted({p for v in destination_values(arguments) for p in destination_places(v) if "/" not in p and "." in p})
         if arguments is not None and session is not None:
             refs = self.file_labels.referenced(arguments, flatten_arguments(arguments))
             read_back = any(label.integrity >= Integrity.UNTRUSTED for _, label in refs)
@@ -626,7 +639,7 @@ class GuardLayer:
         if parts is None:
             text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
             return self._scan_content(text, source=f"tool:{tool_name}", session=session, tool=tool_name,
-                                      force_untrusted=read_back, local=local, **context_fields)  # fmt: skip
+                                      force_untrusted=read_back, local=local, origin=origin, **context_fields)  # fmt: skip
         # Bytes or media blocks: scan what can be extracted; what can't be read makes the session untrusted.
         texts, blobs = parts
         extracted, unreadable = extract(blobs, self.extractors)
@@ -636,7 +649,8 @@ class GuardLayer:
                                    f"Couldn't read {', '.join(sorted(set(unreadable)))} content; treated as untrusted.",
                                    metadata={"media": unreadable[:10]}, action=Action.LOG.value))  # fmt: skip
         return self._scan_content("\n\n".join([*texts, *extracted]), source=f"tool:{tool_name}", session=session,
-                                  tool=tool_name, extra=extra, force_untrusted=bool(unreadable) or read_back, **context_fields)  # fmt: skip
+                                  tool=tool_name, extra=extra, force_untrusted=bool(unreadable) or read_back, origin=origin,
+                                  **context_fields)  # fmt: skip
 
     # ------------------------------------------------------------------ canaries
     def add_canary(self, prompt: str, *, echo: bool = False) -> Canary:

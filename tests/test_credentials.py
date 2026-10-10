@@ -50,3 +50,25 @@ def test_exposed_or_misdirected_credentials_are_blocked(command: str, rule: str)
 def test_listing_a_credential_store_still_needs_review() -> None:
     r = GuardLayer().scan_tool_call("Bash", {"command": "cmdkey /list"})
     assert r.needs_review and "credential_access" in {d.rule for d in r.detections}
+
+
+@pytest.mark.parametrize(
+    ("command", "rule", "verdict"),
+    [
+        # incidents, 2026: an intruder read /proc/self/environ; an agent registered a package index account and published
+        ("cat /proc/self/environ", "credential_file", "block"),
+        ("cat /var/run/secrets/kubernetes.io/serviceaccount/token", "credential_file", "block"),
+        ("cargo publish", "risky_command", "review"),
+        ("uv publish", "risky_command", "review"),
+        ("gh release create v1.0.0", "risky_command", "review"),
+        ("docker push registry.example/app:latest", "risky_command", "review"),
+    ],
+)
+def test_environment_reads_and_publishing_are_stopped(command: str, rule: str, verdict: str) -> None:
+    r = GuardLayer().scan_tool_call("Bash", {"command": command})
+    assert r.verdict.value == verdict and rule in {d.rule for d in r.detections}
+
+
+def test_mentioning_publishing_is_not_publishing() -> None:
+    for command in ["echo 'run cargo publish later'", "git log --grep publish", "ls /proc/self/status"]:
+        assert GuardLayer().scan_tool_call("Bash", {"command": command}).verdict.value == "allow", command

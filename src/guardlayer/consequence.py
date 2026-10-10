@@ -19,6 +19,7 @@ run. Values are stored as salted hashes, like secret fingerprints.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from collections.abc import Iterable, Mapping
@@ -87,6 +88,67 @@ def phrases(text: str, limit: int = 20_000) -> set[str]:
             if len(out) >= limit:
                 return out
     return out
+
+
+# Fields whose value is prose anyone can write (where injected text lives), never a record's identity.
+_FREE_TEXT_KEYS = frozenset(
+    "body content text message messages description summary snippet note notes comment comments review reviews "
+    "subject title bio about details info data html markdown result output answer reply".split()
+)
+
+
+def record_parts(text: str, limit: int = 2000) -> tuple[set[str], list[str]]:
+    """A tool result split into its records' identity values and its prose.
+
+    A tool that returns records (JSON, or YAML when PyYAML is installed) states some values as fields: a recipient,
+    a sender, a user list, a date. Those are the records' identities (normalised, as destination values are). Prose
+    is everything someone wrote as text: the values of prose fields (bodies, subjects, descriptions) and any result
+    that isn't structured. An injection is prose, so a target it names appears in the prose.
+    """
+    text = text.strip()[:200_000]
+    if not text or (text[0] not in "[{-" and ":" not in text.splitlines()[0]):
+        return set(), [text] if text else []
+    data: Any = None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        try:
+            import yaml  # optional: only for YAML results
+
+            data = yaml.safe_load(text)
+        except Exception:  # noqa: BLE001 - not structured, or no PyYAML
+            return set(), [text]
+    if not isinstance(data, (Mapping, list)):
+        return set(), [text]
+    records: set[str] = set()
+    prose: list[str] = []
+
+    def walk(value: Any, free: bool) -> None:
+        if len(records) >= limit:
+            return
+        if isinstance(value, Mapping):
+            for k, v in value.items():
+                walk(v, free or str(k).lower() in _FREE_TEXT_KEYS)
+        elif isinstance(value, list):
+            for v in value[:500]:
+                walk(v, free)
+        elif isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            if free:
+                prose.append(str(value))
+                return
+            v = _norm(str(value)).strip(".:")
+            if 0 < len(v) <= 100 and len(v.split()) <= 6:
+                records.add(v)
+            else:
+                prose.append(str(value))  # a long value in an identity field is still text someone wrote
+
+    walk(data, False)
+    return records, prose
+
+
+def record_values(text: str, limit: int = 2000) -> set[str]:
+    """The identity-field values of a structured result (see `record_parts`)."""
+    return record_parts(text, limit)[0]
 
 
 def places(text: str, limit: int = 2000) -> set[str]:
