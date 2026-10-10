@@ -1348,7 +1348,7 @@ def taint_detections(
                  "This session read content containing a prompt injection; side-effecting actions need approval.",
                  hostile=state.hostile_sources[-5:])  # fmt: skip
         else:
-            carried: list[str] = []
+            carried = []
             if kind == "outbound":
                 extra = policy.destination_args.get(tool, ())
                 dests = destination_values(arguments, extra)

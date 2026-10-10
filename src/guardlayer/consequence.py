@@ -113,7 +113,7 @@ def record_parts(text: str, limit: int = 2000) -> tuple[set[str], list[str]]:
         data = json.loads(text)
     except ValueError:
         try:
-            import yaml  # optional: only for YAML results
+            import yaml  # type: ignore[import-untyped]  # optional: only for YAML results
 
             data = yaml.safe_load(text)
         except Exception:  # noqa: BLE001 - not structured, or no PyYAML
