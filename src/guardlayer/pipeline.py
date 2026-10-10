@@ -242,7 +242,14 @@ class GuardLayer:
         if session is None:
             return None
         sid = session.id if isinstance(session, GuardSession) else str(session)
-        return self.sessions.get(sid) or SessionState(sid)
+        state = self.sessions.get(sid)
+        if state is None:
+            state = SessionState(sid)
+            default = self.session_policy.default_task
+            if default is not None:  # a new session starts under the configured task profile
+                state.task, state.task_tools = default, list(self.session_policy.tasks[default].tools)
+                state.task_version, state.task_log = 1, [f"set (default_task): {default}"]
+        return state
 
     # ------------------------------------------------------------------ core scan
     def scan(

@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`policy draft` drafts an allow-list, and `[session] default_task` enforces it from config.** The draft lists the
+  tools the agent used as a task profile; with `default_task` set, any other tool is held for review (`out_of_task`).
+  Hooks (Claude Code) can now use task profiles: a new session starts under `default_task`. Built-in tools and tools
+  used in two or more sessions are listed; a tool seen in one session, only after outside content, is left for a
+  person to decide. One user's real sessions: drafted from earlier sessions of a project, it held 1.3% of the
+  project's later calls (24 of 1,871); drafted from another project, 42%, so draft per project. On Invaris AgentSec's
+  suite, declaring the allowed tools takes GuardLayer from 25 to 16 of 35 scenarios with findings.
+
 ### Security
 - **An agent passing on an injection's own words is held.** After a detected injection, an outbound call carrying
   8+ consecutive words of the injected text (and not the user's) is held (`after_injection`), whatever its

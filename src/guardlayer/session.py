@@ -609,6 +609,9 @@ class SessionPolicy:
     default_integrity: str = "declared"
     destinations: list[dict[str, Any]] = field(default_factory=list)
     tasks: dict[str, Any] = field(default_factory=dict)
+    # The task profile every new session starts under (one of `tasks`, with no {task.NAME} arguments): an allow-list
+    # of tools that works from config alone, for integrations (hooks) that can't call `guard.session(task=...)`.
+    default_task: str | None = None
     trifecta_on_pii: bool = False
     # After an injection: "consequence" holds irreversible actions and outbound ones carrying values from the hostile
     # content (see guardlayer.consequence); "all" holds every action that can write, execute or reach the network.
@@ -663,6 +666,11 @@ class SessionPolicy:
         from guardlayer.tasks import TaskProfile
 
         self.tasks = {name: t if isinstance(t, TaskProfile) else TaskProfile.from_dict(name, t) for name, t in self.tasks.items()}
+        if self.default_task is not None:
+            if self.default_task not in self.tasks:
+                raise ValueError(f"default_task {self.default_task!r} isn't defined under [tasks]")
+            if self.tasks[self.default_task].templates():
+                raise ValueError(f"default_task {self.default_task!r} uses {{task.NAME}} arguments, which only a trusted request can fill")
         for dest in self.destinations:
             missing = {"tool", "argument", "match", "max_confidentiality"} - set(dest)
             extra = set(dest) - {"tool", "argument", "match", "max_confidentiality"}
