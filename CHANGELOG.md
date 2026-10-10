@@ -9,6 +9,11 @@ Development version `0.9.0.dev0` (no release): builds now report a version other
 audit logs can tell them apart.
 
 ### Added
+- **MCP gateway: `guardlayer mcp-gateway`.** Any MCP client and server, no code changes: over stdio (the server
+  command after `--`) or Streamable HTTP (`--listen` / `--upstream-url`). Checks every tool call before the server sees
+  it (a refusal or a hold returns a tool error), scans every result before the agent reads it, and removes tools whose
+  description carries an injection. Tools are judged as `mcp__<server>__<tool>`. Invaris AgentSec's suite over MCP
+  (35 scenarios): 35 with findings direct, 30 through the gateway unconfigured, 19 with the allowed tools declared.
 - **Credential broker (experimental): `guardlayer broker`.** The agent calls a service through a local endpoint
   with no credential; the broker adds the token only to requests a route allows (method and path; `{repo}` = the
   working directory's GitHub remotes), scrubs it from responses and logs every request. The token never enters the
