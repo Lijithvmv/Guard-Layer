@@ -114,16 +114,23 @@ Weakest first. Each result says what kind of data it rests on. Everything is rep
 write-up is in [Evaluation](https://lijithvmv.github.io/Guard-Layer/evaluation/) and
 [Judging an action by its consequence](https://lijithvmv.github.io/Guard-Layer/concepts/consequence/).
 
-**Not measured yet:** an attacker who adapts to these rules; live use beyond one developer's pilot; teams. Until then,
+**Read this first: most attack numbers below are not independent tests.** GuardLayer's rules were developed by
+studying where they failed on AgentDojo's published runs and on Invaris AgentSec's suite, and the results below were
+measured on that same data. They show the rules fit that data, not that they generalise. A test on benchmarks never
+used during development is the next step and isn't done yet.
+
+**Not measured yet:** benchmarks never used during development; an attacker who adapts to these rules; attacks that
+need no destination (a manipulated choice or summary); live use beyond one developer's pilot; teams. Until then,
 nothing here is a robustness guarantee.
 
 | Test | Data | Result | How much to trust it |
 |---|---|---|---|
-| Interruptions on real work | replay of one developer's Claude Code sessions, 6,962 calls from projects never used to design the rules | **1.6%** of calls held for approval (`balanced`) | real use, one person |
+| An outside attack suite, first run, before any change for it | Invaris AgentSec (35 scenarios, a deliberately vulnerable agent that obeys every instruction) | **0 of 35** stopped out of the box (no call withheld); with the suite's allowed tools declared, 19 of 35 still found problems | untuned: the honest out-of-the-box result. Later rules made for this suite bring it to 30 (none declared) and 16 (declared), but those are tuned |
+| Interruptions on real work | replay of one developer's Claude Code sessions, 6,962 calls from projects not used to design the rules (but used to check every change) | **1.6%** of calls held for approval (`balanced`) | real use, one person |
 | Interruptions on someone else's agents | 200 OpenHands runs resolving real GitHub issues, 11,869 calls (third-party recorded, CC BY 4.0) | **0.75%** held with no setup; **0.11%** with the four tools declared | different model, framework and people; no attacks in it |
-| Attacks no detector recognises | AgentDojo's published runs of five frontier models (Claude 3.7/3.5 Sonnet, GPT-4o, Gemini 2.0 Flash, Llama 3.3 70B), 707 attacks that succeeded; GuardLayer's detectors switched off | **76%**: the attack's own harmful call held (85% with detectors on); some call in the run held: 92% (95%). 27% of their ordinary tasks held, nearly all of which pay, send or book right after reading others' text | third-party recorded; one published attack family; replay, so the agent never saw a hold |
-| Plainly worded attacks | AgentDojo `direct` runs, GPT-4o and Llama 3.3 | earlier defaults (which leaned on detection) 10/23 and 11/34; now **22/23** and **32/34** | small |
-| Against a model-based trace judge | the same 85 recorded attacks and 40 ordinary tasks, an open-source LLM alignment checker run locally on a 14B model | attacks stopped: GuardLayer **82**, judge 80; ordinary tasks held: **12%** vs 28%; per decision ~0.01 s vs ~50 s | small samples, overlapping intervals; the judge's authors use a much larger model |
+| Attacks no detector recognises | AgentDojo's published runs of five frontier models (Claude 3.7/3.5 Sonnet, GPT-4o, Gemini 2.0 Flash, Llama 3.3 70B), 707 attacks that succeeded; GuardLayer's detectors switched off | **76%**: the attack's own harmful call held (85% with detectors on); some call in the run held: 92% (95%). 13% of their ordinary tasks held (27% before the rules developed on these runs) | **tuned on**: the rules were developed on these runs; third-party recorded; one published attack family; replay |
+| Plainly worded attacks | AgentDojo `direct` runs, GPT-4o and Llama 3.3 | earlier defaults (which leaned on detection) 10/23 and 11/34; now **22/23** and **32/34** | small; tuned on (studied before the fix) |
+| Against a model-based trace judge | the same 85 recorded attacks and 40 ordinary tasks, an open-source LLM alignment checker run locally on a 14B model | attacks stopped: GuardLayer **82**, judge 80; ordinary tasks held: **12%** vs 28%; per decision ~0.01 s vs ~50 s | **not an independent comparison**: sampled from the runs GuardLayer's rules were developed on; the judge ran on a 14B model, far smaller than its authors use; small samples, overlapping intervals |
 | Detection, held-out public datasets (never used to tune) | public datasets | recall 0.23 (deepset), 0.57 (Gandalf), 0.21 (SPML), 0.72 (jailbreak-classification); **no false positives** on about 7,200 normal texts | solid; shows detection alone is not enough |
 | Detection, LLMail-Inject attacks that hijacked a real model, held-out teams | public dataset | 44.5% caught, 0 false positives on its normal emails | solid for email-style injection |
 | ADR-Bench: 303 recorded sessions with 134 MCP servers, no tools declared (version 0.8.1) | third-party recorded | 4% of normal sessions interrupted on the held-out half; 0 of 23 malicious sessions | the malicious cases are tool servers with normal-looking output: undeclared, they can't be told apart |
