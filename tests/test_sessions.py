@@ -587,3 +587,19 @@ def test_irreversible_action_carrying_an_outsiders_words_needs_no_detector():
     assert not s.state.hostile
     assert "untrusted_destination" in rules(s.scan_tool_call("execute_payment", {"instruction": note}))
     assert "untrusted_destination" not in rules(s.scan_tool_call("execute_payment", {"order": "8841", "amount": 10}))
+
+
+def test_a_tool_that_hands_out_secrets_needs_approval_after_outside_content():
+    """An injection can ask for a credential with harmless-looking arguments (reveal_credentials({"query": "internal"})):
+    nothing is sent yet, so no destination rule fires. After outside content, such a tool needs a person."""
+    clean = GuardLayer().session()
+    assert "secret_tool_after_untrusted" not in rules(clean.scan_tool_call("get_secret", {"name": "db"}))  # user's own ask
+    s = GuardLayer().session()
+    s.scan_tool_result("fetch", HOSTILE_PAGE)
+    for tool in ("reveal_credentials", "mcp__vault__get_secret", "export_api_keys"):
+        assert "secret_tool_after_untrusted" in rules(s.scan_tool_call(tool, {"query": "internal"})), tool
+    for tool in ("get_token_count", "update_password", "get_issues"):
+        assert "secret_tool_after_untrusted" not in rules(s.scan_tool_call(tool, {"n": 1})), tool
+    declared = GuardLayer(session_policy=SessionPolicy(sources={"db_lookup": {"confidentiality": "restricted"}})).session()
+    declared.scan_tool_result("fetch", BENIGN_PAGE)
+    assert "secret_tool_after_untrusted" in rules(declared.scan_tool_call("db_lookup", {"k": "x"}))

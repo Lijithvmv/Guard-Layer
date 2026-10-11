@@ -561,6 +561,8 @@ DEFAULT_SESSION_ACTIONS: dict[str, Action] = {
     "confidentiality_exceeds_sink": Action.REVIEW,
     # File labels (0.7): running a file that untrusted content could have written.
     "untrusted_file_executed": Action.REVIEW,
+    # A tool that hands out secrets (by name, or declared output_data = "restricted"), called after outside content.
+    "secret_tool_after_untrusted": Action.REVIEW,
     # Task profiles (0.8): actions outside the task the session was given.
     "out_of_task": Action.REVIEW,
     "task_argument_not_allowed": Action.REVIEW,
@@ -969,6 +971,25 @@ def _copies_injected_text(arguments_text: str, state: SessionState, source: Iter
         if run >= need:
             return True
     return False
+
+
+# Tools whose job is to hand out a secret: a verb that returns something, then a secret noun (MCP prefixes stripped).
+_SECRET_TOOL = re.compile(
+    r"^(?:reveal|get|fetch|read|show|print|dump|export|retrieve|list|lookup|view|decrypt|unseal)_?"
+    r"(?:\w*_)?(?:credentials?|secrets?|passwords?|passwd|tokens?|api_?keys?|private_?keys?|ssh_?keys?|access_?keys?)$",
+    re.IGNORECASE,
+)
+
+
+def dispenses_secrets(policy: SessionPolicy, tool: str | None) -> bool:
+    """True for a tool that returns secrets: declared `output_data = "restricted"`, or named for it (get_secret,
+    reveal_credentials, export_api_key)."""
+    if not tool:
+        return False
+    label = policy.source_label(tool)
+    if label is not None and label.confidentiality >= Confidentiality.RESTRICTED:
+        return True
+    return bool(_SECRET_TOOL.match(tool.rsplit("__", 1)[-1]))
 
 
 def _argument_values(arguments: Any) -> list[str]:
@@ -1386,6 +1407,11 @@ def taint_detections(
                  f"This message passes on {', '.join(repr(v[:60]) for v in relayed[:2])}, a link that came from content an "
                  "outsider can write, not from you. Approve only if you meant to share it.",
                  values=relayed[:5], untrusted=state.untrusted_sources[-5:])  # fmt: skip
+    if state.untrusted and dispenses_secrets(policy, tool):
+        emit("secret_tool_after_untrusted", Category.DATA_EXFILTRATION.value, 0.7,
+             f"{tool!r} hands out secrets, and this session has read content an outsider can write: an injected "
+             "instruction can ask for a credential without sending it anywhere yet. Approve only if you asked for it.",
+             untrusted=state.untrusted_sources[-5:], hostile=state.hostile_sources[-5:])  # fmt: skip
     accepts_untrusted, _ = policy.sink(tool)
     cap = policy.call_cap(tool, arguments)
     context = state.label

@@ -31,6 +31,11 @@ audit logs can tell them apart.
   suite, declaring the allowed tools takes GuardLayer from 25 to 16 of 35 scenarios with findings.
 
 ### Security
+- **`secret_tool_after_untrusted`: a tool that hands out secrets, called after outside content, needs approval.**
+  Tools named for it (`get_secret`, `reveal_credentials`, `export_api_keys`, ...) or declared `output_data =
+  "restricted"`. An injection can ask for a credential with harmless arguments, before anything is sent: a real local
+  LLM agent did exactly that through the MCP gateway. Invaris AgentSec over MCP, gateway unconfigured: 30 -> 26 of 35
+  scenarios with findings. AgentDojo and real Claude Code sessions unchanged (the rule fired 0 times in 9,395 calls).
 - **`credential_write`: a fetched credential used to change something is held.** Credential binding allowed any
   request to the credential's own host; a GitHub token sent only to api.github.com could still publish a public gist
   with a local file, push anywhere or delete a repository. POST, PUT, PATCH, DELETE and uploads with a fetched
