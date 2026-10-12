@@ -243,6 +243,7 @@ class SessionState:
     task_tools: list[str] | None = None  # tools still allowed; None = no task set
     task_version: int = 0  # bumped on every task change; the newest wins when copies of a session merge
     task_log: list[str] = field(default_factory=list)
+    own_tools: list[str] = field(default_factory=list)  # tools that ran in this session (unheld, or approved): the agent's own
     seam: str = ""  # the (redacted) last SEAM_CHARS of the latest untrusted content, to catch instructions split across two
     events: int = 0
 
@@ -313,7 +314,8 @@ class SessionState:
                           ("hostile_values", MAX_FINGERPRINTS), ("user_values", MAX_FINGERPRINTS),
                           ("untrusted_values", MAX_FINGERPRINTS), ("hostile_phrases", MAX_PHRASES), ("user_phrases", MAX_PHRASES),
                           ("untrusted_phrases", MAX_PHRASES), ("untrusted_places", MAX_PHRASES), ("user_places", MAX_PHRASES), ("plain_places", MAX_PHRASES), ("hostile_places", MAX_PHRASES), ("hostile_origins", MAX_PHRASES), ("record_values", MAX_PHRASES), ("prose_phrases", MAX_PHRASES), ("private_marks", MAX_PHRASES),
-                          ("public_words", MAX_PHRASES)):
+                          ("public_words", MAX_PHRASES),
+                          ("own_tools", MAX_SOURCES)):
             setattr(self, name, _add(getattr(other, name), getattr(self, name), cap))
         self.created = min(self.created, other.created)
         self.updated = max(self.updated, other.updated)
@@ -1022,6 +1024,8 @@ def _content_chosen_verbs(tool: str, state: SessionState) -> list[str]:
     of the tool's meaningful words in the user's own request makes the action theirs."""
     from guardlayer.consequence import _READ_VERB, name_words
 
+    if tool in state.own_tools:
+        return []  # already ran in this session, unheld or approved: the agent's tool for this task, not the outsider's pick
     if not state.user_phrases:
         return []  # the user's request was never seen (an MCP gateway, a wrapper without scan_input): can't tell whose
     base = tool.rsplit("__", 1)[-1]
@@ -1277,10 +1281,18 @@ def observe_input(state: SessionState, text: str, result: ScanResult) -> None:
     _touch(state)
 
 
+def note_tool_ran(state: SessionState, tool: str) -> None:
+    """The tool ran in this session (nothing held it, or a person approved it): it is one of the agent's own tools."""
+    state.own_tools = _add(state.own_tools, [tool], MAX_SOURCES)
+    _touch(state)
+
+
 def observe_tool_call(state: SessionState, tool: str, result: ScanResult) -> None:
     """A call that reached a credential store or .env file (and was not blocked) makes the session sensitive."""
     if result.is_blocked:
         return
+    if result.verdict < Verdict.REVIEW:
+        state.own_tools = _add(state.own_tools, [tool], MAX_SOURCES)
     rules = [d.rule for d in result.detections if d.rule in SENSITIVE_TOOL_RULES]
     if rules:
         state.sensitive_kinds = _add(state.sensitive_kinds, rules, MAX_SOURCES)

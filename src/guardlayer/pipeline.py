@@ -55,6 +55,7 @@ from guardlayer.session import (
     SEAM_CHARS,
     GuardSession,
     MemorySessionStore,
+    note_tool_ran,
     SessionPolicy,
     SessionState,
     SessionStore,
@@ -422,12 +423,16 @@ class GuardLayer:
         """After a write tool actually ran: label the files it wrote with the session's label.
 
         Integrations call this post-execution (the Claude Code hook's PostToolUse, `guard_tool`), which also covers
-        writes a human approved after a REVIEW.
+        writes a human approved after a REVIEW. The tool joins the session's own tools: it ran, so outside content
+        naming it later didn't choose it (`action_chosen_by_content`).
         """
         state = self._load_session(session)
         caps, tagged = self.tool_policy.resolve(tool_name)
         if state is not None and (not tagged or "write" in caps or "exec" in caps):
             self.file_labels.record(written_paths(arguments), self._write_label(tool_name, caps, tagged, arguments, state))
+        if state is not None and tool_name not in state.own_tools:
+            note_tool_ran(state, tool_name)
+            self.sessions.put(state)
 
     def scan_tool_call(
         self,
