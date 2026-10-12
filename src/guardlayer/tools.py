@@ -379,6 +379,39 @@ class ArgumentRule:
         return out
 
 
+_MAX_ARGUMENT_TEXT = 20_000
+
+
+def structured_arguments(arguments: Mapping[str, Any] | str | None) -> Mapping[str, Any] | str | None:
+    """Arguments that arrive as text holding a dict, read as that dict.
+
+    Text-based agents (ReAct "Action Input:") and some function-calling APIs pass arguments as a JSON string, and models
+    often write Python-style dicts (single quotes). Rules that judge one argument (a destination, what an irreversible
+    action acts on) need the fields, not the text. Anything else is returned unchanged."""
+    if not isinstance(arguments, str):
+        return arguments
+    text = arguments.strip()
+    if not (text.startswith("{") and text.endswith("}")) or len(text) > _MAX_ARGUMENT_TEXT:
+        return arguments
+    depth = deepest = 0
+    for ch in text:  # literal_eval recurses: refuse deep nesting before parsing
+        depth += ch in "{[("
+        depth -= ch in "}])"
+        deepest = max(deepest, depth)
+    if deepest > 20:
+        return arguments
+    try:
+        value = json.loads(text)
+    except ValueError:
+        import ast
+
+        try:
+            value = ast.literal_eval(text)
+        except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+            return arguments
+    return value if isinstance(value, dict) and all(isinstance(k, str) for k in value) else arguments
+
+
 def flatten_arguments(arguments: Mapping[str, Any] | str | None) -> str:
     """All string leaves of the arguments (keys excluded), newline-joined, so rules see raw commands."""
     if arguments is None:
