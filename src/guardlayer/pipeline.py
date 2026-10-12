@@ -68,7 +68,7 @@ from guardlayer.session import (
     task_detections,
 )
 from guardlayer.shell import command_view
-from guardlayer.tools import ToolPolicy, flatten_arguments
+from guardlayer.tools import ToolPolicy, flatten_arguments, structured_arguments
 
 logger = logging.getLogger("guardlayer")
 
@@ -454,6 +454,7 @@ class GuardLayer:
         caps, tagged = self.tool_policy.resolve(tool_name)
         remote = self.tool_policy.is_remote(tool_name)
         arguments_text = flatten_arguments(arguments)  # original text: file labels and secret fingerprints use it
+        arguments = structured_arguments(arguments)  # a dict sent as text: rules judge its fields
         # Rules judge what a shell command executes, not every string in it (see `guardlayer.shell`).
         view = command_view(tool_name, arguments) if (not tagged or "exec" in caps) else None
         rule_arguments = {**arguments, view[0]: view[1]} if view is not None and isinstance(arguments, Mapping) else arguments

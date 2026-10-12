@@ -230,7 +230,7 @@ _PUBLISH = {
 # publishing. After an injection these are held whatever their arguments, like local deletes (NCSC's
 # recoverability dimension).
 _IRREVERSIBLE_ACTION = re.compile(
-    r"(^|[_\-.])(send_?money|transfer|pay|payment|purchase|buy|order|checkout|book|reserve|reservation|refund|withdraw"
+    r"(^|[_\-.])(send_?money|transfer|pay|payment|purchase|buy|order|checkout|book|reserve|reservation|refund|withdraw|cancel|redirect"
     r"|update_?password|change_?password|reset_?password|set_?password|password|credential|token|api_?key|secret"
     r"|delete|remove|destroy|drop|revoke|ban|kick|archive|invite|grant|add_?user|add_?member|share|permission|role"
     r"|publish|deploy|release|merge|approve|sign|upload|pull_?request|pr|issue|comment|gist|push_?files?"
@@ -241,6 +241,19 @@ _IRREVERSIBLE_ACTION = re.compile(
 _READ_VERB = re.compile(r"(^|__|[_\-.])(get|list|read|search|fetch|view|show|describe|find|query|lookup|check|count|search_?\w*)_", re.IGNORECASE)
 _LOCAL_WRITE_TOOL = re.compile(r"^(Write|Edit|MultiEdit|NotebookEdit)$|(^|_)(write|edit|create|append|save|patch)_?(file|notebook)s?$", re.IGNORECASE)
 _COMMAND_KEYS = ("command", "cmd", "script", "shell_command")
+# One tool, many actions (`ManageShipment`, `manage_documents`): the argument names which one this call is.
+_OPERATION_KEYS = ("action", "operation", "op", "action_type", "operation_type")
+
+
+def _operation(arguments: Mapping[str, Any] | str | None) -> str | None:
+    """The action a multi-purpose tool is asked to take (`{"action": "delete"}`), as name words, if one is given."""
+    if not isinstance(arguments, Mapping):
+        return None
+    for key in _OPERATION_KEYS:
+        value = arguments.get(key)
+        if isinstance(value, str) and 0 < len(value) <= 40 and re.fullmatch(r"[A-Za-z][\w\- ]*", value):
+            return "_" + name_words(value.strip()).replace(" ", "_").replace("-", "_") + "_"
+    return None
 
 
 def _command(arguments: Mapping[str, Any] | str | None) -> str | None:
@@ -392,6 +405,12 @@ def _guess(
     words = name_words(tool)
     if _LOCAL_WRITE_TOOL.search(tool) or _LOCAL_WRITE_TOOL.search(words):
         return "local"
+    op = _operation(arguments)
+    if op is not None:  # the call says which of the tool's actions it takes: judge that action, not the name
+        if _IRREVERSIBLE_ACTION.search(op) and (not tagged or caps & {"network", "write", "exec"}):
+            return "irreversible"
+        if _READ_VERB.search(op):
+            return "outbound" if remote or caps & {"network"} or not tagged else "local"
     reads_only = bool(_READ_VERB.search(words)) and not re.search(r"(^|_)(and|or)_", words, re.IGNORECASE)
     if reads_only:
         # a search query or a fetched URL leaves the machine even though the tool only reads
