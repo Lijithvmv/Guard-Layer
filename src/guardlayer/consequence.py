@@ -254,6 +254,14 @@ def _command(arguments: Mapping[str, Any] | str | None) -> str | None:
 _ORDER = {"local": 0, "outbound": 1, "irreversible": 2}
 
 
+def name_words(tool: str) -> str:
+    """A tool name with its words separated by underscores, whatever the naming style: `BankManagerPayBill` and
+    `GitHubDeleteRepository` read like `bank_manager_pay_bill` and `git_hub_delete_repository`, so the verbs in them
+    (pay, delete, grant) are found. Separators already there (`__`, `-`, `.`) are kept."""
+    spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", tool)
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", spaced)
+
+
 def consequence(
     tool: str,
     caps: Iterable[str],
@@ -341,7 +349,7 @@ def sends_out(
         return False
     # Not a shell command: publishing, sharing, sending, paying, inviting all carry data out; only an action that
     # merely destroys something (and reaches no network) doesn't.
-    if not (remote or caps & {"network"}) and _DESTROY_ONLY.search(tool):
+    if not (remote or caps & {"network"}) and _DESTROY_ONLY.search(name_words(tool)):
         return False
     return True
 
@@ -381,13 +389,14 @@ def _guess(
                 if prog == "git" and args and any(args[0] == sub and (flag is None or flag in args) for sub, flag in _IRREVERSIBLE_GIT):
                     result = "irreversible"
         return result
-    if _LOCAL_WRITE_TOOL.search(tool):
+    words = name_words(tool)
+    if _LOCAL_WRITE_TOOL.search(tool) or _LOCAL_WRITE_TOOL.search(words):
         return "local"
-    reads_only = bool(_READ_VERB.search(tool)) and not re.search(r"(^|_)(and|or)_", tool)
+    reads_only = bool(_READ_VERB.search(words)) and not re.search(r"(^|_)(and|or)_", words, re.IGNORECASE)
     if reads_only:
         # a search query or a fetched URL leaves the machine even though the tool only reads
         return "outbound" if remote or caps & {"network"} or not tagged else "local"
-    if _IRREVERSIBLE_ACTION.search(tool) and (not tagged or caps & {"network", "write", "exec"}):
+    if _IRREVERSIBLE_ACTION.search(words) and (not tagged or caps & {"network", "write", "exec"}):
         return "irreversible"
     if caps and not (caps & {"network", "write", "exec"}) and not remote:
         return "local"  # read-only, local tools (declared or inferred from the name)
