@@ -556,6 +556,10 @@ DEFAULT_SESSION_ACTIONS: dict[str, Action] = {
     "untrusted_destination": Action.REVIEW,
     # A message that passes on a link only an outsider's content named (phishing relay), without needing detection.
     "relayed_link": Action.REVIEW,
+    # Experimental (Phase 2, H1): a call that changes something, whose action only outside content asked for. Opt-in
+    # (recorded only by default): it stops destination-free attacks on business agents, but on coding sessions it
+    # held 7.3% of calls instead of 1.6%. Turn on with actions: {action_chosen_by_content: review}.
+    "action_chosen_by_content": Action.LOG,
     # Label rules (0.7): only fire for tools declared as sinks in `sinks`.
     "untrusted_to_protected_sink": Action.REVIEW,
     "confidentiality_exceeds_sink": Action.REVIEW,
@@ -992,6 +996,55 @@ def dispenses_secrets(policy: SessionPolicy, tool: str | None) -> bool:
     return bool(_SECRET_TOOL.match(tool.rsplit("__", 1)[-1]))
 
 
+# Verbs that change something (H1). A tool named for one of these does what its verb says.
+_ACTION_VERBS = frozenset(
+    "move delete remove grant revoke deposit withdraw transfer pay send share create update set schedule add unlock lock "
+    "install uninstall publish post invite book reserve buy purchase order cancel change modify upload disable enable "
+    "reset approve merge execute assign archive forward close terminate manage allocate redirect"
+    .split()
+)
+
+
+_GENERIC_TOOL_WORDS = frozenset("item items info data details detail tool tools manager account accounts record records".split())
+
+
+def _forms(word: str) -> set[str]:
+    stem = word[:-1] if word.endswith("e") else word
+    return {word, word + "s", word + "d", word + "ed", stem + "ing", stem + "ed"}
+
+
+def _content_chosen_verbs(tool: str, state: SessionState) -> list[str]:
+    """Why an action looks chosen by outside content and not by the user, or [] if it doesn't.
+
+    Only judged when the user's request was seen. Read-only tools are never actions. Either the outside text named the
+    tool outright by a distinctive name (two or more words: `ResourceAllocationHijack`, `send_email`; never a single
+    common word), or it asked for the tool's action and what it acts on ("move ... Dropbox" for DropboxMoveItem). Any
+    of the tool's meaningful words in the user's own request makes the action theirs."""
+    from guardlayer.consequence import _READ_VERB, name_words
+
+    if not state.user_phrases:
+        return []  # the user's request was never seen (an MCP gateway, a wrapper without scan_input): can't tell whose
+    base = tool.rsplit("__", 1)[-1]
+    spaced = name_words(base).replace("-", "_")
+    words = [w.lower() for w in spaced.split("_") if w]
+    if _READ_VERB.search(spaced + "_") or (words and words[0] in _READ_FIRST):
+        return []  # reading isn't an action, even when it reaches the network
+    outside, user = set(state.untrusted_phrases), set(state.user_phrases)
+    meaningful = [w for w in words if len(w) >= 4 and w not in _GENERIC_TOOL_WORDS]
+    if any(_h(f, "phrase") in user for w in meaningful for f in _forms(w)):
+        return []  # the user named what the tool does or acts on: the action is theirs
+    if len(words) >= 2:
+        named = {base.lower(), " ".join(words)} if len(words) <= 4 else {base.lower()}
+        if any(_h(n, "phrase") in outside for n in named):
+            return [base]  # named outright ("use the ResourceAllocationHijack tool")
+    verbs = [w for w in words if w in _ACTION_VERBS and any(_h(f, "phrase") in outside for f in _forms(w))]
+    objects = [w for w in meaningful if w not in _ACTION_VERBS and any(_h(f, "phrase") in outside for f in _forms(w))]
+    return verbs if verbs and objects else []  # the action and what it acts on, both asked for by outside text
+
+
+_READ_FIRST = frozenset("get list read search fetch view show describe find query lookup check count browse".split())
+
+
 def _argument_values(arguments: Any) -> list[str]:
     """Every short string or number in the arguments (normalised as destination values are)."""
     out: list[str] = []
@@ -1399,6 +1452,13 @@ def taint_detections(
                 emit("after_injection", Category.PROMPT_INJECTION.value, 0.8,
                      "This action sends a value that came from content containing a prompt injection, not from the user.",
                      hostile=state.hostile_sources[-5:], consequence=kind, values=carried[:5])  # fmt: skip
+    if state.untrusted and kind != "local" and "exec" not in caps and state.untrusted_phrases:
+        verbs = _content_chosen_verbs(tool, state)
+        if verbs:
+            emit("action_chosen_by_content", Category.PROMPT_INJECTION.value, 0.6,
+                 f"This action ({', '.join(verbs)}) is something content an outsider can write asked for, and nothing you "
+                 "wrote did. Approve only if you meant the agent to do it.",
+                 verbs=verbs, untrusted=state.untrusted_sources[-5:])  # fmt: skip
     if policy.untrusted_destination == "outbound" and kind == "outbound" and "exec" not in caps and state.untrusted_places:
         # messages, posts and shares (a shell command's URL is where it goes, judged above)
         relayed = _relayed_links(policy, state, tool, arguments)
