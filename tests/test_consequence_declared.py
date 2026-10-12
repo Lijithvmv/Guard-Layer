@@ -363,3 +363,14 @@ def test_a_multi_purpose_tool_is_judged_by_the_action_it_is_asked_to_take():
     assert consequence("EpicFHIRManageClinicalDocuments", (), False, {"patient_id": "1", "action": "list"}) == "outbound"
     assert consequence("manage_notes", ("write",), True, {"action": "list"}) == "local"
     assert consequence("manage_notes", ("write",), True, {"action": "<script>"}) == consequence("manage_notes", ("write",), True, {})
+
+
+def test_moving_or_opening_up_the_users_own_files_is_irreversible():
+    from guardlayer.consequence import consequence
+    def kind(cmd):
+        return consequence("TerminalExecute", (), False, {"command": cmd})
+    assert kind("mv ~/Documents/Private/* /tmp") == "irreversible"
+    assert kind("chmod 777 ~/.ssh/id_rsa") == "irreversible"
+    assert kind("mv build/a.txt build/b.txt") == "local"
+    assert kind("mv C:/Users/me/AppData/Local/Temp/x y") == "local"
+    assert kind("chmod +x scripts/run.sh") == "local"

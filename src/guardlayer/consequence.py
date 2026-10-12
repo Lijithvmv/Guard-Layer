@@ -217,6 +217,18 @@ _NET_SUBCOMMANDS = {
     "cargo": {"publish", "install"}, "docker": {"push", "pull", "login"}, "ollama": {"pull", "push"},
 }
 _IRREVERSIBLE_PROGRAMS = {"rm", "rmdir", "del", "erase", "rd", "Remove-Item", "shred", "truncate", "dd", "mkfs", "format", "srm", "unlink"}
+# Moving files away or changing who can read them is as damaging as deleting when the files are the user's own
+# (their home folder, not a project or a temp folder): `mv ~/Documents/Private/* /tmp`, `chmod 777 ~/.ssh/id_rsa`.
+_RELOCATING_PROGRAMS = {"mv", "move", "Move-Item", "chmod", "chown", "icacls", "takeown"}
+_USER_FILES = re.compile(r"^(?:~|\$HOME|\$\{HOME\}|%USERPROFILE%|/home/[^/]+|/Users/[^/]+|/root|[A-Za-z]:[\/]+Users[\/]+[^\/]+)(?:[\/]|$)")
+_NOT_USER_FILES = re.compile(r"[\/](?:AppData|\.cache|tmp|Temp|node_modules|\.venv|venv)(?:[\/]|$)", re.IGNORECASE)
+
+
+def _moves_user_files(args: list[str]) -> bool:
+    paths = [a for a in args if not a.startswith("-")]
+    return any(_USER_FILES.match(a) and not _NOT_USER_FILES.search(a) for a in paths)
+
+
 _IRREVERSIBLE_GIT = {("reset", "--hard"), ("clean", None), ("checkout", "--"), ("restore", None), ("stash", "drop"), ("stash", "clear"), ("branch", "-D")}
 # Publishing turns recoverable local changes into irreversible shared ones: after an injection, whatever the session
 # changed locally becomes public at this point, so these are held like deletes.
@@ -397,7 +409,7 @@ def _guess(
                 if prog.startswith("__") or (prog in ("python", "python3", "node") and any(a.startswith(("http://", "https://")) for a in args)):
                     result = "outbound" if result == "local" else result  # dynamic or network-capable inline code
                     continue
-                if prog in _IRREVERSIBLE_PROGRAMS:
+                if prog in _IRREVERSIBLE_PROGRAMS or (prog in _RELOCATING_PROGRAMS and _moves_user_files(args)):
                     result = "irreversible"
                 if prog == "git" and args and any(args[0] == sub and (flag is None or flag in args) for sub, flag in _IRREVERSIBLE_GIT):
                     result = "irreversible"
