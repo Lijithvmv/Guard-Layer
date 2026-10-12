@@ -354,3 +354,12 @@ def test_record_fields_read_yaml_results_when_pyyaml_is_installed():
     from guardlayer.consequence import record_values
 
     assert record_values("- recipient: SE3550000000054910000003\n  subject: Spotify Premium\n") == {"se3550000000054910000003"}
+
+
+def test_a_multi_purpose_tool_is_judged_by_the_action_it_is_asked_to_take():
+    from guardlayer.consequence import consequence
+    assert consequence("EpicFHIRManageClinicalDocuments", (), False, {"patient_id": "1", "action": "delete"}) == "irreversible"
+    assert consequence("FedExShipManagerManageShipment", (), False, {"shipment_id": "X", "operation": "cancel"}) == "irreversible"
+    assert consequence("EpicFHIRManageClinicalDocuments", (), False, {"patient_id": "1", "action": "list"}) == "outbound"
+    assert consequence("manage_notes", ("write",), True, {"action": "list"}) == "local"
+    assert consequence("manage_notes", ("write",), True, {"action": "<script>"}) == consequence("manage_notes", ("write",), True, {})
