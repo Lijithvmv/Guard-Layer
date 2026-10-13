@@ -309,7 +309,8 @@ def replay(paths: list[Path], args: argparse.Namespace) -> dict[str, Any]:
         written[sid] |= {normalise(p) for p in written_paths(event.get("tool_input"))}
         seen[sid] |= distinctive_values(flatten_arguments(event.get("tool_response"))[:200_000])
         result = session.scan_tool_result(
-            tool, flatten_arguments(event.get("tool_response")), metadata={**meta, "source": "replay"}
+            tool, flatten_arguments(event.get("tool_response")), arguments=event.get("tool_input"),
+            metadata={**meta, "source": "replay"},
         )
         new_hostile = result.verdict >= Verdict.FLAG and bool(HOSTILE_CATEGORIES & set(result.categories))
         new_sensitive = Category.SECRET.value in set(result.categories) and bool(session.state.sensitive_sources)

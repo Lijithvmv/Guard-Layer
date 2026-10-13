@@ -326,6 +326,7 @@ class GuardLayer:
     def _scan_content(
         self, content: str, *, source: str | None, session: str | GuardSession | None, tool: str | None,
         extra: Sequence[Detection] = (), force_untrusted: bool = False, local: bool = False, origin: Sequence[str] = (),
+        call_arguments: Any = None,
         **context_fields: Any,
     ) -> ScanResult:
         metadata = dict(context_fields.pop("metadata", {}) or {})
@@ -356,6 +357,7 @@ class GuardLayer:
                 self.session_policy, state, content, result,
                 source=source or "context", tool=tool, can_reach_network=reaches_network, untrusted=untrusted,
                 origin=origin,
+                call_arguments=call_arguments,
             )  # fmt: skip
             if force_untrusted and untrusted:
                 observe_label(state, Label(Integrity.UNTRUSTED), f"unreadable:{source or tool}")
@@ -653,7 +655,8 @@ class GuardLayer:
         if parts is None:
             text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
             return self._scan_content(text, source=f"tool:{tool_name}", session=session, tool=tool_name,
-                                      force_untrusted=read_back, local=local, origin=origin, **context_fields)  # fmt: skip
+                                      force_untrusted=read_back, local=local, origin=origin, call_arguments=arguments,
+                                      **context_fields)  # fmt: skip
         # Bytes or media blocks: scan what can be extracted; what can't be read makes the session untrusted.
         texts, blobs = parts
         extracted, unreadable = extract(blobs, self.extractors)
@@ -664,7 +667,7 @@ class GuardLayer:
                                    metadata={"media": unreadable[:10]}, action=Action.LOG.value))  # fmt: skip
         return self._scan_content("\n\n".join([*texts, *extracted]), source=f"tool:{tool_name}", session=session,
                                   tool=tool_name, extra=extra, force_untrusted=bool(unreadable) or read_back, origin=origin,
-                                  **context_fields)  # fmt: skip
+                                  call_arguments=arguments, **context_fields)  # fmt: skip
 
     # ------------------------------------------------------------------ canaries
     def add_canary(self, prompt: str, *, echo: bool = False) -> Canary:
