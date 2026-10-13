@@ -1312,7 +1312,8 @@ _ACT_AS_COMMAND = re.compile(
 _READ_WORDS = re.compile(
     r"\b(fetch|find|get|show|retrieve|read|check|list|search|look\s+up|lookup|tell\s+me|summari[sz]e|what|whats|which|"
     r"who|when|where|how\s+(?:many|much|is|are|was|were|do|does|did)|are\s+there|is\s+there|give\s+(?:me|us)|"
-    r"display|view|see|explain|describe)\b",
+    r"display|view|see|explain|describe|recommend|suggest|provide|compare|advise|estimate|calculate|find\s+out|"
+    r"figure\s+out|help\s+me\s+(?:find|choose|pick|decide|understand))\b",
     re.IGNORECASE,
 )
 
