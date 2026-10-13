@@ -246,7 +246,8 @@ class SessionState:
     # What the user's own messages ask for: "" (none seen), "read" (every message only asks to read or find something)
     # or "act" (any message asks for an action, or can't be told apart). Only ever rises.
     request: str = ""
-    own_tools: list[str] = field(default_factory=list)  # tools that ran in this session (unheld, or approved): the agent's own
+    own_tools: list[str] = field(default_factory=list)
+    named_phrases: list[str] = field(default_factory=list)  # hashes of phrases and places from sources the user named  # tools that ran in this session (unheld, or approved): the agent's own
     seam: str = ""  # the (redacted) last SEAM_CHARS of the latest untrusted content, to catch instructions split across two
     events: int = 0
 
@@ -318,7 +319,7 @@ class SessionState:
                           ("untrusted_values", MAX_FINGERPRINTS), ("hostile_phrases", MAX_PHRASES), ("user_phrases", MAX_PHRASES),
                           ("untrusted_phrases", MAX_PHRASES), ("untrusted_places", MAX_PHRASES), ("user_places", MAX_PHRASES), ("plain_places", MAX_PHRASES), ("hostile_places", MAX_PHRASES), ("hostile_origins", MAX_PHRASES), ("record_values", MAX_PHRASES), ("prose_phrases", MAX_PHRASES), ("private_marks", MAX_PHRASES),
                           ("public_words", MAX_PHRASES),
-                          ("own_tools", MAX_SOURCES)):
+                          ("own_tools", MAX_SOURCES), ("named_phrases", MAX_PHRASES)):
             setattr(self, name, _add(getattr(other, name), getattr(self, name), cap))
         self.created = min(self.created, other.created)
         self.updated = max(self.updated, other.updated)
@@ -334,7 +335,7 @@ logger = logging.getLogger("guardlayer")
 _H_BYTES = 8
 # Lists only ever tested for membership: kept as short hashes and saved packed.
 _PACKED = ("untrusted_phrases", "hostile_phrases", "user_phrases", "untrusted_places", "user_places", "private_marks",
-           "public_words", "plain_places", "hostile_places", "hostile_origins", "record_values", "prose_phrases")
+           "public_words", "plain_places", "hostile_places", "hostile_origins", "record_values", "prose_phrases", "named_phrases")
 
 
 _KEY: bytes | None = None
@@ -905,7 +906,7 @@ _NOT_AN_ADDRESS = re.compile(r"[\s/?#=&]")
 
 def _payload_text(
     arguments: Mapping[str, Any] | str | None, arguments_text: str, extra: Iterable[str], state: SessionState,
-    allowed: Iterable[str],
+    allowed: Iterable[str], tool: str = "",
 ) -> str:
     """The arguments as data that leaves, without a known addressee.
 
@@ -921,7 +922,7 @@ def _payload_text(
 
     def known(v: str) -> bool:
         h = _h(re.sub(r"\s+", " ", v.strip().lower()).strip(".:"), "phrase")
-        return h in user or (h in records and h not in prose)
+        return h in user or (h in records and h not in prose) or (bool(tool) and _delegated(state, tool, v.strip().lower()))
 
     def addressee(v: Any) -> bool:
         return isinstance(v, str) and 0 < len(v.strip()) <= 200 and not _NOT_AN_ADDRESS.search(v.strip()) and (
@@ -1129,7 +1130,7 @@ def _decode_token(token: str) -> str | None:
 
 def observe_content(
     policy: SessionPolicy, state: SessionState, text: str, result: ScanResult, *, source: str, tool: str | None,
-    can_reach_network: bool, untrusted: bool = False, origin: Iterable[str] = (),
+    can_reach_network: bool, untrusted: bool = False, origin: Iterable[str] = (), call_arguments: Any = None,
 ) -> None:
     """Update taint after the agent read `text` (a tool result or other third-party content).
 
@@ -1150,6 +1151,10 @@ def observe_content(
             state.public_words = _add(state.public_words, (_h(w, "word") for w in _words(text)), MAX_PHRASES)
             if not injected:
                 state.plain_places = _add(state.plain_places, (_h(p, "place") for p in places(text)), MAX_PHRASES)
+            if not injected and _names_user_source(state, call_arguments):
+                # the user pointed here ("her e-mail is on www.dora-website.com", "pay the bill in bill.txt")
+                state.named_phrases = _add(state.named_phrases, [*(_h(p, "phrase") for p in phrases(text)),
+                                                                 *(_h(p, "place") for p in places(text))], MAX_PHRASES)
             if policy.record_fields:
                 records, prose = record_parts(raw)
                 if not injected:
@@ -1312,6 +1317,11 @@ _READ_WORDS = re.compile(
 )
 
 
+# "please X", "can you X": X is what's asked for; any verb there that isn't a reading one asks for an action.
+_POLITE_ASK = re.compile(r"\b(?:please|kindly|can\s+you|could\s+you|would\s+you)\s+(?:please\s+)?([a-z]+)(?:\s+([a-z]+))?",
+                         re.IGNORECASE)
+
+
 def request_kind(text: str) -> str:
     """"read" if a user message only asks to read, find or be told something; otherwise "act".
 
@@ -1319,6 +1329,12 @@ def request_kind(text: str) -> str:
     action is held for going beyond it). Only what the user typed counts; nothing an outsider wrote reaches here."""
     text = text[:4000]
     if _ACT_ANYWHERE.search(text) or _ACT_AS_COMMAND.search(text) or not _READ_WORDS.search(text):
+        return "act"
+    def asks_to_act(m: re.Match[str]) -> bool:  # "give me", "look up": a reading phrase can be two words
+        first, two = m.group(1), f"{m.group(1)} {m.group(2) or ''}".strip()
+        return not (_READ_WORDS.fullmatch(first) or _READ_WORDS.fullmatch(two) or first.lower() in ("me", "us", "help", "tell"))
+
+    if any(asks_to_act(m) for m in _POLITE_ASK.finditer(text)):
         return "act"
     return "read"
 
@@ -1377,6 +1393,58 @@ def _touch(state: SessionState) -> None:
     state.events += 1
 
 
+# Actions the user can ask for in other words: "pay the bill" is send_money, "email the client" is send_email.
+_ACTION_FAMILIES = (frozenset("send email mail message reply forward".split()), frozenset("invite add".split()),
+                    frozenset("book reserve reservation".split()), frozenset("delete remove".split()),
+                    frozenset("schedule reschedule create".split()), frozenset("post publish share".split()))
+# Moving money or changing how an account is reached, on a document's word, is invoice fraud's and account takeover's
+# exact shape: always confirmed, whoever named the document.
+_MONEY_WORDS = frozenset("pay payment money transfer transaction transactions withdraw buy purchase order deposit refund "
+                         "trade sell password credential credentials token secret".split())
+# What counts as naming a source: an address, a URL or host, a file name. Not a date or a plain word the user wrote.
+_SOURCE_VALUE = re.compile(r"^(?:[^\s@]+@[^\s@]+\.\w+|[\w.-]+\.[a-z]{2,}(?:/\S*)?|\w+://\S+|[\w\- ]+\.[A-Za-z0-9]{1,5})$")
+
+
+def _names_user_source(state: SessionState, arguments: Any) -> bool:
+    """The call read from a place the user named: a URL, file, channel or sender they wrote in their own message."""
+    if arguments is None or not (state.user_phrases or state.user_places):
+        return False
+    user_p, user_pl = set(state.user_phrases), set(state.user_places)
+    for v in _argument_values(arguments):
+        if _SOURCE_VALUE.match(v) and (_h(v, "phrase") in user_p or any(_h(p, "place") in user_pl for p in destination_places(v))):
+            return True
+    return False
+
+
+def _requested_action(tool: str, state: SessionState) -> bool:
+    """The user asked for this kind of action ("invite Dora" for invite_user_to_slack), in their own words."""
+    from guardlayer.consequence import name_words
+
+    words = {w.lower() for w in name_words(tool.rsplit("__", 1)[-1]).replace("-", "_").split("_") if w}
+    if words & _MONEY_WORDS:
+        return False
+    verbs = {w for w in words if w in _ACTION_VERBS or any(w in f for f in _ACTION_FAMILIES)}
+    asked = set(verbs)
+    for f in _ACTION_FAMILIES:
+        if verbs & f:
+            asked |= f
+    user = set(state.user_phrases)
+    if not any(_h(form, "phrase") in user for w in asked for form in _forms(w)):
+        return False
+    # and what it acts on: "post the summary to the channel" doesn't ask for post_webpage
+    objects = [w for w in words if len(w) >= 4 and w not in verbs and w not in _GENERIC_TOOL_WORDS]
+    return not objects or any(_h(form, "phrase") in user for w in objects for form in _forms(w))
+
+
+def _delegated(state: SessionState, tool: str, value: str) -> bool:
+    """A destination taken from a source the user named, for an action the user asked for."""
+    if not state.named_phrases:
+        return False
+    named = set(state.named_phrases)
+    hit = _h(value, "phrase") in named or any(_h(p, "place") in named for p in destination_places(value))
+    return hit and _requested_action(tool, state)
+
+
 def _outsider_destinations(
     policy: SessionPolicy, state: SessionState, tool: str, kind: str, arguments: Mapping[str, Any] | str | None
 ) -> list[str]:
@@ -1389,6 +1457,7 @@ def _outsider_destinations(
         dests = [v for v in _argument_values(arguments) if _outside_place(v)]
     else:
         dests = [v for v in destination_values(arguments, policy.destination_args.get(tool, ())) if _outside_place(v)]
+    dests = [v for v in dests if not _delegated(state, tool, v)]
     if policy.record_fields and state.record_values:
         # a known record (a whole identity field) that no outsider's prose names isn't a target an injection chose
         records, prose = set(state.record_values), set(state.prose_phrases)
@@ -1445,7 +1514,7 @@ def taint_detections(
         kind = "local"
     classic = policy.trifecta_scope == "all"
     if leaves and state.fingerprints and (classic or kind != "local"):
-        if contains_fingerprint(_payload_text(arguments, arguments_text, policy.destination_args.get(tool, ()), state, allowed),
+        if contains_fingerprint(_payload_text(arguments, arguments_text, policy.destination_args.get(tool, ()), state, allowed, tool),
                                 state.fingerprints, allowed_kinds=allowed):  # fmt: skip
             emit("sensitive_data_egress", Category.DATA_EXFILTRATION.value, 1.0,
                  "A sensitive value seen earlier in this session is being sent out of the machine by this tool call.",

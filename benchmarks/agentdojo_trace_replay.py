@@ -123,7 +123,7 @@ def replay(path: str, scope: str, evade_detection: bool = False, untrusted_desti
                 named = places(" ".join(user_messages))
                 if delegate and named & places(json.dumps((m.get("tool_call") or {}).get("args") or {})):
                     name = "__delegated__"
-                session.scan_tool_result(name, _text(m.get("content")))
+                session.scan_tool_result(name, _text(m.get("content")), arguments=(m.get("tool_call") or {}).get("args"))
                 seen_values |= distinctive_values(_text(m.get("content")))
             elif role == "assistant":
                 for call in m.get("tool_calls") or []:
