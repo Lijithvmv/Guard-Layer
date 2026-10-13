@@ -1445,6 +1445,19 @@ def _delegated(state: SessionState, tool: str, value: str) -> bool:
     return hit and _requested_action(tool, state)
 
 
+# Words prose uses to point at an item by a short identifier: "the file with ID 13", "item 14", "event no. 5".
+_REFERENCE_WORDS = ("id", "ids", "file", "item", "no.", "no", "number", "event", "email", "message", "task", "ticket",
+                    "transaction", "order", "record", "document", "note", "user", "channel")
+
+
+def _prose_names(value: str, prose: set[str]) -> bool:
+    """Outside prose names this value. A short one (a number like 11, a short code) only counts where the prose refers
+    to it as an identifier ("delete the file with ID 13"): a bare 11 turns up in any text, so it proves nothing."""
+    if len(value) > 4 and not (value.isdigit() and len(value) <= 6):
+        return _h(value, "phrase") in prose
+    return any(_h(f"{w} {value}", "phrase") in prose for w in _REFERENCE_WORDS)
+
+
 def _outsider_destinations(
     policy: SessionPolicy, state: SessionState, tool: str, kind: str, arguments: Mapping[str, Any] | str | None
 ) -> list[str]:
@@ -1461,7 +1474,7 @@ def _outsider_destinations(
     if policy.record_fields and state.record_values:
         # a known record (a whole identity field) that no outsider's prose names isn't a target an injection chose
         records, prose = set(state.record_values), set(state.prose_phrases)
-        dests = [v for v in dests if _h(v, "phrase") not in records or _h(v, "phrase") in prose]
+        dests = [v for v in dests if _h(v, "phrase") not in records or _prose_names(v, prose)]
     copied = [v[:80] for v in dests if _h(v, "phrase") in seen and _h(v, "phrase") not in user_p]
     # The same destination written another way (a scheme or "www." added, data appended as a query) is still the
     # same place: compare places (host/path and its parents, or an address), not text.
