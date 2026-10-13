@@ -243,6 +243,9 @@ class SessionState:
     task_tools: list[str] | None = None  # tools still allowed; None = no task set
     task_version: int = 0  # bumped on every task change; the newest wins when copies of a session merge
     task_log: list[str] = field(default_factory=list)
+    # What the user's own messages ask for: "" (none seen), "read" (every message only asks to read or find something)
+    # or "act" (any message asks for an action, or can't be told apart). Only ever rises.
+    request: str = ""
     own_tools: list[str] = field(default_factory=list)  # tools that ran in this session (unheld, or approved): the agent's own
     seam: str = ""  # the (redacted) last SEAM_CHARS of the latest untrusted content, to catch instructions split across two
     events: int = 0
@@ -320,6 +323,7 @@ class SessionState:
         self.created = min(self.created, other.created)
         self.updated = max(self.updated, other.updated)
         self.events = max(self.events, other.events)
+        self.request = max(self.request, other.request, key=("", "read", "act").index)
         if other.task_version > self.task_version:
             self.task, self.task_args, self.task_tools = other.task, dict(other.task_args), other.task_tools
             self.task_version, self.task_log = other.task_version, list(other.task_log)
@@ -562,6 +566,9 @@ DEFAULT_SESSION_ACTIONS: dict[str, Action] = {
     # (recorded only by default): it stops destination-free attacks on business agents, but on coding sessions it
     # held 7.3% of calls instead of 1.6%. Turn on with actions: {action_chosen_by_content: review}.
     "action_chosen_by_content": Action.LOG,
+    # A read-only request (every user message asks only to read or find), then outside content, then an action that
+    # changes something: the action goes beyond what the user asked for.
+    "beyond_request": Action.REVIEW,
     # Label rules (0.7): only fire for tools declared as sinks in `sinks`.
     "untrusted_to_protected_sink": Action.REVIEW,
     "confidentiality_exceeds_sink": Action.REVIEW,
@@ -1046,6 +1053,19 @@ def _content_chosen_verbs(tool: str, state: SessionState) -> list[str]:
     return verbs if verbs and objects else []  # the action and what it acts on, both asked for by outside text
 
 
+def _reads_only(tool: str, arguments: Any) -> bool:
+    """A call that only reads: a read verb in the tool's name (`GetBalance`, `web_fetch`) or in the action its
+    arguments ask for (`{"action": "list"}`)."""
+    from guardlayer.consequence import _READ_VERB, _operation, name_words
+
+    spaced = name_words(tool.rsplit("__", 1)[-1]).replace("-", "_")
+    words = [w.lower() for w in spaced.split("_") if w]
+    op = _operation(arguments)
+    if op is not None:
+        return bool(_READ_VERB.search(op))
+    return bool(_READ_VERB.search(spaced + "_")) or bool(words and words[0] in _READ_FIRST)
+
+
 _READ_FIRST = frozenset("get list read search fetch view show describe find query lookup check count browse".split())
 
 
@@ -1266,6 +1286,43 @@ def file_label_detections(
                       action=policy.actions["untrusted_file_executed"].value)]  # fmt: skip
 
 
+# Verbs that ask for something to be done. Unambiguous ones count anywhere in a user message; words that are as often
+# nouns ("my latest email", "my order", "the schedule") count only where a request starts: at the start of a sentence
+# or after "please", "can you", "and", "then", "to".
+_ACT_ANYWHERE = re.compile(
+    r"\b(send|pay|transfer|delete|remove|erase|cancel|create|publish|forward|invite|install|uninstall|deploy|upload|"
+    r"download|grant|revoke|approve|reject|withdraw|deposit|buy|purchase|sell|subscribe|unsubscribe|unfollow|dispatch|"
+    r"implement|fix|modify|edit|rename|archive|redirect|restart|reset|refund|ban|mute|merge|commit|enable|disable|"
+    r"unlock|generate|translate|convert|register|submit|accept|decline|confirm|assign|add|build|write|make|prepare|"
+    r"upgrade|downgrade|move|delegate|give(?!\s+(?:me|us)\b))\b",
+    re.IGNORECASE,
+)
+_ACT_AS_COMMAND = re.compile(
+    r"(?:^|[.!?;:\n]\s*|\b(?:please|pls|kindly|and|then|also|to|you|must|should|lets|let's|now)\s+)"
+    r"(email|message|text|call|order|post|comment|review|plan|tag|rate|like|set|mark|book|copy|print|run|start|stop|go|"
+    r"do|use|open|close|play|turn|lock|save|block|draft|reply|respond|update|change|share|trade|schedule|sign|fill|"
+    r"follow|leave|join|test|push|notify|remind|continue|proceed|try|apply|reserve|launch|record|clear|report)\b",
+    re.IGNORECASE,
+)
+_READ_WORDS = re.compile(
+    r"\b(fetch|find|get|show|retrieve|read|check|list|search|look\s+up|lookup|tell\s+me|summari[sz]e|what|whats|which|"
+    r"who|when|where|how\s+(?:many|much|is|are|was|were|do|does|did)|are\s+there|is\s+there|give\s+(?:me|us)|"
+    r"display|view|see|explain|describe)\b",
+    re.IGNORECASE,
+)
+
+
+def request_kind(text: str) -> str:
+    """"read" if a user message only asks to read, find or be told something; otherwise "act".
+
+    Errs towards "act": a message with any acting verb, or no clear reading request, lifts the session's ceiling (no
+    action is held for going beyond it). Only what the user typed counts; nothing an outsider wrote reaches here."""
+    text = text[:4000]
+    if _ACT_ANYWHERE.search(text) or _ACT_AS_COMMAND.search(text) or not _READ_WORDS.search(text):
+        return "act"
+    return "read"
+
+
 def observe_input(state: SessionState, text: str, result: ScanResult) -> None:
     """User prompts are trusted, but secrets pasted into them are still sensitive data. Identifiers the user names
     (URLs, addresses, accounts) are remembered so a later action using them is never blamed on hostile content."""
@@ -1275,6 +1332,8 @@ def observe_input(state: SessionState, text: str, result: ScanResult) -> None:
     # Words the user typed are theirs to send (a search term, a repository they named): not private data. Secrets
     # pasted here are still caught by fingerprint rules.
     state.public_words = _add(state.public_words, (_h(w, "word") for w in _words(text)), MAX_PHRASES)
+    if state.request != "act":
+        state.request = request_kind(text)
     if any(d.category == Category.SECRET.value for d in result.detections):
         record_sensitive_values(state, text, result)
         state.sensitive_sources = _add(state.sensitive_sources, ["input"], MAX_SOURCES)
@@ -1464,6 +1523,13 @@ def taint_detections(
                 emit("after_injection", Category.PROMPT_INJECTION.value, 0.8,
                      "This action sends a value that came from content containing a prompt injection, not from the user.",
                      hostile=state.hostile_sources[-5:], consequence=kind, values=carried[:5])  # fmt: skip
+    # a shell command counts only when it destroys or moves the user's files (fetching a page is reading)
+    if (state.request == "read" and state.untrusted and (kind == "irreversible" or (kind != "local" and "exec" not in caps))
+            and tool not in state.own_tools and not _reads_only(tool, arguments)):
+        emit("beyond_request", Category.PROMPT_INJECTION.value, 0.7,
+             "You asked only to read or find something; this action changes something, and the session has read "
+             "content an outsider can write. Approve only if you meant the agent to do it.",
+             consequence=kind, untrusted=state.untrusted_sources[-5:])  # fmt: skip
     if state.untrusted and kind != "local" and "exec" not in caps and state.untrusted_phrases:
         verbs = _content_chosen_verbs(tool, state)
         if verbs:
