@@ -89,14 +89,50 @@ A credential the agent fetches is judged by where it goes: kept in a shell varia
 service (a GitHub token sent to `api.github.com`) runs; printed into the conversation, written to a file, or sent to
 any other host is blocked.
 
+## Actions you didn't ask for
+
+The destination check needs a destination. Many attacks have none: delete a file, cancel a shipment, move a robot,
+leave a channel. These rules judge such actions by what **you** asked for, which an attacker can't change.
+
+- **Your request sets a ceiling (`beyond_request`, on by default).** When every message you wrote only asks to read
+  or find something ("summarise this page", "what's on my calendar?", "can you recommend a hotel?"), an action that
+  changes something, after the agent read outside content, goes beyond your request and is held. Any message that asks
+  for an action ("pay the bill", "check my inbox and reply to Bob", "please reschedule...") lifts the ceiling for the
+  rest of the session, and so does a message it can't classify: it errs towards not holding. Words that are as often
+  nouns ("my latest email", "my order", "my schedule") count as requests only where a request starts.
+- **A detail from a source you named is yours, for the action you asked for.** "Invite Dora; her e-mail is on
+  www.dora-website.com": the address comes from the page you pointed to. A source counts as named when the call that
+  read it used a URL, host, file name or e-mail address from your own message, and the content held no detected
+  injection. The detail is accepted only for an action you asked for: the tool's verb (or the same kind of verb: pay
+  and send, book and reserve) **and** what it acts on must be in your words. Moving money, changing a scheduled
+  transaction and changing a password are always held for approval, whoever named the document: that is exactly what
+  invoice fraud and account takeover look like.
+- **Text and tool names are read for what they do.** Arguments sent as text (a JSON string, or a Python-style dict
+  from a text-based agent) are read by their fields. A multi-purpose tool is judged by the action its arguments ask
+  for: `ManageShipment {"operation": "cancel"}` is irreversible, `{"action": "list"}` is a read. Tool names written
+  `LikeThis` are read word by word. Moving files out of, or changing permissions on, your home folder
+  (`mv ~/Documents/... /tmp`, `chmod 777 ~/.ssh/...`) is irreversible, like deleting them.
+- **A short ID is named by outside prose only where the prose points at it.** "Find and delete the largest file"
+  picks file 11 from the listing; a bare 11 somewhere in a file's text doesn't make it the outsider's choice, but "the
+  file with ID 13" does.
+- **The outsider's text chose the action (`action_chosen_by_content`, opt-in).** A call that changes something, whose
+  tool or action only outside content asked for. It stops many attacks on business agents, but on coding agents its
+  first form held 7.3% of calls instead of 1.6%, so it is off by default:
+  `[session.actions] action_chosen_by_content = "review"`. A tool that already ran in the session (unheld, or
+  approved) doesn't count as chosen by text that names it later.
+
+Known gaps of these rules: an attacker who controls the very page or file you named, and asks for the same kind of
+action you asked for, gets through when no injection is detected; a message like "do all the tasks on my list at
+&lt;URL&gt;" hands the choice to that page, so its actions are held.
+
 ## What it costs (measured)
 
-- **Interruptions:** on real Claude Code sessions, today's defaults (the destination check, and trust only for
-  declared tools) added **1 hold in 7,572 calls** on the sessions used to design them, and **none in 6,962 calls**
-  from other projects never used for design. All rules together hold 1.6% of those 6,962 calls for approval. On another agent's real work (OpenHands
-  resolving GitHub issues, a different model and framework), they hold under 1% out of the box and 0.2% with its tools
-  declared. On AgentDojo's tasks, nearly all of which pay or
-  send right after reading untrusted content, the defaults hold about one task in four for approval.
+- **Interruptions:** all rules together hold **1.7% of 6,962 calls** (121) on one developer's real Claude Code
+  sessions from projects not used to design the rules (but used to check every change; replayed with tool arguments
+  passed with results, as the live hook does). On another agent's real work (OpenHands resolving GitHub issues, a
+  different model and framework), they held under 1% out of the box and 0.2% with its tools declared (measured before
+  0.9). On AgentDojo's ordinary tasks, nearly all of which pay, send or book right after reading outside content, the
+  defaults hold **57 of 644 (9%)** for approval on the five models below, and **8.5% of 2,916** on 24 other models.
 - **Time:** GuardLayer's handling of a 4 KB tool result is ~48 ms (about 11 ms of it this check) and of a tool call
   ~5 ms, on an idle laptop.
 
@@ -106,11 +142,18 @@ On AgentDojo's published runs for five frontier models (Claude 3.7 Sonnet, Claud
 Flash, Llama 3.3 70B; the `important_instructions` attack, no defense): 707 attacks that succeeded, and 644 ordinary
 tasks. "Detectors removed" stands in for an attacker whose wording no detector recognises.
 
-| | Attacks stopped | Ordinary tasks interrupted |
-|---|---|---|
-| detectors on (defaults) | 674 / 707 (95%) | 173 / 644 |
-| detectors removed, destination check off, name-based trust (before 0.9) | 308 / 707 (44%) | 78 / 644 |
-| detectors removed, **defaults** | **648 / 707 (92%)** | 173 / 644 |
+| | Attack's harmful call held | Some call in the attack held | Ordinary tasks interrupted |
+|---|---|---|---|
+| detectors on (defaults) | 603 / 707 (85%) | 699 / 707 (99%) | 57 / 644 |
+| detectors removed, **defaults** | **538 / 707 (76%)** | 637 / 707 (90%) | 55 / 644 |
+
+"Harmful call" here means a call carrying a value from the injected text, which misses harmful calls with short or
+computed arguments (delete file 13, book the most expensive hotel). A stricter count compares each attacked run with
+the same task's run without the attack: of the 673 attacks whose agent made a state-changing call it didn't make
+without the attack, GuardLayer held **660** with detectors on and **623** with them removed. On AgentDojo's runs of 24
+other models (never used to develop the rules): **2,303 of 2,342** and **2,165 of 2,342**. These rules were developed
+on the five models' runs, so their numbers are tuned; the 24-model numbers are not, but they share the same tasks and
+attacks.
 
 Read the detectors-removed rows: the detectors-on row flatters, since these are published attack templates the
 similarity detector can know. The plainest attack in the set (`direct`: the attacker's goal written as an ordinary
@@ -125,13 +168,16 @@ Declaring a tool's capabilities says what it can do, not who writes what it retu
 of the injections that name-based trust let through. `[labels] default_integrity = "trusted"` restores name-based
 trust; `"untrusted"` distrusts every result.
 
-AgentDojo's ordinary tasks nearly all pay, send or book right after reading such content, so one in four is held for
-approval; on the real Claude Code sessions above these defaults added 1 hold in 14,534 calls.
+AgentDojo's ordinary tasks nearly all pay, send or book right after reading such content; about one in eleven is held
+for approval, mostly paying a bill (always confirmed) and "do the tasks on my list at a URL".
 
 Not covered:
 
-- **Actions with no destination, and values the agent works out itself.** A password change, or "book the most
-  expensive hotel", names no outsider's place; a judge was tested for this (below) without a demonstrated gain.
+- **Actions with no destination, after you asked for an action.** When your request lifts the ceiling ("book a
+  hotel"), a different action an injection asks for, with no destination and no copied value, isn't held unless
+  `action_chosen_by_content` is on.
+- **Harm that is only text.** An answer that recommends what the attacker wanted ("you must visit Riverside View
+  Hotel") calls no tool; GuardLayer guards actions.
 - **Visiting an outsider's page.** It carries nothing private, so it runs. On the frontier-model runs this "visit the
   phishing link" goal is most of what remains when every tool result is treated as untrusted.
 - **An address the agent has to rebuild:** spelled out ("site dot net"), reversed, split across sentences, or another
