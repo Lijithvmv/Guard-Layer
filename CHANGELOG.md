@@ -31,6 +31,23 @@ audit logs can tell them apart.
   suite, declaring the allowed tools takes GuardLayer from 25 to 16 of 35 scenarios with findings.
 
 ### Security
+- **`beyond_request`: an action that goes beyond a read-only request is held.** When every message the user wrote
+  only asks to read or find something, an action that changes something, after outside content was read, needs
+  approval. It doesn't depend on the attack's wording. Any message asking for an action lifts the ceiling, and so does
+  one it can't classify. InjecAgent (every prompted model's released outputs, data the rules were then developed on):
+  direct-harm attacks missed 6,210 -> 865 of 11,525. Cost on one developer's Claude Code sessions: 113 -> 119 of 6,962
+  calls held; AgentDojo ordinary tasks 85 -> 89 of 644 (later reduced, below).
+- **Arguments sent as text are read by their fields.** A JSON string or a Python-style dict (text-based agents,
+  some function-calling APIs) used to be judged as one string, so argument rules couldn't fire. InjecAgent, half of its
+  attacker tools: direct harm stopped 19% -> 28% by default.
+- **A multi-purpose tool is judged by the action its arguments ask for** (`{"operation": "cancel"}` is irreversible,
+  `{"action": "list"}` a read); cancel and redirect are irreversible verbs; tool names written `LikeThis` are read
+  word by word; moving files out of, or changing permissions on, the user's home folder is irreversible.
+- **`action_chosen_by_content` (opt-in, recorded only by default):** a call that changes something, whose tool or
+  action only outside content asked for. A tool that already ran in the session (unheld, or approved) is exempt.
+  InjecAgent's "enhanced" attacks on attacker tools kept sealed while building: direct harm stopped 51% -> 57%; off by
+  default because it held 7.3% of one developer's coding-session calls in its first form.
+
 - **`secret_tool_after_untrusted`: a tool that hands out secrets, called after outside content, needs approval.**
   Tools named for it (`get_secret`, `reveal_credentials`, `export_api_keys`, ...) or declared `output_data =
   "restricted"`. An injection can ask for a credential with harmless arguments, before anything is sent: a real local
@@ -53,6 +70,18 @@ audit logs can tell them apart.
   (what the log saw there could have been steered by an outsider). Regression test: an undetected outsider's text
   drives five calls to a local tool and an attacker's endpoint; adopting the draft trusts nothing new and the
   endpoint is still held.
+
+### Changed
+- **A detail from a source the user named is accepted for the action the user asked for.** "Invite Dora; her e-mail is
+  on www.dora-website.com": a destination read from a URL, host, file or address the user wrote, with no detected
+  injection, is the user's, when the user's words name both the action and what it acts on. Money, scheduled
+  transactions and passwords are always confirmed. A short ID counts as named by outside prose only where the prose
+  points at it ("the file with ID 13"). "Can you recommend / suggest / provide..." is a request to read; "please
+  reschedule..." asks for an action. AgentDojo ordinary tasks held: 89 -> 57 of 644 (models the rules were developed
+  on), 12.8% -> 8.5% of 2,916 (24 other models); harmful calls held unchanged on the 24 other models. Known cost: an
+  attacker who controls the very page or file the user named, asking for the same kind of action, gets through when no
+  injection is detected (3 of 673 attacks on the development models, detectors removed).
+- **Benchmark replays pass a tool's arguments with its result**, as the live Claude Code hook does.
 
 ### Added
 - **Business agents: from 27% to 13% of ordinary tasks held, no principled attack catch lost.** Three changes,
