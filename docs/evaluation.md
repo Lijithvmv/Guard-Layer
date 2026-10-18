@@ -18,11 +18,18 @@ session wrote, so file rules judge their real content) and `benchmarks/agentdojo
 
 | What | Data (type) | Calls or runs | Held / stopped |
 |---|---|---|---|
-| Interruptions, `balanced` | one developer's Claude Code sessions from projects never used for design (real use) | 6,962 calls | 1.61-1.68% held |
-| Interruptions, no setup | OpenHands agents resolving real GitHub issues (third-party recorded, CC BY 4.0) | 11,869 calls | 0.75% held |
-| Interruptions, tools declared | same | 11,869 calls | 0.11% held |
-| Attacks, detectors off | AgentDojo published runs of five frontier models, `important_instructions` (third-party recorded) | 707 succeeded attacks | 92% stopped |
-| Ordinary tasks, same runs | same | 644 tasks | 27% held |
+| Interruptions, `balanced` | one developer's Claude Code sessions from projects never used for design (real use) | 6,962 calls | 1.7% held (121) |
+| Interruptions, no setup | OpenHands agents resolving real GitHub issues (third-party recorded, CC BY 4.0), 200 runs | 12,049 calls | 0.54% held |
+| Interruptions, tools declared | same | 12,049 calls | 0.18% held |
+| Attacks, detectors off | AgentDojo published runs of five frontier models, `important_instructions` (third-party recorded; tuned on) | 673 attacks with a harmful call | 623 stopped (92.6%) |
+| Attacks, defaults | same | 673 | 660 stopped (98.1%) |
+| Ordinary tasks, same runs | same | 644 tasks | 57 held (9%) |
+| Attacks, defaults, **24 other models** (never used to develop the rules) | AgentDojo published runs | 2,342 attacks with a harmful call | 2,303 stopped (98.3%); 2,165 with detectors off |
+| Ordinary tasks, same 24 models | same | 2,271 user tasks | 125 held (5.5%) |
+
+A "harmful call" is a call that changes something, which the attacked run made and the same task's run without the
+attack did not. Attacks whose harm is only text in the agent's answer (283 on the 24 models) are not counted as
+stopped: GuardLayer guards actions.
 
 The real-use sessions were checked for overlap with the design sessions by shared tool-call ids (a first held-out set
 was 28% copies of design sessions and was corrected). The interval is a bound: content the replay couldn't rebuild was
@@ -33,6 +40,31 @@ ordinary tasks), an open-source LLM alignment checker that reads the agent's tra
 stopped 80 attacks and held 11 ordinary tasks; GuardLayer stopped 82 and held 5, in about 0.01 s per decision against
 about 50 s. On plainly worded attacks (`direct`) it was 14 of 15 for GuardLayer and 11 of 15 for the judge. The samples
 are small and the intervals overlap; the judge's authors use a much larger model; and no attack was adapted to either.
+
+### Against other defences, same recorded attacks (October 2026)
+
+The same replay, with other published defences in GuardLayer's place: each sees the user's request, every tool call
+before it runs and every result. Attacks stopped = a harmful call denied; ordinary tasks interrupted = any call denied
+(no person to approve). AgentDojo runs of 24 models never used to develop GuardLayer's rules.
+
+| Defence | Attacks stopped (2,342) | Ordinary tasks interrupted (2,271) |
+|---|---|---|
+| **GuardLayer**, defaults, no configuration | **98.3%** | **5.5%** |
+| A published 2026 provenance-gating defence, strict write-gate | 100% | 50.7% |
+| The same, selective gating (two settings for payments) | 89.9-90.0% | 37.2-39.5% |
+| A decision-runtime guard, call firewall (every value from the user) | 99.96% | 73.8% |
+| The same, grounding with its instruction check | 86.8% | 37.7% |
+
+How to read it:
+
+- **Not the competitors' own setups.** Neither publishes an AgentDojo adapter, so ours was written from each one's
+  documentation and paper, with no hand-written per-task policies. Their authors may do better with their own.
+- **Replay, not live.** A denied call does not change what the agent does next; the same for every defence.
+- **Not included:** a defence that rebuilds the agent around a trusted planner reports 0 successful attacks of 949
+  with Claude 3.5 Sonnet at a cost of 27 points of task completion (its paper; no logs published, so not replayed).
+  On the same model's published runs, GuardLayer leaves about 30 of 949 attacks succeeding, 22 of them harm in the
+  answer text only, while holding 5 of 97 ordinary tasks. Policy-based information-flow systems that need a policy
+  written per deployment were not compared.
 
 ### Public datasets
 
