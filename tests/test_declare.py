@@ -171,7 +171,7 @@ def test_draft_flags_a_tool_only_ever_called_after_outside_content(tmp_path):
     path = tmp_path / "audit.jsonl"
     guard = claude_code.configure_guard(build_guard({"audit": {"path": str(path), "min_verdict": "allow"}}), tmp_path / "st")
     for sid in ("a", "b"):
-        def event(**e):
+        def event(sid=sid, **e):
             claude_code.handle_event({"session_id": sid, **e}, guard)
         event(hook_event_name="PreToolUse", tool_name="Read", tool_input={"file_path": "a.py"})
         event(hook_event_name="PreToolUse", tool_name="mcp__github__get_issue", tool_input={"n": 1})
