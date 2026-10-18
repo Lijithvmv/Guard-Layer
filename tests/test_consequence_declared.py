@@ -393,3 +393,20 @@ def test_clearing_a_temp_folder_is_local_work():
 def test_publishing_a_package_is_irreversible(command):
     from guardlayer.consequence import consequence
     assert consequence("Bash", ("exec",), True, {"command": command}) == "irreversible"
+
+
+def test_a_declared_editor_and_a_tool_with_no_capabilities_are_local():
+    """OpenHands' editor has a `command` argument ("str_replace") that isn't a command line; a declared class wins."""
+    from guardlayer.config import build_guard
+
+    g = build_guard({"tool": {"str_replace_editor": {"capabilities": ["write"], "consequence": "local"},
+                              "think": {"capabilities": []}, "execute_bash": {"capabilities": ["exec"]}}})
+    s = g.session("x")
+    s.scan_input("Fix the bug described in the issue.")
+    s.scan_tool_result("execute_bash", "see https://github.com/org/repo/issues/218", arguments={"command": "cat core.py"})
+    edit = {"path": "/repo/core.py", "command": "str_replace", "old_str": "a", "new_str": "# github.com/org/repo/issues/218"}
+    assert not s.scan_tool_call("str_replace_editor", edit).needs_review
+    assert not s.scan_tool_call("think", {"thought": "see github.com/org/repo/issues/218"}).needs_review
+    # a declared class doesn't hide what a shell command really does
+    from guardlayer.consequence import consequence
+    assert consequence("execute_bash", ("exec",), True, {"command": "git push origin main"}, declared="local") == "irreversible"

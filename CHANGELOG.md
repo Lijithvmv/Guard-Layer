@@ -30,7 +30,23 @@ audit logs can tell them apart.
   project's later calls (24 of 1,871); drafted from another project, 42%, so draft per project. On Invaris AgentSec's
   suite, declaring the allowed tools takes GuardLayer from 25 to 16 of 35 scenarios with findings.
 
+### Fixed
+- **Declaring a tool now lowers interruptions, as it should.** A declared consequence was overridden when a non-shell
+  tool had a `command` argument (OpenHands' editor: `command: "str_replace"` was read as a command line), and a tool
+  declared with no capabilities (`think`, `finish`) was treated as reaching another system. On 200 OpenHands runs
+  (12,049 calls, third-party recorded) with its tools declared, calls held went from 0.63% to **0.18%**; with no setup
+  0.57% to 0.54%. Attack results on AgentDojo and InjecAgent unchanged.
+- **Clearing a temp folder is local work.** A delete whose every target is inside a temp folder (`/tmp`, `%TEMP%`,
+  `AppData/Local/Temp`) loses nothing of the user's; climbing out (`..`), the folder itself, or any other target keeps
+  it irreversible.
+
 ### Security
+- **Publishing a package is irreversible for every common publisher:** `gem push`, `yarn npm publish`, `dotnet nuget
+  push`, `nuget push`, `mvn deploy`, `gradle publish`, `flit`/`hatch`/`pdm publish`, `helm push`, `anaconda upload`
+  were treated as local.
+- **`policy draft` flags a tool only ever called after outside content.** A source read in every session (a poisoned
+  README) could drive the same tool each time and get it into the drafted allow-list; it is now marked for a person
+  to check.
 - **`beyond_request`: an action that goes beyond a read-only request is held.** When every message the user wrote
   only asks to read or find something, an action that changes something, after outside content was read, needs
   approval. It doesn't depend on the attack's wording. Any message asking for an action lifts the ceiling, and so does

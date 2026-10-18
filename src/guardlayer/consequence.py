@@ -332,7 +332,9 @@ def consequence(
     guessed = _guess(tool, caps, tagged, arguments, remote=remote)
     if declared is None:
         return guessed
-    if _command(arguments) is not None:
+    # a shell tool's parsed command still counts; another tool's `command` argument is its own sub-action (an editor's
+    # "str_replace"), not a command line
+    if ("exec" in set(caps) or not tagged) and _command(arguments) is not None:
         return max(declared, guessed, key=_ORDER.__getitem__)
     return declared
 
@@ -466,6 +468,8 @@ def _guess(
         return "outbound" if remote or caps & {"network"} or not tagged else "local"
     if _IRREVERSIBLE_ACTION.search(words) and (not tagged or caps & {"network", "write", "exec"}):
         return "irreversible"
+    if tagged and not caps and not remote:
+        return "local"  # declared with no capabilities (a "think" or "finish" step): it can't touch anything
     if caps and not (caps & {"network", "write", "exec"}) and not remote:
         return "local"  # read-only, local tools (declared or inferred from the name)
     return "outbound"  # messages, payments, posts, API calls: effects on another system
