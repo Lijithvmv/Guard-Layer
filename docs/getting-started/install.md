@@ -3,11 +3,11 @@
 GuardLayer needs Python 3.10 or later. The core has **no runtime dependencies**.
 
 ```bash
-pip install "git+https://github.com/Lijithvmv/Guard-Layer"
+pip install guardlayer
 ```
 
-That installs the current `main`, the version the [evaluation](../evaluation.md) measures. `pip install guardlayer`
-gives the last release on PyPI (0.8.2), which predates the request ceiling, named sources and the other 0.9 changes.
+Version 0.9.0 is the one the [evaluation](../evaluation.md) measures. The latest `main`:
+`pip install "git+https://github.com/Lijithvmv/Guard-Layer"`.
 
 Optional extras add heavier layers and integrations. Install only what you use: each one brings third-party packages.
 

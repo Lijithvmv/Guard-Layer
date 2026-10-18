@@ -53,7 +53,7 @@ min_verdict = "allow"
 ```
 
 ```bash
-pip install "git+https://github.com/Lijithvmv/Guard-Layer"   # main: what the numbers below measure (PyPI has 0.8.2)
+pip install guardlayer
 guardlayer --config pilot.toml hook claude-code --print-config     # merge into the project's .claude/settings.json
 guardlayer audit report pilot-audit.jsonl --since-days 1           # what it would have stopped or asked, daily
 ```
@@ -164,8 +164,7 @@ Assets, assumptions and residual risk: [THREAT_MODEL.md](https://github.com/Liji
 ## Install
 
 ```bash
-pip install "git+https://github.com/Lijithvmv/Guard-Layer"   # current main (PyPI's guardlayer is 0.8.2, older)
-pip install guardlayer                      # core, no dependencies (0.8.2 on PyPI)
+pip install guardlayer                      # core, no dependencies
 pip install "guardlayer[signing]"           # + Ed25519-signed audit logs
 pip install "guardlayer[langgraph]"         # or [openai-agents]: framework wrappers
 pip install "guardlayer[api]"               # + REST API

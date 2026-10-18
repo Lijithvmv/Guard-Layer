@@ -5,8 +5,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Development version `0.9.0.dev0` (no release): builds now report a version other than 0.8.2, so the pilot and
-audit logs can tell them apart.
+## [0.9.0] - 2026-10-18
+
+Judging actions by what the user asked for and where each value came from, measured on data the rules were never
+built on (see the evaluation page, weak results first).
 
 ### Added
 - **MCP gateway asks the person** (`--on-review ask`, the default): a call that needs approval becomes an MCP
