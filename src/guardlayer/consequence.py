@@ -224,6 +224,27 @@ _USER_FILES = re.compile(r"^(?:~|\$HOME|\$\{HOME\}|%USERPROFILE%|/home/[^/]+|/Us
 _NOT_USER_FILES = re.compile(r"[\/](?:AppData|\.cache|tmp|Temp|node_modules|\.venv|venv)(?:[\/]|$)", re.IGNORECASE)
 
 
+# Temp folders hold nothing of the user's: deleting inside one loses no data (an agent clearing its own scratch folder).
+_TEMP_DIR = re.compile(r"^(?:/tmp|/var/tmp|[A-Za-z]:/Windows/Temp|(?:[A-Za-z]:)?/Users/[^/]+/AppData/Local/Temp|"
+                       r"/c/Users/[^/]+/AppData/Local/Temp|\$TMPDIR|\$\{TMPDIR\}|\$TEMP|%TEMP%|%TMP%)(?:/|$)", re.IGNORECASE)
+
+
+def _in_temp(path: str, cwd: str) -> bool:
+    """Whether a delete target is inside a temp folder, resolved against the command's own `cd`."""
+    path = path.replace("\\", "/")
+    if ".." in path.split("/") or not path or path in (".", "/"):
+        return False
+    if not (path.startswith(("/", "~", "$", "%")) or re.match(r"^[A-Za-z]:/", path)):
+        path = f"{cwd.rstrip('/')}/{path}" if cwd else path
+    m = _TEMP_DIR.match(path)
+    return bool(m) and bool(path[m.end():].strip("/"))  # something inside the temp folder, not the folder itself
+
+
+def _deletes_only_temp(args: list[str], cwd: str) -> bool:
+    targets = [a for a in args if not a.startswith("-")]
+    return bool(targets) and all(_in_temp(t, cwd) for t in targets)
+
+
 def _moves_user_files(args: list[str]) -> bool:
     paths = [a for a in args if not a.startswith("-")]
     return any(_USER_FILES.match(a) and not _NOT_USER_FILES.search(a) for a in paths)
@@ -236,8 +257,18 @@ _PUBLISH = {
     "git": {"push", "send-email", "request-pull"}, "npm": {"publish", "unpublish"}, "pnpm": {"publish"}, "yarn": {"publish"},
     "cargo": {"publish"}, "twine": {"upload"}, "docker": {"push"}, "gh": {"release", "pr", "repo", "gist"},
     "uv": {"publish"}, "poetry": {"publish"}, "vercel": {"deploy", "--prod"}, "netlify": {"deploy"}, "fly": {"deploy"},
-    "kubectl": {"apply", "delete", "rollout"}, "helm": {"install", "upgrade", "uninstall"}, "terraform": {"apply", "destroy"},
+    "kubectl": {"apply", "delete", "rollout"}, "helm": {"install", "upgrade", "uninstall", "push"}, "terraform": {"apply", "destroy"},
+    # package registries: an agent publishing a package reaches everyone who installs it
+    "gem": {"push"}, "flit": {"publish"}, "hatch": {"publish"}, "pdm": {"publish"}, "mvn": {"deploy"},
+    "gradle": {"publish"}, "nuget": {"push"}, "dotnet": {"nuget push"}, "anaconda": {"upload"},
 }
+_PUBLISH["yarn"] = _PUBLISH["yarn"] | {"npm publish"}
+
+
+def _publishes(prog: str, args: list[str]) -> bool:
+    """`git push`, `npm publish`, and two-word subcommands (`yarn npm publish`, `dotnet nuget push`)."""
+    known = _PUBLISH.get(prog)
+    return bool(known and args) and (args[0] in known or " ".join(args[:2]) in known)
 # Effects on another system that can't be taken back: money, bookings and orders, credentials, access, deletion,
 # publishing. After an injection these are held whatever their arguments, like local deletes (NCSC's
 # recoverability dimension).
@@ -301,7 +332,9 @@ def consequence(
     guessed = _guess(tool, caps, tagged, arguments, remote=remote)
     if declared is None:
         return guessed
-    if _command(arguments) is not None:
+    # a shell tool's parsed command still counts; another tool's `command` argument is its own sub-action (an editor's
+    # "str_replace"), not a command line
+    if ("exec" in set(caps) or not tagged) and _command(arguments) is not None:
         return max(declared, guessed, key=_ORDER.__getitem__)
     return declared
 
@@ -332,7 +365,7 @@ def local_command(tool: str, caps: Iterable[str], tagged: bool, arguments: Mappi
             args = cmd.argv[1:]
             if prog.startswith("__"):
                 return False  # dynamic code
-            if (prog in _PUBLISH and args and args[0] in _PUBLISH[prog]) or prog in _NET_PROGRAMS or (
+            if (_publishes(prog, args)) or prog in _NET_PROGRAMS or (
                 prog in _NET_SUBCOMMANDS and args and args[0] in _NET_SUBCOMMANDS[prog]
             ):
                 return False
@@ -365,7 +398,7 @@ def sends_out(
                     continue
                 prog = re.split(r"[/\\]", cmd.argv[0])[-1].removesuffix(".exe")
                 args = cmd.argv[1:]
-                if prog in _PUBLISH and args and args[0] in _PUBLISH[prog]:
+                if _publishes(prog, args):
                     return True
                 if prog in _NET_PROGRAMS or (prog in _NET_SUBCOMMANDS and args and args[0] in _NET_SUBCOMMANDS[prog]):
                     return True
@@ -395,13 +428,17 @@ def _guess(
         if view is None:
             return "outbound"  # can't tell what it does: treat as the riskiest class
         result = "local"
+        cwd = ""  # where the command's own `cd` went: relative delete targets resolve against it
         for pipeline in view.commands:
             for cmd in pipeline:
                 if not cmd.argv:
                     continue
                 prog = re.split(r"[/\\]", cmd.argv[0])[-1].removesuffix(".exe")
                 args = cmd.argv[1:]
-                if prog in _PUBLISH and args and args[0] in _PUBLISH[prog]:
+                if prog == "cd" and len(args) == 1:
+                    cwd = args[0].replace("\\", "/")
+                    continue
+                if _publishes(prog, args):
                     return "irreversible"
                 if prog in _NET_PROGRAMS or (prog in _NET_SUBCOMMANDS and args and args[0] in _NET_SUBCOMMANDS[prog]):
                     result = "outbound" if result == "local" else result
@@ -409,6 +446,8 @@ def _guess(
                 if prog.startswith("__") or (prog in ("python", "python3", "node") and any(a.startswith(("http://", "https://")) for a in args)):
                     result = "outbound" if result == "local" else result  # dynamic or network-capable inline code
                     continue
+                if prog in _IRREVERSIBLE_PROGRAMS and _deletes_only_temp(args, cwd):
+                    continue  # clearing a temp folder loses nothing of the user's
                 if prog in _IRREVERSIBLE_PROGRAMS or (prog in _RELOCATING_PROGRAMS and _moves_user_files(args)):
                     result = "irreversible"
                 if prog == "git" and args and any(args[0] == sub and (flag is None or flag in args) for sub, flag in _IRREVERSIBLE_GIT):
@@ -429,6 +468,8 @@ def _guess(
         return "outbound" if remote or caps & {"network"} or not tagged else "local"
     if _IRREVERSIBLE_ACTION.search(words) and (not tagged or caps & {"network", "write", "exec"}):
         return "irreversible"
+    if tagged and not caps and not remote:
+        return "local"  # declared with no capabilities (a "think" or "finish" step): it can't touch anything
     if caps and not (caps & {"network", "write", "exec"}) and not remote:
         return "local"  # read-only, local tools (declared or inferred from the name)
     return "outbound"  # messages, payments, posts, API calls: effects on another system

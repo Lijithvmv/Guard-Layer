@@ -164,3 +164,20 @@ def test_default_task_must_exist_and_need_no_request_values():
     with pytest.raises(ValueError, match="only a trusted request"):
         SessionPolicy(tasks={"t": {"tools": ["send_email"], "arguments": [
             {"tool": "send_email", "argument": "to", "allow": ["{task.customer}"]}]}}, default_task="t")
+
+
+def test_draft_flags_a_tool_only_ever_called_after_outside_content(tmp_path):
+    """A source read in every session (a poisoned README) could drive the same tool each time: listed, but flagged."""
+    path = tmp_path / "audit.jsonl"
+    guard = claude_code.configure_guard(build_guard({"audit": {"path": str(path), "min_verdict": "allow"}}), tmp_path / "st")
+    for sid in ("a", "b"):
+        def event(**e):
+            claude_code.handle_event({"session_id": sid, **e}, guard)
+        event(hook_event_name="PreToolUse", tool_name="Read", tool_input={"file_path": "a.py"})
+        event(hook_event_name="PreToolUse", tool_name="mcp__github__get_issue", tool_input={"n": 1})
+        event(hook_event_name="PostToolUse", tool_name="mcp__github__get_issue", tool_input={"n": 1}, tool_response="Issue text")
+        event(hook_event_name="PreToolUse", tool_name="mcp__mail__send", tool_input={"to": "x@outside.example"})
+    text = draft(tool_usage([path]), guard)
+    line = next(ln for ln in text.splitlines() if '"mcp__mail__send",' in ln)
+    assert "CHECK: only ever called after outside content" in line
+    assert "CHECK" not in next(ln for ln in text.splitlines() if '"Read",' in ln)

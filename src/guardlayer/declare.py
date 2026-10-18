@@ -195,7 +195,11 @@ def allowed_tools(usage: dict[str, ToolUsage], known: Iterable[str] = ()) -> lis
         "tools = [",
         *(f"  {json.dumps(u.name)},{' ' * max(1, 34 - len(u.name))}# {u.calls} call(s) in {len(u.sessions)} session(s)"
           + (" (built-in or already declared)" if u.name in known else "")
-          + (f", {u.reviewed_or_blocked} held or refused" if u.reviewed_or_blocked else "") for u in keep),
+          + (f", {u.reviewed_or_blocked} held or refused" if u.reviewed_or_blocked else "")
+          # every call came after outside content: a source read in each session (a poisoned README) could have
+          # driven it every time, so the log can't vouch for it
+          + (" CHECK: only ever called after outside content" if u.name not in known and u.tainted_calls == u.calls else "")
+          for u in keep),
         "]",
     ]
     if not keep:  # an empty profile isn't valid config: say so instead
