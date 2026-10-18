@@ -257,8 +257,18 @@ _PUBLISH = {
     "git": {"push", "send-email", "request-pull"}, "npm": {"publish", "unpublish"}, "pnpm": {"publish"}, "yarn": {"publish"},
     "cargo": {"publish"}, "twine": {"upload"}, "docker": {"push"}, "gh": {"release", "pr", "repo", "gist"},
     "uv": {"publish"}, "poetry": {"publish"}, "vercel": {"deploy", "--prod"}, "netlify": {"deploy"}, "fly": {"deploy"},
-    "kubectl": {"apply", "delete", "rollout"}, "helm": {"install", "upgrade", "uninstall"}, "terraform": {"apply", "destroy"},
+    "kubectl": {"apply", "delete", "rollout"}, "helm": {"install", "upgrade", "uninstall", "push"}, "terraform": {"apply", "destroy"},
+    # package registries: an agent publishing a package reaches everyone who installs it
+    "gem": {"push"}, "flit": {"publish"}, "hatch": {"publish"}, "pdm": {"publish"}, "mvn": {"deploy"},
+    "gradle": {"publish"}, "nuget": {"push"}, "dotnet": {"nuget push"}, "anaconda": {"upload"},
 }
+_PUBLISH["yarn"] = _PUBLISH["yarn"] | {"npm publish"}
+
+
+def _publishes(prog: str, args: list[str]) -> bool:
+    """`git push`, `npm publish`, and two-word subcommands (`yarn npm publish`, `dotnet nuget push`)."""
+    known = _PUBLISH.get(prog)
+    return bool(known and args) and (args[0] in known or " ".join(args[:2]) in known)
 # Effects on another system that can't be taken back: money, bookings and orders, credentials, access, deletion,
 # publishing. After an injection these are held whatever their arguments, like local deletes (NCSC's
 # recoverability dimension).
@@ -353,7 +363,7 @@ def local_command(tool: str, caps: Iterable[str], tagged: bool, arguments: Mappi
             args = cmd.argv[1:]
             if prog.startswith("__"):
                 return False  # dynamic code
-            if (prog in _PUBLISH and args and args[0] in _PUBLISH[prog]) or prog in _NET_PROGRAMS or (
+            if (_publishes(prog, args)) or prog in _NET_PROGRAMS or (
                 prog in _NET_SUBCOMMANDS and args and args[0] in _NET_SUBCOMMANDS[prog]
             ):
                 return False
@@ -386,7 +396,7 @@ def sends_out(
                     continue
                 prog = re.split(r"[/\\]", cmd.argv[0])[-1].removesuffix(".exe")
                 args = cmd.argv[1:]
-                if prog in _PUBLISH and args and args[0] in _PUBLISH[prog]:
+                if _publishes(prog, args):
                     return True
                 if prog in _NET_PROGRAMS or (prog in _NET_SUBCOMMANDS and args and args[0] in _NET_SUBCOMMANDS[prog]):
                     return True
@@ -426,7 +436,7 @@ def _guess(
                 if prog == "cd" and len(args) == 1:
                     cwd = args[0].replace("\\", "/")
                     continue
-                if prog in _PUBLISH and args and args[0] in _PUBLISH[prog]:
+                if _publishes(prog, args):
                     return "irreversible"
                 if prog in _NET_PROGRAMS or (prog in _NET_SUBCOMMANDS and args and args[0] in _NET_SUBCOMMANDS[prog]):
                     result = "outbound" if result == "local" else result

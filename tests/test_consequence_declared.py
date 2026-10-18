@@ -386,3 +386,10 @@ def test_clearing_a_temp_folder_is_local_work():
     assert kind("cd /tmp && rm -rf ../home/me") == "irreversible"  # climbs out
     assert kind("rm -rf /tmp/x ~/Documents") == "irreversible"  # one target outside
     assert kind("cd D:/proj && rm -rf build") == "irreversible"
+
+
+@pytest.mark.parametrize("command", ["gem push a.gem", "yarn npm publish", "dotnet nuget push a.nupkg", "mvn deploy",
+                                     "flit publish", "hatch publish", "helm push c.tgz oci://registry", "gradle publish"])
+def test_publishing_a_package_is_irreversible(command):
+    from guardlayer.consequence import consequence
+    assert consequence("Bash", ("exec",), True, {"command": command}) == "irreversible"
