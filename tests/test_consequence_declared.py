@@ -374,3 +374,15 @@ def test_moving_or_opening_up_the_users_own_files_is_irreversible():
     assert kind("mv build/a.txt build/b.txt") == "local"
     assert kind("mv C:/Users/me/AppData/Local/Temp/x y") == "local"
     assert kind("chmod +x scripts/run.sh") == "local"
+
+
+def test_clearing_a_temp_folder_is_local_work():
+    from guardlayer.consequence import consequence
+    def kind(cmd):
+        return consequence("Bash", ("exec",), True, {"command": cmd})
+    assert kind('cd "C:/Users/me/AppData/Local/Temp/run" && rm -rf vh && mkdir vh') == "local"
+    assert kind("rm -rf /tmp/build-123") == "local"
+    assert kind("rm -rf /tmp") == "irreversible"  # the folder itself
+    assert kind("cd /tmp && rm -rf ../home/me") == "irreversible"  # climbs out
+    assert kind("rm -rf /tmp/x ~/Documents") == "irreversible"  # one target outside
+    assert kind("cd D:/proj && rm -rf build") == "irreversible"

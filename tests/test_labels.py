@@ -406,8 +406,15 @@ def test_reading_a_labelled_file_raises_the_session_but_is_not_running_it(tmp_pa
     assert g.session("reader").state.label.integrity is Integrity.UNTRUSTED  # but its content now counts as read
 
 
-def test_deleting_only_files_the_agent_created_is_local_work(tmp_path):
+def test_deleting_only_files_the_agent_created_is_local_work(tmp_path, monkeypatch):
     """After an injection, deleting the agent's own scratch files runs; deleting a file it only edited is held."""
+    import re
+
+    from guardlayer import consequence
+
+    # pytest's tmp_path is inside the system temp folder, where any delete is local work; this test is about files
+    # elsewhere (a project), so no folder counts as temp here
+    monkeypatch.setattr(consequence, "_TEMP_DIR", re.compile(r"(?!)"))
     g = _guard()
     s = g.session()
     user_file = tmp_path / "settings.py"

@@ -224,6 +224,27 @@ _USER_FILES = re.compile(r"^(?:~|\$HOME|\$\{HOME\}|%USERPROFILE%|/home/[^/]+|/Us
 _NOT_USER_FILES = re.compile(r"[\/](?:AppData|\.cache|tmp|Temp|node_modules|\.venv|venv)(?:[\/]|$)", re.IGNORECASE)
 
 
+# Temp folders hold nothing of the user's: deleting inside one loses no data (an agent clearing its own scratch folder).
+_TEMP_DIR = re.compile(r"^(?:/tmp|/var/tmp|[A-Za-z]:/Windows/Temp|(?:[A-Za-z]:)?/Users/[^/]+/AppData/Local/Temp|"
+                       r"/c/Users/[^/]+/AppData/Local/Temp|\$TMPDIR|\$\{TMPDIR\}|\$TEMP|%TEMP%|%TMP%)(?:/|$)", re.IGNORECASE)
+
+
+def _in_temp(path: str, cwd: str) -> bool:
+    """Whether a delete target is inside a temp folder, resolved against the command's own `cd`."""
+    path = path.replace("\\", "/")
+    if ".." in path.split("/") or not path or path in (".", "/"):
+        return False
+    if not (path.startswith(("/", "~", "$", "%")) or re.match(r"^[A-Za-z]:/", path)):
+        path = f"{cwd.rstrip('/')}/{path}" if cwd else path
+    m = _TEMP_DIR.match(path)
+    return bool(m) and bool(path[m.end():].strip("/"))  # something inside the temp folder, not the folder itself
+
+
+def _deletes_only_temp(args: list[str], cwd: str) -> bool:
+    targets = [a for a in args if not a.startswith("-")]
+    return bool(targets) and all(_in_temp(t, cwd) for t in targets)
+
+
 def _moves_user_files(args: list[str]) -> bool:
     paths = [a for a in args if not a.startswith("-")]
     return any(_USER_FILES.match(a) and not _NOT_USER_FILES.search(a) for a in paths)
@@ -395,12 +416,16 @@ def _guess(
         if view is None:
             return "outbound"  # can't tell what it does: treat as the riskiest class
         result = "local"
+        cwd = ""  # where the command's own `cd` went: relative delete targets resolve against it
         for pipeline in view.commands:
             for cmd in pipeline:
                 if not cmd.argv:
                     continue
                 prog = re.split(r"[/\\]", cmd.argv[0])[-1].removesuffix(".exe")
                 args = cmd.argv[1:]
+                if prog == "cd" and len(args) == 1:
+                    cwd = args[0].replace("\\", "/")
+                    continue
                 if prog in _PUBLISH and args and args[0] in _PUBLISH[prog]:
                     return "irreversible"
                 if prog in _NET_PROGRAMS or (prog in _NET_SUBCOMMANDS and args and args[0] in _NET_SUBCOMMANDS[prog]):
@@ -409,6 +434,8 @@ def _guess(
                 if prog.startswith("__") or (prog in ("python", "python3", "node") and any(a.startswith(("http://", "https://")) for a in args)):
                     result = "outbound" if result == "local" else result  # dynamic or network-capable inline code
                     continue
+                if prog in _IRREVERSIBLE_PROGRAMS and _deletes_only_temp(args, cwd):
+                    continue  # clearing a temp folder loses nothing of the user's
                 if prog in _IRREVERSIBLE_PROGRAMS or (prog in _RELOCATING_PROGRAMS and _moves_user_files(args)):
                     result = "irreversible"
                 if prog == "git" and args and any(args[0] == sub and (flag is None or flag in args) for sub, flag in _IRREVERSIBLE_GIT):
