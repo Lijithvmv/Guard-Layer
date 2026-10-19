@@ -152,6 +152,9 @@ in that case.
 - **Implicit flows.** Outside text that makes the agent *choose* between values you trust (pay the second of your two
   invoices, invite the colleague you named rather than the other one) copies nothing from the outsider, so provenance
   rules can't see it. Neither can they see harm done only in the agent's answer text.
+- **Poisoned records.** If an outsider can edit a record you rely on (a CRM's billing e-mail), a request that uses that
+  record ("send the invoice to our billing contact") sends to the outsider's value: it is data, in a real field,
+  indistinguishable from a correct one.
 - It only sees what passes through it: tools you don't route through GuardLayer aren't guarded.
 - An injection that stays within what the task allows (a wrong but permitted recipient, a misleading summary) needs
   argument rules or a human, not a scanner.
