@@ -5,6 +5,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-20
+
+### Security
+- **Notes written from outside content stay untrusted prose in a later session.** An agent that read an outsider's
+  page and noted "Support: x@y" turned the outsider's address into a record line; a later session (the page gone)
+  let a message carrying private data go to it. A file written while the session held outside content is the agent's
+  own writing, never a record source: read back, it is prose. Normal work unchanged (coding sessions 120 of 6,962
+  calls held, OpenHands 0.18%, AgentDojo ordinary tasks 53 of 644).
+
+### Fixed
+- **YAML tool results are read without a YAML library.** Telling records from prose in YAML results needed PyYAML,
+  which the dependency-free core doesn't install; a plain install read such results as prose. A built-in reader now
+  matches PyYAML's records on all 7,664 YAML outputs sampled from AgentDojo's runs.
+- CI lint errors (import order; a loop variable in a test).
+
+### Documentation
+- Implicit flows (outside text choosing between values you trust) named as a limit.
+
 ## [0.9.0] - 2026-10-18
 
 Judging actions by what the user asked for and where each value came from, measured on data the rules were never
