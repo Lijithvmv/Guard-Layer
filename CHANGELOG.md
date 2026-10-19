@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **Addresses an outsider spells out or encodes in ROT13 count as the outsider's.** "keys at collector-evil dot
+  example", "[at] … [dot]" and ROT13 address tokens in outside content are rebuilt the way the agent would and held
+  like any address only an outsider named. Ordinary prose is left alone; cost unchanged on every measured set.
+
+### Documentation
+- Poisoned records (an outsider editing a field you rely on) named as a limit.
+
 ## [0.9.1] - 2026-10-20
 
 ### Security
