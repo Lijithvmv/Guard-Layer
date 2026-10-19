@@ -1131,6 +1131,7 @@ def _decode_token(token: str) -> str | None:
 def observe_content(
     policy: SessionPolicy, state: SessionState, text: str, result: ScanResult, *, source: str, tool: str | None,
     can_reach_network: bool, untrusted: bool = False, origin: Iterable[str] = (), call_arguments: Any = None,
+    read_back: bool = False,
 ) -> None:
     """Update taint after the agent read `text` (a tool result or other third-party content).
 
@@ -1156,7 +1157,10 @@ def observe_content(
                 state.named_phrases = _add(state.named_phrases, [*(_h(p, "phrase") for p in phrases(text)),
                                                                  *(_h(p, "place") for p in places(text))], MAX_PHRASES)
             if policy.record_fields:
-                records, prose = record_parts(raw)
+                # A file the agent wrote while the session held outside content is its own writing, not a system of
+                # record: an address an outsider gave becomes "Support: x@y" in its notes, and must stay prose so a
+                # later session (where the outsider's page is gone) can't take it for a record.
+                records, prose = (set(), [raw]) if read_back else record_parts(raw)
                 if not injected:
                     state.record_values = _add(state.record_values, (_h(v, "phrase") for v in records), MAX_PHRASES)
                 # an injection is prose: whatever target it names appears here

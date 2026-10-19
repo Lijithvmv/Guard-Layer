@@ -149,6 +149,9 @@ in that case.
   rules that don't depend on detection have their own measured gaps: an address the agent has to rebuild (spelled out,
   reversed), visiting an outsider's page, a password change with no destination, and private data paraphrased into a
   public post. See [what it stops and what it does not](https://lijithvmv.github.io/Guard-Layer/concepts/consequence/).
+- **Implicit flows.** Outside text that makes the agent *choose* between values you trust (pay the second of your two
+  invoices, invite the colleague you named rather than the other one) copies nothing from the outsider, so provenance
+  rules can't see it. Neither can they see harm done only in the agent's answer text.
 - It only sees what passes through it: tools you don't route through GuardLayer aren't guarded.
 - An injection that stays within what the task allows (a wrong but permitted recipient, a misleading summary) needs
   argument rules or a human, not a scanner.
