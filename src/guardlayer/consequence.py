@@ -97,6 +97,84 @@ _FREE_TEXT_KEYS = frozenset(
 )
 
 
+_YAML_LINE = re.compile(r"^(\s*)(-\s+)?(?:([^\s:#'\"][^:#]*?|'[^']*'|\"[^\"]*\"):(?:\s+(.*))?|(.*))$")
+
+
+def _open_quote(value: str) -> str:
+    """The quote character a value opens and doesn't close on its line ("" if none)."""
+    if value[:1] in ("'", '"'):
+        q = value[0]
+        rest = value[1:].replace(q * 2, "") if q == "'" else value[1:]
+        return "" if rest.endswith(q) else q
+    return ""
+
+
+def _yaml_fields(text: str) -> list[tuple[list[str], str]] | None:
+    """The scalar fields of a YAML block (mappings and lists, the shapes tool results use), without a YAML library:
+    [(the keys leading to it, the value)]. A value that runs onto following, more indented lines (a block scalar or a
+    wrapped string) is joined. None if the text doesn't read as YAML of that shape."""
+    out: list[tuple[list[str], str]] = []
+    stack: list[tuple[int, str]] = []  # (indent of the key, key)
+    current: tuple[int, list[str]] | None = None  # the field still taking continuation lines: (its indent, parts)
+    keyed = 0
+    quote = ""  # a quoted value still open: everything up to its closing quote is that value, colons included
+    for raw in text.splitlines():
+        if quote:
+            current[1].append(raw.strip())  # type: ignore[index]
+            if raw.rstrip().endswith(quote) and not raw.rstrip().endswith(quote * 2):
+                quote = ""
+            continue
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        m = _YAML_LINE.match(raw)
+        if m is None:
+            return None
+        indent = len(m.group(1)) + (len(m.group(2)) if m.group(2) else 0)
+        plain = m.group(2) is None and m.group(3) is None  # neither "- " nor "key:": only a wrapped value can be this
+        if current is not None and (plain or indent > current[0] and m.group(4) is None and not m.group(2)):
+            current[1].append(raw.strip())  # continuation of the previous value
+            continue
+        current = None
+        key, value, bare = m.group(3), m.group(4), m.group(5)
+        if key is not None:
+            keyed += 1
+            key = key.strip().strip("'\"")
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+            path = [k for _, k in stack]
+            if value is None or value.strip() in ("", "|", ">", "|-", ">-", "|+", ">+"):
+                stack.append((indent, key))
+                if value and value.strip():
+                    current = (indent, [])
+                    out.append((path + [key], current[1]))  # type: ignore[arg-type]
+                continue
+            parts = [value.strip()]
+            out.append((path + [key], parts))  # type: ignore[arg-type]
+            current = (indent, parts)
+            quote = _open_quote(value.strip())
+        elif bare is not None and m.group(2):  # "- value" list item
+            keyed += 1
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+            parts = [bare.strip()]
+            out.append(([k for _, k in stack], parts))  # type: ignore[arg-type]
+            current = (indent, parts)
+            quote = _open_quote(bare.strip())
+        else:
+            return None
+    if not keyed:  # neither a key nor a list item: plain text
+        return None
+    fields = []
+    for keys, parts in out:
+        value = " ".join(p for p in parts if p).strip()  # type: ignore[union-attr]
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        # null, empty collections and booleans aren't values (a YAML reader drops them too)
+        if value and value.lower() not in ("null", "~", "[]", "{}", "true", "false", "yes", "no", "on", "off"):
+            fields.append((keys, value))
+    return fields
+
+
 def record_parts(text: str, limit: int = 2000) -> tuple[set[str], list[str]]:
     """A tool result split into its records' identity values and its prose.
 
@@ -109,19 +187,33 @@ def record_parts(text: str, limit: int = 2000) -> tuple[set[str], list[str]]:
     if not text or (text[0] not in "[{-" and ":" not in text.splitlines()[0]):
         return set(), [text] if text else []
     data: Any = None
+    records: set[str] = set()
+    prose: list[str] = []
+
+    def scalar(value: Any, free: bool) -> None:
+        if free:
+            prose.append(str(value))
+            return
+        v = _norm(str(value)).strip(".:")
+        if 0 < len(v) <= 100 and len(v.split()) <= 6:
+            records.add(v)
+        else:
+            prose.append(str(value))  # a long value in an identity field is still text someone wrote
+
     try:
         data = json.loads(text)
     except ValueError:
-        try:
-            import yaml  # type: ignore[import-untyped]  # optional: only for YAML results
-
-            data = yaml.safe_load(text)
-        except Exception:  # noqa: BLE001 - not structured, or no PyYAML
+        # YAML, read without a library (the core has no dependencies): fields and the keys above them
+        fields = _yaml_fields(text)
+        if fields is None:
             return set(), [text]
+        for keys, value in fields[: limit * 4]:
+            if len(records) >= limit:
+                break
+            scalar(value, any(k.lower() in _FREE_TEXT_KEYS for k in keys))
+        return records, prose
     if not isinstance(data, (Mapping, list)):
         return set(), [text]
-    records: set[str] = set()
-    prose: list[str] = []
 
     def walk(value: Any, free: bool) -> None:
         if len(records) >= limit:
@@ -133,14 +225,7 @@ def record_parts(text: str, limit: int = 2000) -> tuple[set[str], list[str]]:
             for v in value[:500]:
                 walk(v, free)
         elif isinstance(value, (str, int, float)) and not isinstance(value, bool):
-            if free:
-                prose.append(str(value))
-                return
-            v = _norm(str(value)).strip(".:")
-            if 0 < len(v) <= 100 and len(v.split()) <= 6:
-                records.add(v)
-            else:
-                prose.append(str(value))  # a long value in an identity field is still text someone wrote
+            scalar(value, free)
 
     walk(data, False)
     return records, prose
