@@ -62,8 +62,9 @@ How to read it:
 - **Replay, not live.** A denied call does not change what the agent does next; the same for every defence.
 - **Not included:** a defence that rebuilds the agent around a trusted planner reports 0 successful attacks of 949
   with Claude 3.5 Sonnet at a cost of 27 points of task completion (its paper; no logs published, so not replayed).
-  On the same model's published runs, GuardLayer leaves about 30 of 949 attacks succeeding, 22 of them harm in the
-  answer text only, while holding 5 of 97 ordinary tasks. Policy-based information-flow systems that need a policy
+  On the same model's published runs (the 2024-06-20 version, never used to develop the rules), GuardLayer leaves
+  about 23 of 949 attacks succeeding: 8 harmful calls it missed, 6 page visits it didn't hold, and 9 whose harm is only
+  in the answer text, while holding 5 of 97 ordinary tasks. Policy-based information-flow systems that need a policy
   written per deployment were not compared.
 
 ### Public datasets
