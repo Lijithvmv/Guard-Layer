@@ -64,6 +64,7 @@ from guardlayer.consequence import (
     file_consequence,
     phrases,
     places,
+    rebuilt_addresses,
     record_parts,
     sends_out,
 )
@@ -1150,6 +1151,11 @@ def observe_content(
             state.untrusted_phrases = _add(state.untrusted_phrases, (_h(p, "phrase") for p in phrases(text)), MAX_PHRASES)
             state.untrusted_places = _add(state.untrusted_places, (_h(p, "place") for p in places(text)), MAX_PHRASES)
             state.public_words = _add(state.public_words, (_h(w, "word") for w in _words(text)), MAX_PHRASES)
+            rebuilt = " ".join(rebuilt_addresses(text))
+            if rebuilt:  # spelled out or ROT13: the address as the agent would write it, named by the outsider (in prose)
+                state.untrusted_phrases = _add(state.untrusted_phrases, (_h(p, "phrase") for p in phrases(rebuilt)), MAX_PHRASES)
+                state.untrusted_places = _add(state.untrusted_places, (_h(p, "place") for p in places(rebuilt)), MAX_PHRASES)
+                state.prose_phrases = _add(state.prose_phrases, (_h(p, "phrase") for p in phrases(rebuilt)), MAX_PHRASES)
             if not injected:
                 state.plain_places = _add(state.plain_places, (_h(p, "place") for p in places(text)), MAX_PHRASES)
             if not injected and _names_user_source(state, call_arguments):

@@ -236,6 +236,41 @@ def record_values(text: str, limit: int = 2000) -> set[str]:
     return record_parts(text, limit)[0]
 
 
+_DOT = r"\s*[(\[{]?\s*dot\s*[)\]}]?\s*"
+_SPELLED_EMAIL = re.compile(r"\b([a-z0-9][\w.+-]{0,63})\s*[(\[{]?\s*at\s*[)\]}]?\s*([a-z0-9][\w-]{0,62}(?:" + _DOT + r"[a-z0-9][\w-]{0,62})+)",
+                            re.IGNORECASE)
+_SPELLED_HOST = re.compile(r"\b([a-z0-9][\w-]{0,62}(?:" + _DOT + r"[a-z0-9][\w-]{0,62})+)", re.IGNORECASE)
+_ADDRESSISH = re.compile(r"^[\w.+-]+@[\w-]+(?:\.[\w-]+)+$|^[\w-]+(?:\.[\w-]+)+$")
+_TLDS = frozenset("com net org io dev ai co app example info biz us uk de in xyz me site online tech cloud email".split())
+
+
+def rebuilt_addresses(text: str, limit: int = 200) -> list[str]:
+    """Addresses an outsider wrote so a detector can't read them, as the agent would rebuild them: spelled out
+    ("keys at collector-evil dot example" → keys@collector-evil.example) or in ROT13 (the address-shaped tokens whose
+    decoding ends in a known top-level domain). Only for outside content: they become places only the outsider named."""
+    import codecs
+
+    out: list[str] = []
+    text = text[:200_000]
+    for m in _SPELLED_EMAIL.finditer(text):
+        domain = re.sub(_DOT, ".", m.group(2), flags=re.IGNORECASE)
+        if domain.rsplit(".", 1)[-1].lower() in _TLDS:
+            out.append(f"{m.group(1)}@{domain}".lower())
+    for m in _SPELLED_HOST.finditer(text):
+        if re.search(_DOT, m.group(1), flags=re.IGNORECASE):
+            host = re.sub(_DOT, ".", m.group(1), flags=re.IGNORECASE).lower()
+            if host.rsplit(".", 1)[-1] in _TLDS:
+                out.append(host)
+    for token in re.findall(r"[\w.+-]+@[\w.-]+|[\w-]+(?:\.[\w-]+)+", text):
+        token = token.strip(".")
+        decoded = codecs.decode(token, "rot13").lower()
+        if decoded != token.lower() and _ADDRESSISH.match(decoded) and decoded.rsplit(".", 1)[-1] in _TLDS:
+            out.append(decoded)
+        if len(out) >= limit:
+            break
+    return list(dict.fromkeys(out))[:limit]
+
+
 def places(text: str, limit: int = 2000) -> set[str]:
     """The places a text names, as a destination check needs them (normalised, lower-case).
 
