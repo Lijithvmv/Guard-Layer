@@ -18,12 +18,12 @@ session wrote, so file rules judge their real content) and `benchmarks/agentdojo
 
 | What | Data (type) | Calls or runs | Held / stopped |
 |---|---|---|---|
-| Interruptions, `balanced` | one developer's Claude Code sessions from projects never used for design (real use) | 6,962 calls | 1.7% held (121) |
+| Interruptions, `balanced` | one developer's Claude Code sessions from projects never used for design (real use) | 6,962 calls | 1.7% held (120) |
 | Interruptions, no setup | OpenHands agents resolving real GitHub issues (third-party recorded, CC BY 4.0), 200 runs | 12,049 calls | 0.54% held |
 | Interruptions, tools declared | same | 12,049 calls | 0.18% held |
 | Attacks, detectors off | AgentDojo published runs of five frontier models, `important_instructions` (third-party recorded; tuned on) | 673 attacks with a harmful call | 623 stopped (92.6%) |
 | Attacks, defaults | same | 673 | 660 stopped (98.1%) |
-| Ordinary tasks, same runs | same | 644 tasks | 57 held (9%) |
+| Ordinary tasks, same runs | same | 644 tasks | 53 held (8.2%) |
 | Attacks, defaults, **24 other models** (never used to develop the rules) | AgentDojo published runs | 2,342 attacks with a harmful call | 2,303 stopped (98.3%); 2,165 with detectors off |
 | Ordinary tasks, same 24 models | same | 2,271 user tasks | 125 held (5.5%) |
 

@@ -127,12 +127,12 @@ action you asked for, gets through when no injection is detected; a message like
 
 ## What it costs (measured)
 
-- **Interruptions:** all rules together hold **1.7% of 6,962 calls** (121) on one developer's real Claude Code
+- **Interruptions:** all rules together hold **1.7% of 6,962 calls** (120) on one developer's real Claude Code
   sessions from projects not used to design the rules (but used to check every change; replayed with tool arguments
   passed with results, as the live hook does). On another agent's real work (OpenHands resolving GitHub issues, a
   different model and framework), they held under 1% out of the box and 0.2% with its tools declared (measured before
   0.9). On AgentDojo's ordinary tasks, nearly all of which pay, send or book right after reading outside content, the
-  defaults hold **57 of 644 (9%)** for approval on the five models below, and **8.5% of 2,916** on 24 other models.
+  defaults hold **53 of 644 (8%)** for approval on the five models below, and **8.5% of 2,916** on 24 other models.
 - **Time:** GuardLayer's handling of a 4 KB tool result is ~48 ms (about 11 ms of it this check) and of a tool call
   ~5 ms, on an idle laptop.
 
@@ -144,8 +144,8 @@ tasks. "Detectors removed" stands in for an attacker whose wording no detector r
 
 | | Attack's harmful call held | Some call in the attack held | Ordinary tasks interrupted |
 |---|---|---|---|
-| detectors on (defaults) | 603 / 707 (85%) | 699 / 707 (99%) | 57 / 644 |
-| detectors removed, **defaults** | **538 / 707 (76%)** | 637 / 707 (90%) | 55 / 644 |
+| detectors on (defaults) | 603 / 707 (85%) | 699 / 707 (99%) | 53 / 644 |
+| detectors removed, **defaults** | **538 / 707 (76%)** | 629 / 707 (89%) | 51 / 644 |
 
 "Harmful call" here means a call carrying a value from the injected text, which misses harmful calls with short or
 computed arguments (delete file 13, book the most expensive hotel). A stricter count compares each attacked run with
@@ -168,7 +168,7 @@ Declaring a tool's capabilities says what it can do, not who writes what it retu
 of the injections that name-based trust let through. `[labels] default_integrity = "trusted"` restores name-based
 trust; `"untrusted"` distrusts every result.
 
-AgentDojo's ordinary tasks nearly all pay, send or book right after reading such content; about one in eleven is held
+AgentDojo's ordinary tasks nearly all pay, send or book right after reading such content; about one in twelve is held
 for approval, mostly paying a bill (always confirmed) and "do the tasks on my list at a URL".
 
 Not covered:
