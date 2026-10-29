@@ -13,9 +13,15 @@ from __future__ import annotations
 import hashlib
 import json
 import urllib.request
-from typing import Any, Callable, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Iterable, Optional
 
 SCHEMA = "guardlayer.decision.v1"
+
+# Rule-category triggers a fired rule can match, mirroring the control plane's agent_evidence.DEFAULT_RULE_MAP
+# keys. These are the ONLY triggers a runtime rule can be matched against (the other advisory triggers —
+# "approval", "every_decision" — are not rule-driven, so should_tighten never acts on them).
+RULE_TRIGGERS = ("exfil", "boundary", "security")
 
 # GuardLayer verdict -> governance verdict
 _VERDICT = {"allow": "allow", "review": "require_approval", "block": "deny"}
@@ -153,3 +159,102 @@ class KassyonEmitter:
     @property
     def pending(self) -> int:
         return len(self._buffer)
+
+
+# --------------------------------------------------------------------------------------------------------------
+# Governance-posture consumer (control plane -> data plane): the closing half of the loop.
+# Kassyon's GET /agent/policy says where its evidence is thin and recommends an enforcement posture per control.
+# This is ADVISORY: we fetch it and expose a predicate; wiring it into runtime policy is the guard's choice, and
+# by default we only annotate a decision — we never silently change a verdict here.
+# --------------------------------------------------------------------------------------------------------------
+
+def _http_get(url: str, token: str, *, timeout: float = 5.0) -> Optional[dict]:
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        if 200 <= r.status < 300:
+            return json.loads(r.read().decode())
+    return None
+
+
+@dataclass(frozen=True)
+class PolicyAdvisory:
+    """One control's posture, as reported by Kassyon."""
+    framework: str
+    control_ref: str
+    title: str
+    trigger: str          # rule-category (exfil/boundary/security), "approval", or "every_decision"
+    status: str           # gap | stale | weak | effective
+    enforcement: str      # enforce | monitor
+    occurrences: int = 0
+    last_seen: Optional[str] = None
+    fresh: bool = False
+
+    @property
+    def enforce(self) -> bool:
+        return self.enforcement == "enforce"
+
+
+class KassyonPolicy:
+    """Fetches and caches Kassyon's governance-posture advisory, and answers "should the guard stay strict for
+    a rule that fell in category X?". Fail-open: if Kassyon is unreachable, refresh() keeps the last-known
+    advisories (none at first) and returns False, so posture can only ever ADD strictness, never remove it by
+    failing.
+
+    transport(url, token) -> dict | None is injectable for tests; default is an HTTP GET to <url>/agent/policy.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        token: str = "",
+        *,
+        transport: Optional[Callable[[str, str], Optional[dict]]] = None,
+    ) -> None:
+        self.url = url.rstrip("/") + "/agent/policy"
+        self.token = token
+        self._transport = transport or _http_get
+        self.advisories: list[PolicyAdvisory] = []
+        self.generated_at: str = ""
+        self.last_ok: bool = False
+
+    def refresh(self) -> bool:
+        """Fetch the latest posture. Never raises; returns True on a good fetch, else keeps the last advisories."""
+        try:
+            data = self._transport(self.url, self.token)
+        except Exception:
+            data = None
+        if not isinstance(data, dict) or not isinstance(data.get("advisories"), list):
+            self.last_ok = False
+            return False
+        parsed: list[PolicyAdvisory] = []
+        for a in data["advisories"]:
+            if not isinstance(a, dict):
+                continue
+            parsed.append(PolicyAdvisory(
+                framework=a.get("framework", ""), control_ref=a.get("control_ref", ""),
+                title=a.get("title", ""), trigger=a.get("trigger", ""), status=a.get("status", ""),
+                enforcement=a.get("enforcement", ""), occurrences=int(a.get("occurrences", 0) or 0),
+                last_seen=a.get("last_seen"), fresh=bool(a.get("fresh", False))))
+        self.advisories = parsed
+        self.generated_at = str(data.get("generated_at", ""))
+        self.last_ok = True
+        return True
+
+    @property
+    def enforced_triggers(self) -> set[str]:
+        """Rule-category triggers whose control is currently recommended for enforcement."""
+        return {a.trigger for a in self.advisories if a.enforce and a.trigger in RULE_TRIGGERS}
+
+    def should_tighten(self, categories: Iterable[str]) -> bool:
+        """True if any of these rule categories backs a control Kassyon currently flags `enforce`. The caller
+        passes the categories of the rule(s) that fired (the guard owns its own rule->category taxonomy)."""
+        enforced = self.enforced_triggers
+        return any(c in enforced for c in categories)
+
+    def advisories_for(self, categories: Iterable[str]) -> list[PolicyAdvisory]:
+        """The enforce advisories matching these categories — for recording WHY a decision was flagged."""
+        cats = set(categories)
+        return [a for a in self.advisories if a.enforce and a.trigger in cats]

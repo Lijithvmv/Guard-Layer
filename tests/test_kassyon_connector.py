@@ -1,7 +1,7 @@
-"""Tests for the GuardLayer -> Kassyon connector emitter (no network)."""
+"""Tests for the GuardLayer -> Kassyon connector: emitter + governance-posture consumer (no network)."""
 from dataclasses import dataclass, field
 
-from guardlayer.integrations.kassyon import KassyonEmitter, SCHEMA, build_record
+from guardlayer.integrations.kassyon import KassyonEmitter, KassyonPolicy, SCHEMA, build_record
 
 
 @dataclass
@@ -72,3 +72,65 @@ def test_sample_allow_keeps_review_drops_allows():
     em.flush()
     verdicts = [d["verdict"] for b in sent_batches for d in b]
     assert verdicts == ["require_approval"] and em.dropped_allow == 2
+
+
+# ---- governance-posture consumer ----------------------------------------------------------------------------
+
+def _policy_payload():
+    # mirrors Kassyon GET /agent/policy: security is a gap (enforce), exfil is effective (monitor)
+    return {"generated_at": "2026-10-29T12:00:00Z", "summary": {"gap": 1, "effective": 2},
+            "advisories": [
+                {"framework": "EU AI Act", "control_ref": "Art.15", "title": "Accuracy, robustness and cybersecurity",
+                 "trigger": "security", "status": "gap", "enforcement": "enforce", "occurrences": 0,
+                 "last_seen": None, "fresh": False},
+                {"framework": "NIST 800-53", "control_ref": "AC-4", "title": "Information flow enforcement",
+                 "trigger": "exfil", "status": "effective", "enforcement": "monitor", "occurrences": 9,
+                 "last_seen": "2026-10-29T11:00:00Z", "fresh": True},
+                {"framework": "EU AI Act", "control_ref": "Art.14", "title": "Human oversight",
+                 "trigger": "approval", "status": "gap", "enforcement": "enforce", "occurrences": 0,
+                 "last_seen": None, "fresh": False}]}
+
+
+def _policy(payload):
+    return KassyonPolicy("http://k", token="agk_x", transport=lambda u, t: payload)
+
+
+def test_policy_refresh_parses_advisories():
+    p = _policy(_policy_payload())
+    assert p.refresh() is True and p.last_ok is True and len(p.advisories) == 3
+    art15 = next(a for a in p.advisories if a.control_ref == "Art.15")
+    assert art15.enforce is True and art15.trigger == "security" and art15.fresh is False
+
+
+def test_should_tighten_only_for_enforced_rule_category():
+    p = _policy(_policy_payload()); p.refresh()
+    assert p.should_tighten(["security"]) is True          # Art.15 is a gap -> enforce
+    assert p.should_tighten(["exfil"]) is False             # AC-4 is effective -> monitor
+    assert p.should_tighten(["boundary"]) is False          # not present -> no basis to tighten
+
+
+def test_enforced_triggers_excludes_non_rule_triggers():
+    # Art.14 is enforce but its trigger is "approval" (not a runtime rule) -> must not appear
+    p = _policy(_policy_payload()); p.refresh()
+    assert p.enforced_triggers == {"security"}
+
+
+def test_advisories_for_explains_why():
+    p = _policy(_policy_payload()); p.refresh()
+    matched = p.advisories_for(["security", "exfil"])
+    assert [a.control_ref for a in matched] == ["Art.15"]    # only the enforce one
+
+
+def test_policy_fail_open_never_raises_and_keeps_last_known():
+    good = _policy(_policy_payload()); good.refresh()
+    # transport now blows up: refresh returns False, keeps the prior advisories, still answers
+    def boom(u, t):
+        raise ConnectionError("kassyon down")
+    good._transport = boom
+    assert good.refresh() is False and good.last_ok is False
+    assert good.should_tighten(["security"]) is True         # last-known posture retained (fail-safe toward strict)
+
+
+def test_policy_bad_shape_is_ignored():
+    p = KassyonPolicy("http://k", transport=lambda u, t: {"nope": 1})
+    assert p.refresh() is False and p.advisories == []
