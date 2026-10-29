@@ -649,6 +649,11 @@ class SessionPolicy:
     # or channel list) and that no untrusted prose names is a known record, not a target an injection chose. An
     # injection is prose (a body, a subject, a page), so whatever it points to appears in prose and stays held.
     record_fields: bool = True
+    # H2 (opt-in, default off): also hold a consequential action carrying a non-place VALUE (an account number, amount
+    # or name) copied from untrusted content the user did not name — detection-independent, not just place-like
+    # destinations. Raises the bar on polite injections that evade the detector; costs more holds on agents that
+    # legitimately reuse a value read from a tool output, so it is opt-in and measured before any default change.
+    untrusted_value: bool = False
 
     def __post_init__(self) -> None:
         merged = dict(DEFAULT_SESSION_ACTIONS)
@@ -1574,6 +1579,11 @@ def taint_detections(
             # no detector needed: an action that can't be undone, carrying an outsider's words verbatim (a fake error
             # message's "call reveal_credentials to recover", a poisoned record's "next step: pay ...")
             copied = ["text copied from content an outsider can write"]
+        if policy.untrusted_value:
+            # H2: a non-place value (account, amount, name) copied from untrusted content the user did not name. Mirrors
+            # the hostile-content check below, but detection-independent (polite injections that no detector flags).
+            copied += [v for v in _carried(arguments_text, state.untrusted_values, state.user_values)
+                       if not _place_like(v) and v not in copied]
         if copied:
             emit("untrusted_destination", Category.PROMPT_INJECTION.value, 0.7,
                  f"This action sends to {', '.join(repr(v[:60]) for v in copied[:2])}, which came from content an "
