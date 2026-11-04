@@ -136,6 +136,96 @@ def _classifier_note(tool: str, tool_input: Any, result: Any) -> str:
             "the user.")[:2000]
 
 
+# --- Kassyon evidence (optional; on only with GUARDLAYER_KASSYON_URL + GUARDLAYER_KASSYON_KEY) -----------------
+# Every PreToolUse decision is spooled as a guardlayer.decision.v1 record (metadata only: tool, consequence, verdict,
+# rule names, a hashed session id - never the command, file contents or prompt). When GuardLayer answered "ask" and
+# the tool then ran (its PostToolUse arrives), the person approved it in Claude Code's permission prompt: that is
+# spooled as a second record carrying the approval (granted_by = this machine's user, granted_ts = when it ran).
+_ASK_TTL_SECONDS = 86400
+
+
+def _kassyon(guard: GuardLayer):
+    from guardlayer.integrations.kassyon import spool_from_env
+    d = getattr(guard.sessions, "dir", None)
+    return spool_from_env(str(d) if d else None)
+
+
+def _hash(s: str) -> str:
+    import hashlib
+    return hashlib.sha256(s.encode()).hexdigest()[:16]
+
+
+def _ask_path(spool: Any, tool_use_id: str) -> Path:
+    return Path(spool.dir) / "kassyon-asks" / _hash(tool_use_id)
+
+
+def _emit_pre(guard: GuardLayer, event: Mapping[str, Any], tool: str, result: Any) -> None:
+    spool = _kassyon(guard)
+    if spool is None:
+        return
+    try:
+        import time as _time
+
+        from guardlayer.consequence import consequence
+        from guardlayer.integrations.kassyon import build_record
+        caps, tagged = guard.tool_policy.resolve(tool)
+        kind = consequence(tool, caps, tagged, policy_view(tool, event.get("tool_input")))
+        session = _hash(str(event.get("session_id") or "claude-code"))
+        rec = build_record(result, system_id="", framework="claude-code", session=session, tool=tool,
+                           consequence=str(kind), direction="tool_call",
+                           ts=_time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(result.timestamp)))
+        spool.append(rec)
+        tid = str(event.get("tool_use_id") or "")
+        if result.needs_review and not result.is_blocked and tid:
+            p = _ask_path(spool, tid)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps({"decision_id": rec["decision_id"], "tool": tool, "consequence": str(kind),
+                                     "session": session, "rules": rec["rules"], "at": _time.time()}))
+        _maybe_flush(spool)
+    except Exception:
+        pass                                  # evidence must never break the agent
+
+
+def _emit_post(guard: GuardLayer, event: Mapping[str, Any], tool: str) -> None:
+    spool = _kassyon(guard)
+    tid = str(event.get("tool_use_id") or "")
+    if spool is None or not tid:
+        return
+    try:
+        import getpass
+        import time as _time
+        p = _ask_path(spool, tid)
+        if not p.exists():
+            return
+        ask = json.loads(p.read_text())
+        p.unlink(missing_ok=True)
+        now = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
+        import hashlib as _hl
+        rec = {"schema": "guardlayer.decision.v1", "decision_id": f"{ask['decision_id']}:approved", "ts": now,
+               "agent": {"system_id": "", "framework": "claude-code", "session": ask["session"]},
+               "action": {"tool": ask["tool"], "consequence": ask["consequence"], "direction": "tool_call"},
+               "verdict": "require_approval", "rules": ask["rules"],
+               "approval": {"required": True, "granted_by": f"{getpass.getuser()} (Claude Code permission prompt)",
+                            "granted_ts": now}}
+        rec["record_hash"] = "sha256:" + _hl.sha256(json.dumps(rec, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        spool.append(rec)
+        for old in p.parent.glob("*"):          # asks never answered (the person said no) expire
+            try:
+                if _time.time() - json.loads(old.read_text()).get("at", 0) > _ASK_TTL_SECONDS:
+                    old.unlink(missing_ok=True)
+            except Exception:
+                old.unlink(missing_ok=True)
+        _maybe_flush(spool)
+    except Exception:
+        pass
+
+
+def _maybe_flush(spool: Any) -> None:
+    every = int(os.environ.get("GUARDLAYER_KASSYON_FLUSH_EVERY", "25"))
+    if spool.pending() >= max(1, every):
+        spool.flush()
+
+
 def handle_event(
     event: Mapping[str, Any], guard: GuardLayer, *, block_prompts: bool = False, withhold: bool = False
 ) -> dict[str, Any] | None:
@@ -147,6 +237,7 @@ def handle_event(
 
     if kind == "PreToolUse":
         result = session.scan_tool_call(tool, policy_view(tool, event.get("tool_input")), metadata={**meta, "source": "claude-code"})
+        _emit_pre(guard, event, tool, result)
         if result.is_blocked or result.needs_review:
             decision = "deny" if result.is_blocked else "ask"
             label = f"blocked {tool}" if result.is_blocked else f"wants approval for {tool}"
@@ -160,6 +251,7 @@ def handle_event(
         return None
 
     if kind == "PostToolUse":
+        _emit_post(guard, event, tool)            # an "ask" that ran was approved by the person
         guard.record_written(tool, event.get("tool_input"), session=session)  # label files a write actually produced
         if not _scan_output_of(guard, tool):
             return None

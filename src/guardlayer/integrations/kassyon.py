@@ -378,3 +378,93 @@ class KassyonApprovals:
                                request_id=rid, kassyon_id=str(req.get("lineage_id", "")),
                                decided_by=req.get("decided_by"), decided_at=req.get("decided_at"),
                                note=str(req.get("decision_note", "") or ""))
+
+
+# --------------------------------------------------------------------------------------------------------------
+# File spool: for hosts where every guard decision is a separate short-lived process (Claude Code hooks), records
+# are appended to a local JSONL spool (fast, no network on the agent's path) and shipped in batches. Fail-open:
+# a failed send leaves the spool in place for the next flush. Only decision metadata is spooled (build_record).
+# --------------------------------------------------------------------------------------------------------------
+
+class KassyonSpool:
+    def __init__(self, url: str, token: str, directory: str, *, batch_size: int = 200,
+                 transport: Optional[Callable[[str, str, list[dict]], bool]] = None) -> None:
+        import os as _os
+        self.url = url.rstrip("/") + "/agent/decisions"
+        self.token = token
+        self.dir = _os.path.expanduser(directory)
+        self.path = _os.path.join(self.dir, "kassyon-spool.jsonl")
+        self.batch_size = max(1, batch_size)
+        self._transport = transport or _http_post
+
+    def append(self, record: dict) -> None:
+        """Never raises: the agent's work matters more than its evidence."""
+        import os as _os
+        try:
+            _os.makedirs(self.dir, exist_ok=True)
+            with open(self.path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, separators=(",", ":")) + "\n")
+        except Exception:
+            pass
+
+    def pending(self) -> int:
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                return sum(1 for line in f if line.strip())
+        except OSError:
+            return 0
+
+    def flush(self) -> int:
+        """Ship the spool in batches. Claims the file by renaming it (so concurrent hook processes keep appending
+        to a fresh spool), sends, and puts back whatever was not delivered. Returns how many were delivered."""
+        import os as _os
+        import uuid as _uuid
+        claim = f"{self.path}.{_uuid.uuid4().hex}.sending"
+        try:
+            _os.replace(self.path, claim)
+        except OSError:
+            return 0
+        lines: list[str] = []
+        try:
+            with open(claim, encoding="utf-8") as f:
+                lines = [ln for ln in f.read().splitlines() if ln.strip()]
+        except OSError:
+            pass
+        sent, left = 0, []
+        for i in range(0, len(lines), self.batch_size):
+            chunk = lines[i:i + self.batch_size]
+            batch = []
+            for ln in chunk:
+                try:
+                    batch.append(json.loads(ln))
+                except ValueError:
+                    continue                      # a torn line is dropped, never resent forever
+            try:
+                ok = bool(self._transport(self.url, self.token, batch)) if batch else True
+            except Exception:
+                ok = False
+            if ok:
+                sent += len(batch)
+            else:
+                left = lines[i:]
+                break
+        try:
+            if left:
+                with open(self.path, "a", encoding="utf-8") as f:
+                    f.write("\n".join(left) + "\n")
+            _os.remove(claim)
+        except OSError:
+            pass
+        return sent
+
+
+def spool_from_env(state_dir: str | None = None) -> "KassyonSpool | None":
+    """GUARDLAYER_KASSYON_URL + GUARDLAYER_KASSYON_KEY (an agk_ agent key) turn emission on; nothing is sent without
+    both. GUARDLAYER_KASSYON_SPOOL_DIR overrides where records wait (default: the session state dir)."""
+    import os as _os
+    url, key = _os.environ.get("GUARDLAYER_KASSYON_URL", ""), _os.environ.get("GUARDLAYER_KASSYON_KEY", "")
+    if not url or not key:
+        return None
+    d = _os.environ.get("GUARDLAYER_KASSYON_SPOOL_DIR") or state_dir or _os.environ.get("GUARDLAYER_STATE_DIR") \
+        or "~/.guardlayer/sessions"
+    return KassyonSpool(url, key, d)
