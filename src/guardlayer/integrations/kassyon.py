@@ -261,3 +261,120 @@ class KassyonPolicy:
         """The enforce advisories matching these categories — for recording WHY a decision was flagged."""
         cats = set(categories)
         return [a for a in self.advisories if a.enforce and a.trigger in cats]
+
+
+# --------------------------------------------------------------------------------------------------------------
+# Human approval (data plane -> control plane -> a person): a `review` verdict on a consequential action is held
+# and sent to Kassyon's approval queue (POST /agent/approvals); the agent polls GET /agent/approvals/{id} until a
+# named approver decides. FAIL-CLOSED, unlike emission: the action runs only on an explicit "approved". Kassyon
+# unreachable, a timeout, a rejection or an expired request all mean "do not run". The granted approval is then
+# carried on the emitted decision record (approval.granted_by / granted_ts), which is what Kassyon counts as
+# human-oversight evidence.
+# --------------------------------------------------------------------------------------------------------------
+
+def _http_post_json(url: str, token: str, body: dict, *, timeout: float = 5.0) -> Optional[dict]:
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        if 200 <= r.status < 300:
+            return json.loads(r.read().decode())
+    return None
+
+
+@dataclass(frozen=True)
+class ApprovalOutcome:
+    """What happened to one held action. `approved` is the only state in which the action may run."""
+    status: str                    # approved | rejected | expired | pending (timed out waiting) | unavailable
+    request_id: str = ""           # the idempotency key sent to Kassyon
+    kassyon_id: str = ""           # Kassyon's request lineage id ("" if it was never accepted)
+    decided_by: Optional[str] = None
+    decided_at: Optional[str] = None
+    note: str = ""
+
+    @property
+    def approved(self) -> bool:
+        return self.status == "approved" and bool(self.decided_by)
+
+    def as_record_approval(self) -> dict:
+        """The `approval` block for build_record / KassyonEmitter.emit(approval=...)."""
+        return {"required": True, "granted_by": self.decided_by if self.approved else None,
+                "granted_ts": self.decided_at if self.approved else None}
+
+
+class KassyonApprovals:
+    """Client for Kassyon's agent approval queue. Authenticate with the agent key (Bearer agk_...): Kassyon binds
+    the request to the key's own system and tenant, and an agent can only read its own requests.
+
+    post(url, token, body) -> dict | None and get(url, token) -> dict | None are injectable for tests; `sleep` too.
+    """
+
+    TERMINAL = ("approved", "rejected", "expired")
+
+    def __init__(self, url: str, token: str = "", *, poll_seconds: float = 5.0,
+                 post: Optional[Callable[[str, str, dict], Optional[dict]]] = None,
+                 get: Optional[Callable[[str, str], Optional[dict]]] = None,
+                 sleep: Optional[Callable[[float], None]] = None) -> None:
+        import time as _time
+        self.base = url.rstrip("/") + "/agent/approvals"
+        self.token = token
+        self.poll_seconds = max(0.0, poll_seconds)
+        self._post = post or _http_post_json
+        self._get = get or _http_get
+        self._sleep = sleep or _time.sleep
+        self._clock = _time.monotonic
+
+    def submit(self, *, tool: str, consequence: str, summary: str = "", rules: Iterable[str] = (),
+               request_id: str = "", ttl_minutes: int = 60) -> ApprovalOutcome:
+        """Ask for a decision. Idempotent on request_id (Kassyon returns the existing request). Only metadata is
+        sent - tool, consequence, a short summary, rule names - never the action's payload."""
+        rid = request_id or hashlib.sha256(f"{tool}|{consequence}|{summary}".encode()).hexdigest()[:24]
+        body = {"tool": tool, "consequence": consequence, "summary": summary[:300], "rules": list(rules),
+                "request_id": rid, "ttl_minutes": int(ttl_minutes)}
+        try:
+            data = self._post(self.base, self.token, body)
+        except Exception:
+            data = None
+        req = (data or {}).get("request") if isinstance(data, dict) else None
+        if not isinstance(req, dict) or not req.get("lineage_id"):
+            return ApprovalOutcome("unavailable", request_id=rid)
+        return self._outcome(req, rid)
+
+    def status(self, outcome: ApprovalOutcome) -> ApprovalOutcome:
+        """Re-read one request. Unreachable keeps the last known status (never upgrades it)."""
+        if not outcome.kassyon_id:
+            return outcome
+        try:
+            data = self._get(f"{self.base}/{outcome.kassyon_id}", self.token)
+        except Exception:
+            data = None
+        if not isinstance(data, dict) or not data.get("status"):
+            return outcome
+        return self._outcome(data, outcome.request_id)
+
+    def wait(self, outcome: ApprovalOutcome, timeout_seconds: float) -> ApprovalOutcome:
+        """Poll until a decision or the timeout. A timeout returns status 'pending' - which is NOT approval."""
+        deadline = self._clock() + max(0.0, timeout_seconds)
+        while outcome.status == "pending" and outcome.kassyon_id:
+            if self._clock() >= deadline:
+                break
+            self._sleep(self.poll_seconds)
+            outcome = self.status(outcome)
+        return outcome
+
+    def hold(self, *, tool: str, consequence: str, summary: str = "", rules: Iterable[str] = (),
+             request_id: str = "", ttl_minutes: int = 60, wait_seconds: float = 0.0) -> ApprovalOutcome:
+        """submit + wait: the one call a guard makes for a `review` verdict. Run the action only if
+        `.approved`."""
+        o = self.submit(tool=tool, consequence=consequence, summary=summary, rules=rules,
+                        request_id=request_id, ttl_minutes=ttl_minutes)
+        return self.wait(o, wait_seconds) if wait_seconds > 0 else o
+
+    @staticmethod
+    def _outcome(req: dict, rid: str) -> ApprovalOutcome:
+        st = str(req.get("status", ""))
+        return ApprovalOutcome(st if st in ("pending", "approved", "rejected", "expired") else "unavailable",
+                               request_id=rid, kassyon_id=str(req.get("lineage_id", "")),
+                               decided_by=req.get("decided_by"), decided_at=req.get("decided_at"),
+                               note=str(req.get("decision_note", "") or ""))
