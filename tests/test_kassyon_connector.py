@@ -134,3 +134,20 @@ def test_policy_fail_open_never_raises_and_keeps_last_known():
 def test_policy_bad_shape_is_ignored():
     p = KassyonPolicy("http://k", transport=lambda u, t: {"nope": 1})
     assert p.refresh() is False and p.advisories == []
+
+
+def test_rules_come_from_real_detections_not_only_observed_rules():
+    """Regression, found by replaying recorded AgentDojo runs into a running Kassyon: an ENFORCED block carries its
+    rules in `detections`; `observed_rules` is empty unless observe mode is on (and then holds plain strings). The
+    v1 emitter read only `observed_rules`, so all 61 real blocks/reviews reached Kassyon with no rule and the
+    exfil/boundary/security controls could never be evidenced."""
+    from guardlayer.models import Detection, ScanResult, Verdict
+    blocked = ScanResult(verdict=Verdict.BLOCK, score=0.9, direction="output", detections=[
+        Detection(scanner="session", rule="untrusted_destination", category="prompt_injection", severity=0.9, message="m"),
+        Detection(scanner="pii", rule="iban", category="pii", severity=0.6, message="m"),
+        Detection(scanner="pii", rule="iban", category="pii", severity=0.6, message="dup")])
+    r = build_record(blocked, system_id="s", framework="agentdojo")
+    assert r["verdict"] == "deny"
+    assert r["rules"] == ["untrusted_destination", "iban"]          # enforced rules, deduplicated, in order
+    observed = ScanResult(verdict=Verdict.ALLOW, score=0.1, direction="output", observed_rules=["sensitive_data_egress"])
+    assert build_record(observed, system_id="s", framework="x")["rules"] == ["sensitive_data_egress"]  # plain strings too

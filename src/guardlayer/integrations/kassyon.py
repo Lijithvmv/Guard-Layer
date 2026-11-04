@@ -28,10 +28,13 @@ _VERDICT = {"allow": "allow", "review": "require_approval", "block": "deny"}
 
 
 def _rule_names(result: Any) -> list[str]:
+    """The rules behind this decision: every detection that fired (what was enforced), then any rule that was only
+    observed (observe mode). Deduplicated, first-seen order. Reading only `observed_rules` -- empty whenever a rule
+    is enforced, and a list of plain strings when it is not -- shipped every real block and review with no rule."""
     out: list[str] = []
-    for d in getattr(result, "observed_rules", None) or []:
-        name = d.get("rule") if isinstance(d, dict) else getattr(d, "rule", None)
-        if name:
+    for d in list(getattr(result, "detections", None) or []) + list(getattr(result, "observed_rules", None) or []):
+        name = d if isinstance(d, str) else (d.get("rule") if isinstance(d, dict) else getattr(d, "rule", None))
+        if name and name not in out:
             out.append(name)
     return out
 
