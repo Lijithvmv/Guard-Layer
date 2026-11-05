@@ -248,3 +248,22 @@ def test_submit_is_idempotent_on_request_id():
     auto = c.submit(tool="t", consequence="irreversible", summary="x")  # derived id is stable for the same action
     again = c.submit(tool="t", consequence="irreversible", summary="x")
     assert auto.request_id == again.request_id
+
+
+def test_posture_older_than_max_age_is_unknown_and_fails_toward_strict():
+    """A correction must reach the enforcer: if refreshes stop succeeding, a newly flagged 'enforce' in Kassyon may
+    never arrive, so past max_age the cached posture is not trusted to LOOSEN anything."""
+    now = [1000.0]
+    p = KassyonPolicy("http://k", transport=lambda u, t: _policy_payload(), max_age_seconds=600, clock=lambda: now[0])
+    assert p.stale and p.age_seconds is None
+    assert p.should_tighten(["exfil"]) is True                # never fetched: unknown -> strict
+    assert p.should_tighten(["unrelated"]) is False           # only Kassyon-backed categories are affected
+    assert p.refresh() and not p.stale
+    assert p.should_tighten(["exfil"]) is False               # fresh: AC-4 effective -> monitor, as Kassyon says
+    now[0] += 601
+    assert p.stale and p.age_seconds == 601
+    assert p.should_tighten(["exfil"]) is True                # stale: strict again until a good refresh
+    p._transport = lambda u, t: None                          # Kassyon unreachable: refresh fails, stays strict
+    assert p.refresh() is False and p.should_tighten(["exfil"]) is True
+    p._transport = lambda u, t: _policy_payload()
+    assert p.refresh() and p.should_tighten(["exfil"]) is False

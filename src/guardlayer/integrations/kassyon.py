@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Optional
@@ -215,8 +216,15 @@ class KassyonPolicy:
         token: str = "",
         *,
         transport: Optional[Callable[[str, str], Optional[dict]]] = None,
+        max_age_seconds: float = 3600.0,
+        clock: Callable[[], float] = time.time,
     ) -> None:
         self.url = url.rstrip("/") + "/agent/policy"
+        # A posture older than this (or never fetched) is UNKNOWN: a correction Kassyon made since (a control turned
+        # into a gap, "enforce") may not have reached us, so every Kassyon-backed category is treated as strict.
+        self.max_age_seconds = max_age_seconds
+        self._clock = clock
+        self.last_ok_at: Optional[float] = None
         self.token = token
         self._transport = transport or _http_get
         self.advisories: list[PolicyAdvisory] = []
@@ -244,7 +252,18 @@ class KassyonPolicy:
         self.advisories = parsed
         self.generated_at = str(data.get("generated_at", ""))
         self.last_ok = True
+        self.last_ok_at = self._clock()
         return True
+
+    @property
+    def age_seconds(self) -> Optional[float]:
+        """Seconds since the last good fetch (None if there has never been one) - for health reporting."""
+        return None if self.last_ok_at is None else max(0.0, self._clock() - self.last_ok_at)
+
+    @property
+    def stale(self) -> bool:
+        age = self.age_seconds
+        return age is None or age > self.max_age_seconds
 
     @property
     def enforced_triggers(self) -> set[str]:
@@ -254,6 +273,8 @@ class KassyonPolicy:
     def should_tighten(self, categories: Iterable[str]) -> bool:
         """True if any of these rule categories backs a control Kassyon currently flags `enforce`. The caller
         passes the categories of the rule(s) that fired (the guard owns its own rule->category taxonomy)."""
+        if self.stale:                         # unknown posture: fail toward strict, never toward loose
+            return any(c in RULE_TRIGGERS for c in categories)
         enforced = self.enforced_triggers
         return any(c in enforced for c in categories)
 
